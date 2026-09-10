@@ -1,0 +1,1351 @@
+// Eskista Marketplace — Prisma schema
+//
+// Two marketplaces on one booking spine:
+//   • EQUIPMENT — rented gear. Fixed period price, delivery/pickup, return + inspection.
+//   • TALENT    — hired people. Negotiated final price, no return leg, direct messaging.
+//
+// Evidence for the equipment side is the 41 Figma screens (docs/DOMAIN-ANALYSIS.md).
+// The talent side, agreements, invoices, dual reviews, multi-booking settlement and the
+// B&H-style equipment spec come from the client's review notes (docs/CLIENT-NOTES.md).
+//
+// Conventions
+//  - Money is INTEGER MINOR UNITS (ETB cents) + explicit currency. Never floats.
+//  - Commission is basis points (1500 = 15.00%).
+//  - Availability is never a stored boolean. Only supplier-authored blocks are
+//    persisted; "reserved" and "rented" are derived from bookings.
+//  - Verification (admin approval) and availability are orthogonal. Do not conflate.
+//  - Better Auth owns User / Session / Account / Verification / RateLimit. Their column
+//    names are fixed by the library; extra columns are declared as additionalFields.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═════════════════════════════════════════════════════════ identity & access
+
+enum Role {
+  CUSTOMER
+  VENDOR
+  TALENT
+  ADMIN
+}
+
+/// Owned by Better Auth (model `user`). Telegram supplies no email, so Mini App users
+/// get a non-routable placeholder to satisfy Better Auth's required-unique email.
+/// Credential passwords live on `Account.password`, never here.
+model User {
+  id            String  @id @default(uuid()) @db.Uuid
+  name          String
+  email         String  @unique
+  emailVerified Boolean @default(false)
+  image         String?
+
+  telegramUserId   String? @unique
+  telegramUsername String?
+
+  /// Primary contact number.
+  phone String? @unique
+  /// Client request: a second reachable number, collected at onboarding or first booking.
+  additionalPhone String?
+
+  languageCode String @default("en")
+
+  /// Which experience the user is currently in. They can switch at any time, and
+  /// switching must never change what they are *authorised* to do — see RoleMembership.
+  activeRole Role    @default(CUSTOMER)
+  isBlocked  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  roles         RoleMembership[]
+  vendor        VendorProfile?
+  talent        TalentProfile?
+  sessions      Session[]
+  accounts      Account[]
+  telegramChats TelegramChat[]
+  notifications Notification[]
+
+  bookings          Booking[]                 @relation("CustomerBookings")
+  cancelledBookings Booking[]                 @relation("CancelledByUser")
+  statusEvents      BookingStatusEvent[]
+  reviewsAuthored   Review[]                  @relation("ReviewAuthor")
+  signedAgreements  Agreement[]               @relation("AgreementSigner")
+  messages          Message[]
+  conversations     ConversationParticipant[]
+
+  // ── Admin-side back-references ──
+  verifiedVendors    VendorProfile[]   @relation("VendorVerifiedBy")
+  verifiedTalents    TalentProfile[]   @relation("TalentVerifiedBy")
+  reviewedDocuments  SupplierDocument[]
+  reviewedListings   Listing[]
+  approvedBookings   Booking[]         @relation("BookingApprovedBy")
+  verifiedPayments   Payment[]
+  inspectionsDone    Inspection[]
+  settlementsPaid    Settlement[]      @relation("SettlementPaidBy")
+  batchesPaid        SettlementBatch[] @relation("BatchPaidBy")
+  invoicesIssued     Invoice[]
+  auditEntries       AdminAuditLog[]
+
+  @@index([isBlocked])
+  @@index([phone])
+}
+
+model RoleMembership {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  role      Role
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+  @@index([role])
+}
+
+/// Owned by Better Auth (model `session`). Revocation is a row delete, not a flag.
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Owned by Better Auth (model `account`). `providerId: "credential"` holds the hashed
+/// admin password, `"telegram"` links a Telegram id, one row per OAuth provider.
+model Account {
+  id                    String    @id @default(uuid()) @db.Uuid
+  userId                String    @db.Uuid
+  accountId             String
+  providerId            String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+/// Owned by Better Auth (model `verification`).
+model Verification {
+  id         String   @id @default(uuid()) @db.Uuid
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@index([expiresAt])
+}
+
+/// Owned by Better Auth (model `rateLimit`), required by `rateLimit.storage: "database"`.
+/// `lastRequest` is epoch millis and is never serialised to a client.
+model RateLimit {
+  id          String @id @default(uuid()) @db.Uuid
+  key         String @unique
+  count       Int
+  lastRequest BigInt
+}
+
+/// Telegram chat ids for bot-delivered notifications.
+model TelegramChat {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  chatId    String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// ═════════════════════════════════════════════════════════ suppliers (vendor + talent)
+
+enum VerificationStatus {
+  DRAFT
+  PENDING_REVIEW
+  VERIFIED
+  REJECTED
+  SUSPENDED
+}
+
+/// Client: "Vendor (can be individual or company)".
+enum VendorKind {
+  INDIVIDUAL
+  COMPANY
+}
+
+enum VendorType {
+  INDIVIDUAL
+  PRODUCTION_COMPANY
+  RENTAL_COMPANY
+  CREATIVE_STUDIO
+}
+
+model VendorProfile {
+  id           String     @id @default(uuid()) @db.Uuid
+  userId       String     @unique @db.Uuid
+  businessName String
+  kind         VendorKind @default(INDIVIDUAL)
+  vendorType   VendorType
+  email        String
+  phone        String?
+  location     String
+  logoKey      String?
+  about        String?
+
+  status             VerificationStatus @default(DRAFT)
+  rejectionReason    String?
+  verifiedAt         DateTime?
+  verifiedByAdminId  String?            @db.Uuid
+
+  /// Per-vendor override of the platform default commission, in basis points.
+  commissionRateBps Int?
+
+  /// Denormalised for list rendering; recomputed when a review lands.
+  ratingAvg   Decimal @default(0) @db.Decimal(3, 2)
+  ratingCount Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verifiedByAdmin User?              @relation("VendorVerifiedBy", fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
+  documents       SupplierDocument[]
+  listings        Listing[]
+  bookings        Booking[]
+  settlements     Settlement[]
+  batches         SettlementBatch[]
+  reviews         Review[]
+
+  @@index([status])
+  @@index([businessName])
+}
+
+enum ExperienceLevel {
+  ENTRY
+  INTERMEDIATE
+  SENIOR
+  EXPERT
+}
+
+enum PricingModel {
+  PER_HOUR
+  PER_DAY
+  PER_PROJECT
+}
+
+/// A hireable person. Talent is booked, not rented: there is no return or inspection,
+/// and the price is agreed during Eskista's coordination step rather than fixed upfront.
+model TalentProfile {
+  id          String  @id @default(uuid()) @db.Uuid
+  userId      String  @unique @db.Uuid
+  displayName String
+  headline    String?
+  bio         String?
+  location    String
+
+  experienceLevel ExperienceLevel @default(INTERMEDIATE)
+  yearsExperience Int?
+  /// Free-form tags the client's "specializations" filter searches on.
+  specializations String[]
+  languages       String[]
+
+  /// Indicative rate shown before coordination; the booked price is negotiated.
+  pricingModel  PricingModel @default(PER_DAY)
+  baseRateMinor Int?
+  currency      String       @default("ETB")
+
+  isAvailableForHire Boolean @default(true)
+
+  status            VerificationStatus @default(DRAFT)
+  rejectionReason   String?
+  verifiedAt        DateTime?
+  verifiedByAdminId String?            @db.Uuid
+
+  commissionRateBps Int?
+  ratingAvg         Decimal @default(0) @db.Decimal(3, 2)
+  ratingCount       Int     @default(0)
+  completedBookings Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user            User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verifiedByAdmin User?                   @relation("TalentVerifiedBy", fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
+  documents       SupplierDocument[]
+  services        TalentService[]
+  portfolio       PortfolioItem[]
+  blockedDates    TalentBlockedDateRange[]
+  bookings        Booking[]
+  settlements     Settlement[]
+  batches         SettlementBatch[]
+  reviews         Review[]
+
+  @@index([status, isAvailableForHire])
+  @@index([location])
+  @@index([experienceLevel])
+}
+
+/// One offering on a talent's profile — the client's "search by service type".
+model TalentService {
+  id              String       @id @default(uuid()) @db.Uuid
+  talentProfileId String       @db.Uuid
+  categoryId      String?      @db.Uuid
+  title           String
+  description     String?
+  pricingModel    PricingModel @default(PER_DAY)
+  priceMinor      Int
+  currency        String       @default("ETB")
+  isActive        Boolean      @default(true)
+  sortOrder       Int          @default(0)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  talentProfile TalentProfile @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
+  category      Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  bookings      Booking[]
+
+  @@index([talentProfileId, isActive])
+  @@index([categoryId])
+}
+
+/// Portfolio entries backing the client's "Evaluate: review profiles and portfolios".
+model PortfolioItem {
+  id              String   @id @default(uuid()) @db.Uuid
+  talentProfileId String   @db.Uuid
+  title           String
+  description     String?
+  fileKey         String?
+  externalUrl     String?
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  talentProfile TalentProfile @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
+
+  @@index([talentProfileId, sortOrder])
+}
+
+model TalentBlockedDateRange {
+  id              String   @id @default(uuid()) @db.Uuid
+  talentProfileId String   @db.Uuid
+  startDate       DateTime @db.Date
+  endDate         DateTime @db.Date
+  reason          String?
+  createdAt       DateTime @default(now())
+
+  talentProfile TalentProfile @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
+
+  @@index([talentProfileId, startDate, endDate])
+}
+
+/// Client: "Only business registration and Fayda Id will be required, and of course the
+/// rental agreement." One table serves vendors and talent; exactly one owner is set.
+enum SupplierDocumentType {
+  FAYDA_ID
+  BUSINESS_REGISTRATION
+  RENTAL_AGREEMENT
+  TIN_CERTIFICATE
+  OTHER
+}
+
+enum DocumentStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+model SupplierDocument {
+  id              String               @id @default(uuid()) @db.Uuid
+  vendorId        String?              @db.Uuid
+  talentProfileId String?              @db.Uuid
+  type            SupplierDocumentType
+  fileKey         String
+  fileName        String
+  mimeType        String
+  sizeBytes       Int
+  status          DocumentStatus       @default(PENDING)
+  rejectionReason String?
+  expiresAt       DateTime?
+  reviewedAt      DateTime?
+  reviewedById    String?              @db.Uuid
+  createdAt       DateTime             @default(now())
+
+  vendor        VendorProfile? @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  talentProfile TalentProfile? @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
+  reviewedBy    User?          @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([vendorId, type])
+  @@index([talentProfileId, type])
+  @@index([status])
+}
+
+// ═════════════════════════════════════════════════════════ catalogue
+
+enum CategoryKind {
+  EQUIPMENT
+  TALENT
+}
+
+model Category {
+  id        String       @id @default(uuid()) @db.Uuid
+  kind      CategoryKind @default(EQUIPMENT)
+  slug      String       @unique
+  name      String
+  imageKey  String?
+  parentId  String?      @db.Uuid
+  sortOrder Int          @default(0)
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+
+  parent         Category?       @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children       Category[]      @relation("CategoryTree")
+  listings       Listing[]
+  talentServices TalentService[]
+
+  @@index([kind, isActive, sortOrder])
+  @@index([parentId])
+}
+
+enum ListingStatus {
+  DRAFT
+  PENDING_REVIEW
+  PUBLISHED
+  REJECTED
+  SUSPENDED
+  ARCHIVED
+}
+
+enum ConditionGrade {
+  NEW
+  LIKE_NEW
+  EXCELLENT
+  GOOD
+  FAIR
+}
+
+enum RentalPeriodUnit {
+  HOUR
+  DAY
+  WEEK
+  MONTH
+}
+
+/// A rentable equipment model. Physical copies live in EquipmentUnit.
+///
+/// Field grouping follows the client's requested B&H-style structure:
+///   Basic Info → Technical Info → Condition → What's Included → Rental Info → Photos
+model Listing {
+  id         String @id @default(uuid()) @db.Uuid
+  vendorId   String @db.Uuid
+  categoryId String @db.Uuid
+
+  // ── Basic information ──
+  name  String
+  slug  String? @unique
+  brand String?
+  model String?
+
+  // ── Key technical information ──
+  /// The single headline spec, e.g. "Full-frame 10.2MP CMOS, 6K60 open gate".
+  mainSpecification String?
+  /// Mount/format compatibility, e.g. ["E-mount", "EF via adapter"].
+  compatibility     String[]
+  /// Power & battery notes, e.g. "2x NP-FZ100, USB-C PD in".
+  powerBattery      String?
+
+  // ── Condition (advertised; per-unit actual condition lives on EquipmentUnit) ──
+  condition      ConditionGrade @default(EXCELLENT)
+  conditionNotes String?
+
+  // ── Rental information ──
+  description           String
+  location              String
+  rentalPriceMinor      Int
+  rentalPeriodUnit      RentalPeriodUnit @default(DAY)
+  minRentalPeriods      Int              @default(1)
+  maxRentalPeriods      Int?
+  /// Client: "Security Deposit" is now an explicit part of the rental terms.
+  securityDepositMinor  Int?
+  replacementValueMinor Int?
+  rentalRequirements    String?
+  currency              String           @default("ETB")
+
+  // ── Moderation ──
+  status          ListingStatus @default(DRAFT)
+  rejectionReason String?
+  submittedAt     DateTime?
+  publishedAt     DateTime?
+  reviewedById    String?       @db.Uuid
+
+  /// Admin-curated "Featured Equipment" rail.
+  isFeatured    Boolean   @default(false)
+  featuredUntil DateTime?
+
+  ratingAvg    Decimal @default(0) @db.Decimal(3, 2)
+  ratingCount  Int     @default(0)
+  bookingCount Int     @default(0)
+  viewCount    Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  vendor        VendorProfile         @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  category      Category              @relation(fields: [categoryId], references: [id])
+  reviewedBy    User?                 @relation(fields: [reviewedById], references: [id], onDelete: SetNull)
+  images        ListingImage[]
+  specs         ListingSpec[]
+  includedItems ListingIncludedItem[]
+  units         EquipmentUnit[]
+  blockedDates  BlockedDateRange[]
+  bookings      Booking[]
+  reviews       Review[]
+
+  accessories ListingAccessory[] @relation("ListingAccessoryOwner")
+  accessoryOf ListingAccessory[] @relation("ListingAccessoryTarget")
+
+  @@index([status, publishedAt])
+  @@index([vendorId, status])
+  @@index([categoryId, status])
+  @@index([isFeatured, status])
+  @@index([rentalPriceMinor])
+  @@index([location])
+}
+
+/// The client's "Main Image" is the row with `isPrimary`; the rest are "Equipment Photos".
+model ListingImage {
+  id        String   @id @default(uuid()) @db.Uuid
+  listingId String   @db.Uuid
+  fileKey   String
+  altText   String?
+  isPrimary Boolean  @default(false)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, sortOrder])
+}
+
+/// "Secondary Specifications" as label/value pairs, so the UI can render a B&H-style
+/// spec table without parsing prose. `group` allows section headings.
+model ListingSpec {
+  id        String  @id @default(uuid()) @db.Uuid
+  listingId String  @db.Uuid
+  group     String?
+  label     String
+  value     String
+  sortOrder Int     @default(0)
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, sortOrder])
+}
+
+/// Client splits "What's Included" into two lists: core equipment vs accessories.
+enum IncludedItemKind {
+  EQUIPMENT
+  ACCESSORY
+}
+
+model ListingIncludedItem {
+  id        String           @id @default(uuid()) @db.Uuid
+  listingId String           @db.Uuid
+  kind      IncludedItemKind @default(ACCESSORY)
+  name      String
+  quantity  Int              @default(1)
+  sortOrder Int              @default(0)
+
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, kind, sortOrder])
+}
+
+/// "Related Accessories" — listing-to-listing suggestions.
+model ListingAccessory {
+  listingId   String @db.Uuid
+  accessoryId String @db.Uuid
+  sortOrder   Int    @default(0)
+
+  listing   Listing @relation("ListingAccessoryOwner", fields: [listingId], references: [id], onDelete: Cascade)
+  accessory Listing @relation("ListingAccessoryTarget", fields: [accessoryId], references: [id], onDelete: Cascade)
+
+  @@id([listingId, accessoryId])
+  @@index([accessoryId])
+}
+
+enum UnitStatus {
+  AVAILABLE
+  MAINTENANCE
+  RETIRED
+}
+
+/// An individually tracked physical copy. Admin assigns specific units to a booking,
+/// which is what makes damage attributable.
+model EquipmentUnit {
+  id           String  @id @default(uuid()) @db.Uuid
+  listingId    String  @db.Uuid
+  label        String?
+  serialNumber String?
+
+  /// Actual condition of this copy, distinct from the listing's advertised condition.
+  condition      ConditionGrade @default(EXCELLENT)
+  conditionNotes String?
+  status         UnitStatus     @default(AVAILABLE)
+
+  acquiredAt DateTime?
+  retiredAt  DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  listing      Listing            @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  bookingUnits BookingUnit[]
+  blockedDates BlockedDateRange[]
+
+  @@unique([listingId, serialNumber])
+  @@index([listingId, status])
+}
+
+/// Supplier-authored blocks only. "Reserved" and "Rented" are derived from bookings.
+/// A null unitId blocks the whole listing; otherwise it blocks one unit.
+model BlockedDateRange {
+  id        String   @id @default(uuid()) @db.Uuid
+  listingId String   @db.Uuid
+  unitId    String?  @db.Uuid
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  reason    String?
+  createdAt DateTime @default(now())
+
+  listing Listing        @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  unit    EquipmentUnit? @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, startDate, endDate])
+  @@index([unitId, startDate, endDate])
+}
+
+// ═════════════════════════════════════════════════════════ bookings
+
+enum BookingType {
+  EQUIPMENT
+  TALENT
+}
+
+/// Unified lifecycle. Equipment uses every state; talent skips the delivery, return and
+/// inspection states because there is nothing to hand back.
+enum BookingStatus {
+  REQUEST_SUBMITTED
+  ESKISTA_REVIEW
+  AWAITING_PAYMENT
+  BOOKING_CONFIRMED
+  DELIVERY_PICKUP
+  IN_PROGRESS
+  RENTAL_COMPLETED
+  RETURN_SCHEDULED
+  RETURN_RECEIVED
+  INSPECTION
+  SETTLEMENT
+  CLOSED
+  REJECTED
+  CANCELLED
+  EXPIRED
+}
+
+/// The supplier's own accept/decline gate, independent of Eskista's approval. Both must
+/// clear before a booking leaves ESKISTA_REVIEW.
+enum SupplierResponse {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+
+enum CollectionMethod {
+  DELIVERY
+  PICKUP
+}
+
+model Booking {
+  id        String      @id @default(uuid()) @db.Uuid
+  /// Customer-facing, e.g. "ESK-10482". Never expose the uuid.
+  reference String      @unique
+  type      BookingType
+
+  customerId String @db.Uuid
+
+  /// Exactly one supply side is set, matching `type`.
+  vendorId        String? @db.Uuid
+  listingId       String? @db.Uuid
+  talentProfileId String? @db.Uuid
+  talentServiceId String? @db.Uuid
+
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  /// Billable periods in the listing's RentalPeriodUnit (days for talent).
+  periods   Int
+
+  contactPhone    String
+  additionalPhone String?
+
+  /// Shown as "Purpose" / "Project description" on the vendor screens, and as the
+  /// project brief on the talent request.
+  projectDescription String?
+
+  status BookingStatus @default(REQUEST_SUBMITTED)
+
+  supplierResponse      SupplierResponse @default(PENDING)
+  supplierRespondedAt   DateTime?
+  supplierDeclineReason String?
+
+  approvedById    String?   @db.Uuid
+  approvedAt      DateTime?
+  rejectionReason String?
+  cancelledAt     DateTime?
+  cancelledById   String?   @db.Uuid
+
+  // ── Priced snapshot. "Estimated" until approval, then frozen so a later price
+  //    change on the listing cannot rewrite history. ──
+  currency             String    @default("ETB")
+  unitPriceMinor       Int
+  subtotalMinor        Int
+  deliveryFeeMinor     Int       @default(0)
+  securityDepositMinor Int       @default(0)
+  discountMinor        Int       @default(0)
+  taxMinor             Int       @default(0)
+  totalMinor           Int
+  commissionRateBps    Int
+  commissionMinor      Int
+  supplierEarningsMinor Int
+  pricedAt             DateTime?
+
+  /// Return deadline carries a time: "no later than 5:00 PM".
+  dueAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customer      User           @relation("CustomerBookings", fields: [customerId], references: [id])
+  vendor        VendorProfile? @relation(fields: [vendorId], references: [id])
+  listing       Listing?       @relation(fields: [listingId], references: [id])
+  talentProfile TalentProfile? @relation(fields: [talentProfileId], references: [id])
+  talentService TalentService? @relation(fields: [talentServiceId], references: [id], onDelete: SetNull)
+  approvedBy    User?          @relation("BookingApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  cancelledBy   User?          @relation("CancelledByUser", fields: [cancelledById], references: [id], onDelete: SetNull)
+
+  equipmentDetail EquipmentBookingDetail?
+  talentDetail    TalentBookingDetail?
+
+  assignedUnits BookingUnit[]
+  statusEvents  BookingStatusEvent[]
+  payments      Payment[]
+  fulfilments   Fulfilment[]
+  inspection    Inspection?
+  settlement    Settlement?
+  invoice       Invoice?
+  agreements    Agreement[]
+  reviews       Review[]
+  conversation  Conversation?
+
+  @@index([customerId, status])
+  @@index([vendorId, status])
+  @@index([talentProfileId, status])
+  @@index([listingId, startDate, endDate])
+  @@index([status, createdAt])
+  @@index([type, status])
+}
+
+/// Equipment-only booking fields.
+model EquipmentBookingDetail {
+  bookingId        String           @id @db.Uuid
+  quantity         Int              @default(1)
+  collectionMethod CollectionMethod
+  deliveryAddress  String?
+  deliveryNotes    String?
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+}
+
+/// Talent-only booking fields. The client's flow ends "once the talent accepts and the
+/// final price is set", so the customer states a budget and the agreed figure is separate.
+model TalentBookingDetail {
+  bookingId     String  @id @db.Uuid
+  eventLocation String
+  requirements  String?
+  headcount     Int?
+  budgetMinor   Int?
+  /// Agreed during Eskista's coordination step; drives the invoice, not `budgetMinor`.
+  finalPriceMinor Int?
+  agreedAt      DateTime?
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+}
+
+/// Which physical units were assigned. Populated by admin.
+///
+/// Dates lock only on approval, so overlapping requests coexist. The guard against
+/// double-booking an approved unit is a Postgres EXCLUDE constraint on
+/// (unitId, daterange) filtered to live statuses — added in a raw migration, since
+/// Prisma cannot express it declaratively.
+model BookingUnit {
+  bookingId  String   @db.Uuid
+  unitId     String   @db.Uuid
+  assignedAt DateTime @default(now())
+
+  booking Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  unit    EquipmentUnit @relation(fields: [unitId], references: [id])
+
+  @@id([bookingId, unitId])
+  @@index([unitId])
+}
+
+/// Append-only audit of every transition. This is the dispute trail and the operational
+/// data Phase 1 exists to collect.
+model BookingStatusEvent {
+  id         String         @id @default(uuid()) @db.Uuid
+  bookingId  String         @db.Uuid
+  fromStatus BookingStatus?
+  toStatus   BookingStatus
+  actorId    String?        @db.Uuid
+  actorRole  Role?
+  reason     String?
+  metadata   Json?
+  createdAt  DateTime       @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  actor   User?   @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([bookingId, createdAt])
+  @@index([toStatus, createdAt])
+}
+
+// ═════════════════════════════════════════════════════════ agreements
+
+enum AgreementType {
+  EQUIPMENT_RENTAL
+  TALENT_ENGAGEMENT
+}
+
+enum AgreementStatus {
+  DRAFT
+  SENT
+  SIGNED
+  DECLINED
+  VOID
+}
+
+/// Versioned contract text. Never edit a published version — add a new one, so a signed
+/// agreement can always be reproduced exactly as the customer saw it.
+model AgreementTemplate {
+  id           String        @id @default(uuid()) @db.Uuid
+  key          String
+  kind         AgreementType
+  version      Int
+  title        String
+  bodyMarkdown String
+  isActive     Boolean       @default(false)
+  createdAt    DateTime      @default(now())
+
+  agreements Agreement[]
+
+  @@unique([key, version])
+  @@index([kind, isActive])
+}
+
+/// Client: "Generate Agreement per Booking that the Customer will sign."
+model Agreement {
+  id         String          @id @default(uuid()) @db.Uuid
+  bookingId  String          @db.Uuid
+  templateId String?         @db.Uuid
+  kind       AgreementType
+  version    Int
+  status     AgreementStatus @default(DRAFT)
+
+  /// Rendered PDF in the storage driver, plus a hash of the exact bytes signed.
+  documentKey String?
+  contentHash String?
+
+  sentAt            DateTime?
+  signedAt          DateTime?
+  signedById        String?   @db.Uuid
+  signerName        String?
+  signerPhone       String?
+  signerIpAddress   String?
+  signatureImageKey String?
+  declinedAt        DateTime?
+  declineReason     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking  Booking            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  template AgreementTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  signedBy User?              @relation("AgreementSigner", fields: [signedById], references: [id], onDelete: SetNull)
+
+  @@unique([bookingId, kind])
+  @@index([status])
+}
+
+// ═════════════════════════════════════════════════════════ invoicing
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  VOID
+}
+
+/// Client: "Generate an Invoice number & PDF for each booking."
+model Invoice {
+  id     String @id @default(uuid()) @db.Uuid
+  /// Human-readable and gapless per period, e.g. "ESK-INV-2026-000148".
+  number String @unique
+
+  bookingId String        @unique @db.Uuid
+  status    InvoiceStatus @default(DRAFT)
+
+  currency             String @default("ETB")
+  subtotalMinor        Int
+  deliveryFeeMinor     Int    @default(0)
+  securityDepositMinor Int    @default(0)
+  discountMinor        Int    @default(0)
+  taxMinor             Int    @default(0)
+  totalMinor           Int
+  amountPaidMinor      Int    @default(0)
+
+  /// Snapshot of biller/customer details, so a reissued PDF matches the original even
+  /// after the profile changes.
+  billedToName    String
+  billedToPhone   String?
+  billedToAddress String?
+
+  pdfKey     String?
+  issuedAt   DateTime?
+  dueAt      DateTime?
+  issuedById String?   @db.Uuid
+  voidedAt   DateTime?
+  voidReason String?
+  notes      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking  Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  issuedBy User?     @relation(fields: [issuedById], references: [id], onDelete: SetNull)
+  payments Payment[]
+
+  @@index([status, issuedAt])
+}
+
+/// Gapless counter for invoice numbers, booking references and settlement batches.
+/// Incremented inside the same transaction as the row it numbers.
+model NumberSequence {
+  id        String   @id @default(uuid()) @db.Uuid
+  scope     String
+  period    String
+  lastValue Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([scope, period])
+}
+
+// ═════════════════════════════════════════════════════════ payments
+
+enum PaymentMethod {
+  TELEBIRR
+  BANK_TRANSFER
+  CASH
+}
+
+enum PaymentStatus {
+  SUBMITTED
+  VERIFIED
+  REJECTED
+}
+
+/// Offline payment into Eskista's own Telebirr/CBE accounts, evidenced by an uploaded
+/// receipt and verified by an admin. No gateway, no webhooks.
+model Payment {
+  id                   String        @id @default(uuid()) @db.Uuid
+  bookingId            String        @db.Uuid
+  invoiceId            String?       @db.Uuid
+  method               PaymentMethod
+  transactionReference String
+  amountMinor          Int
+  currency             String        @default("ETB")
+
+  receiptFileKey   String
+  receiptFileName  String?
+  receiptMimeType  String?
+  receiptSizeBytes Int?
+
+  status          PaymentStatus @default(SUBMITTED)
+  rejectionReason String?
+  submittedAt     DateTime      @default(now())
+  verifiedAt      DateTime?
+  verifiedById    String?       @db.Uuid
+
+  booking    Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  invoice    Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  verifiedBy User?    @relation(fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@index([bookingId, status])
+  @@index([status, submittedAt])
+  @@index([transactionReference])
+}
+
+// ═════════════════════════════════════════════════════════ fulfilment & inspection
+
+enum FulfilmentDirection {
+  OUTBOUND
+  RETURN
+}
+
+enum FulfilmentMethod {
+  DELIVERY
+  PICKUP
+  SCHEDULED_PICKUP
+  DROP_OFF
+}
+
+/// Both legs: gear to the customer, and gear back. The return leg carries the chosen
+/// slot ("Aug 21 · 10:00 AM").
+model Fulfilment {
+  id           String              @id @default(uuid()) @db.Uuid
+  bookingId    String              @db.Uuid
+  direction    FulfilmentDirection
+  method       FulfilmentMethod
+  address      String?
+  scheduledAt  DateTime?
+  courierName  String?
+  courierPhone String?
+  dispatchedAt DateTime?
+  completedAt  DateTime?
+  notes        String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId, direction])
+  @@index([scheduledAt])
+}
+
+enum InspectionOutcome {
+  OK
+  DAMAGED
+  MISSING_ITEMS
+  LATE_RETURN
+}
+
+/// "Equipment will be inspected on receipt."
+model Inspection {
+  id             String            @id @default(uuid()) @db.Uuid
+  bookingId      String            @unique @db.Uuid
+  outcome        InspectionOutcome
+  condition      ConditionGrade?
+  damageNotes    String?
+  /// Damage or late fee withheld from the deposit.
+  feeMinor       Int               @default(0)
+  depositReturnedMinor Int         @default(0)
+  currency       String            @default("ETB")
+  inspectedById  String?           @db.Uuid
+  inspectedAt    DateTime          @default(now())
+
+  booking     Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  inspectedBy User?             @relation(fields: [inspectedById], references: [id], onDelete: SetNull)
+  photos      InspectionPhoto[]
+
+  @@index([outcome])
+}
+
+model InspectionPhoto {
+  id           String @id @default(uuid()) @db.Uuid
+  inspectionId String @db.Uuid
+  fileKey      String
+  caption      String?
+
+  inspection Inspection @relation(fields: [inspectionId], references: [id], onDelete: Cascade)
+
+  @@index([inspectionId])
+}
+
+// ═════════════════════════════════════════════════════════ settlement
+
+enum SettlementStatus {
+  PENDING
+  IN_BATCH
+  PAID
+  ON_HOLD
+}
+
+enum PayeeKind {
+  VENDOR
+  TALENT
+}
+
+/// Client: "Settlement of Multiple Bookings." A batch groups many per-booking
+/// settlements into one payout to one supplier.
+model SettlementBatch {
+  id        String    @id @default(uuid()) @db.Uuid
+  reference String    @unique
+  payeeKind PayeeKind
+
+  vendorId        String? @db.Uuid
+  talentProfileId String? @db.Uuid
+
+  periodStart     DateTime @db.Date
+  periodEnd       DateTime @db.Date
+  currency        String   @default("ETB")
+  grossMinor      Int      @default(0)
+  commissionMinor Int      @default(0)
+  netMinor        Int      @default(0)
+  bookingCount    Int      @default(0)
+
+  status          SettlementStatus @default(PENDING)
+  paidAt          DateTime?
+  paidById        String?          @db.Uuid
+  payoutReference String?
+  notes           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  vendor        VendorProfile? @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  talentProfile TalentProfile? @relation(fields: [talentProfileId], references: [id], onDelete: SetNull)
+  paidBy        User?          @relation("BatchPaidBy", fields: [paidById], references: [id], onDelete: SetNull)
+  settlements   Settlement[]
+
+  @@index([vendorId, status])
+  @@index([talentProfileId, status])
+  @@index([status, periodEnd])
+}
+
+/// Per-booking payout line. Drives the Earnings screen's Paid/Pending chips.
+model Settlement {
+  id        String @id @default(uuid()) @db.Uuid
+  bookingId String @unique @db.Uuid
+  batchId   String? @db.Uuid
+  payeeKind PayeeKind
+
+  vendorId        String? @db.Uuid
+  talentProfileId String? @db.Uuid
+
+  grossMinor      Int
+  commissionMinor Int
+  /// Deductions carried from inspection (damage, late return).
+  deductionMinor  Int              @default(0)
+  netMinor        Int
+  currency        String           @default("ETB")
+  status          SettlementStatus @default(PENDING)
+  expectedAt      DateTime?
+  paidAt          DateTime?
+  paidById        String?          @db.Uuid
+  payoutReference String?
+  notes           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking       Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  batch         SettlementBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  vendor        VendorProfile?   @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  talentProfile TalentProfile?   @relation(fields: [talentProfileId], references: [id], onDelete: SetNull)
+  paidBy        User?            @relation("SettlementPaidBy", fields: [paidById], references: [id], onDelete: SetNull)
+
+  @@index([vendorId, status])
+  @@index([talentProfileId, status])
+  @@index([batchId])
+  @@index([status, expectedAt])
+}
+
+// ═════════════════════════════════════════════════════════ reviews
+
+/// Client: "Add 2 types of Customer Reviews prompted when returning an item — Review for
+/// Equipment and Review for the service in general." TALENT covers the talent flow's
+/// closing "Complete & Review" step.
+enum ReviewKind {
+  EQUIPMENT
+  TALENT
+  PLATFORM_SERVICE
+}
+
+model Review {
+  id        String     @id @default(uuid()) @db.Uuid
+  bookingId String     @db.Uuid
+  kind      ReviewKind
+  authorId  String     @db.Uuid
+
+  /// Set according to `kind`; PLATFORM_SERVICE reviews target none of them.
+  listingId       String? @db.Uuid
+  vendorId        String? @db.Uuid
+  talentProfileId String? @db.Uuid
+
+  rating  Int
+  comment String?
+
+  /// Admin can withhold a review from public listings without deleting it.
+  isPublished Boolean   @default(true)
+  hiddenAt    DateTime?
+  hiddenReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking       Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  author        User           @relation("ReviewAuthor", fields: [authorId], references: [id])
+  listing       Listing?       @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  vendor        VendorProfile? @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  talentProfile TalentProfile? @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
+
+  /// One review of each kind per booking.
+  @@unique([bookingId, kind])
+  @@index([listingId, isPublished, createdAt])
+  @@index([vendorId, isPublished])
+  @@index([talentProfileId, isPublished])
+  @@index([kind, rating])
+}
+
+// ═════════════════════════════════════════════════════════ messaging
+
+/// Client's talent flow: "Manage: Track your booking's progress and message the talent
+/// directly through Eskista."
+///
+/// NOTE: the equipment vendor screens say the opposite — "Eskista manages all
+/// communication with the customer". `isAdminMediated` records which regime applies, so
+/// equipment threads can stay admin-only while talent threads are direct.
+model Conversation {
+  id              String    @id @default(uuid()) @db.Uuid
+  bookingId       String?   @unique @db.Uuid
+  subject         String?
+  isAdminMediated Boolean   @default(false)
+  lastMessageAt   DateTime?
+  closedAt        DateTime?
+  createdAt       DateTime  @default(now())
+
+  booking      Booking?                  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([lastMessageAt])
+}
+
+model ConversationParticipant {
+  conversationId String    @db.Uuid
+  userId         String    @db.Uuid
+  role           Role
+  lastReadAt     DateTime?
+  joinedAt       DateTime  @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id             String   @id @default(uuid()) @db.Uuid
+  conversationId String   @db.Uuid
+  senderId       String?  @db.Uuid
+  body           String
+  /// System notes ("Eskista approved this booking") have no sender.
+  isSystem       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  conversation Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User?               @relation(fields: [senderId], references: [id], onDelete: SetNull)
+  attachments  MessageAttachment[]
+
+  @@index([conversationId, createdAt])
+}
+
+model MessageAttachment {
+  id        String @id @default(uuid()) @db.Uuid
+  messageId String @db.Uuid
+  fileKey   String
+  fileName  String
+  mimeType  String
+  sizeBytes Int
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+}
+
+// ═════════════════════════════════════════════════════════ notifications & platform
+
+enum NotificationChannel {
+  IN_APP
+  TELEGRAM
+  SMS
+  EMAIL
+}
+
+model Notification {
+  id        String                @id @default(uuid()) @db.Uuid
+  userId    String                @db.Uuid
+  type      String
+  title     String
+  body      String
+  data      Json?
+  channels  NotificationChannel[]
+  readAt    DateTime?
+  createdAt DateTime              @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+}
+
+/// Commission defaults, delivery fees, return slot templates and similar knobs, so
+/// operations can change them without a deploy.
+model PlatformSetting {
+  key         String   @id
+  value       Json
+  description String?
+  updatedAt   DateTime @updatedAt
+}
+
+/// Admin actions outside the booking machine: supplier approvals, listing approvals,
+/// settings changes. BookingStatusEvent already covers booking transitions.
+model AdminAuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  adminId    String?  @db.Uuid
+  action     String
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  reason     String?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  admin User? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([adminId, createdAt])
+}
