@@ -1,0 +1,9 @@
+# pnpm 11 reads settings from here rather than the "pnpm" field in package.json.
+# Prisma needs its install scripts to fetch/generate the query engine, and argon2
+# compiles a native binding. @scarf/scarf is analytics only, so it stays blocked.
+allowBuilds:
+  '@prisma/client': true
+  '@prisma/engines': true
+  prisma: true
+  argon2: true
+  '@scarf/scarf': false
