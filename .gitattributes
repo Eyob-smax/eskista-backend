@@ -1,0 +1,14 @@
+# Normalise line endings so a mixed Windows/macOS/Linux team does not churn diffs.
+* text=auto eol=lf
+
+# Binary assets: never touch, never diff.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.pdf binary
+*.docx binary
+
+# Generated: collapse in diffs and reviews.
+pnpm-lock.yaml linguist-generated=true -diff
+prisma/migrations/**/*.sql linguist-generated=true

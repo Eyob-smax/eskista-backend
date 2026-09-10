@@ -12,5 +12,5 @@ pnpm-debug.log*
 .vscode/*
 !.vscode/extensions.json
 *.tsbuildinfo
-storage/
+storage/*
 !storage/.gitkeep
