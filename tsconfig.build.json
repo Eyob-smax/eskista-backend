@@ -1,4 +1,7 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
+  // `prisma` is excluded so seed.ts stays out of the compiled program. Including it
+  // widens TypeScript's inferred rootDir to the repo root, which emits dist/src/main.js
+  // and silently breaks `start:prod` (node dist/main). The seed runs through ts-node.
+  "exclude": ["node_modules", "test", "dist", "prisma", "**/*spec.ts"]
 }
