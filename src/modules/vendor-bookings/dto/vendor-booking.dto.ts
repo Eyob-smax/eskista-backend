@@ -23,7 +23,7 @@ export class DeclineBookingDto {
   @IsString()
   @MinLength(5)
   @MaxLength(500)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
   reason!: string;
 }
 

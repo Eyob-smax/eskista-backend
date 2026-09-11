@@ -9,7 +9,6 @@ import {
 import {
   BookingStatus,
   ConditionGrade,
-  IncludedItemKind,
   ListingStatus,
   Prisma,
   RentalPeriodUnit,
@@ -94,8 +93,14 @@ export class EquipmentService {
     const vendorId = await this.requireVendorId(userId);
     await this.assertCategoryExists(dto.categoryId);
 
-    if (dto.maxRentalPeriods && dto.minRentalPeriods && dto.maxRentalPeriods < dto.minRentalPeriods) {
-      throw new BadRequestException('maxRentalPeriods must be greater than or equal to minRentalPeriods');
+    if (
+      dto.maxRentalPeriods &&
+      dto.minRentalPeriods &&
+      dto.maxRentalPeriods < dto.minRentalPeriods
+    ) {
+      throw new BadRequestException(
+        'maxRentalPeriods must be greater than or equal to minRentalPeriods',
+      );
     }
 
     const listing = await this.prisma.listing.create({
@@ -141,7 +146,10 @@ export class EquipmentService {
     return this.toDetail(listing, new Map());
   }
 
-  async list(userId: string, query: EquipmentListQuery): Promise<Paginated<EquipmentSummaryResponse>> {
+  async list(
+    userId: string,
+    query: EquipmentListQuery,
+  ): Promise<Paginated<EquipmentSummaryResponse>> {
     const vendorId = await this.requireVendorId(userId);
 
     const where: Prisma.ListingWhereInput = {
@@ -602,10 +610,7 @@ export class EquipmentService {
       const rented = covering.some((b) => RENTED_STATUSES.includes(b.status));
       const reserved = covering.some((b) => RESERVED_STATUSES.includes(b.status));
 
-      const unitsTaken = covering.reduce(
-        (sum, b) => sum + (b.equipmentDetail?.quantity ?? 1),
-        0,
-      );
+      const unitsTaken = covering.reduce((sum, b) => sum + (b.equipmentDetail?.quantity ?? 1), 0);
       const blockedUnits = block ? (block.unitId ? 1 : unitsTotal) : 0;
 
       let state: AvailabilityDayResponse['state'] = 'AVAILABLE';
@@ -649,9 +654,7 @@ export class EquipmentService {
       },
     });
     if (conflicting > 0) {
-      throw new ConflictException(
-        'These dates include a confirmed booking and cannot be blocked',
-      );
+      throw new ConflictException('These dates include a confirmed booking and cannot be blocked');
     }
 
     await this.prisma.blockedDateRange.create({
@@ -807,7 +810,7 @@ export class EquipmentService {
         value: s.value,
       })),
       includedItems: listing.includedItems.map((i) => ({
-        kind: i.kind as IncludedItemKind,
+        kind: i.kind,
         name: i.name,
         quantity: i.quantity,
       })),

@@ -5,13 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  BookingStatus,
-  Prisma,
-  Role,
-  SettlementStatus,
-  SupplierResponse,
-} from '@prisma/client';
+import { BookingStatus, Prisma, Role, SettlementStatus, SupplierResponse } from '@prisma/client';
 import { paginate, type Paginated } from '../../common/dto/pagination.dto';
 import { DEFAULT_CURRENCY } from '../../common/money';
 import { PrismaService } from '../prisma/prisma.service';
@@ -89,7 +83,11 @@ export class VendorBookingsService {
       this.prisma.booking.count({ where }),
     ]);
 
-    return paginate(rows.map((b) => this.toSummary(b)), total, query);
+    return paginate(
+      rows.map((b) => this.toSummary(b)),
+      total,
+      query,
+    );
   }
 
   async findOne(userId: string, reference: string): Promise<VendorBookingDetailResponse> {

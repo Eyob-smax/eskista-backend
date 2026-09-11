@@ -18,6 +18,8 @@ export interface PutFileParams {
  */
 export interface StorageDriver {
   put(params: PutFileParams): Promise<StoredFile>;
+  /** Reads a stored object back. Used for frozen agreement bodies, never for user media. */
+  read(key: string): Promise<Buffer>;
   remove(key: string): Promise<void>;
   urlFor(key: string): string;
 }

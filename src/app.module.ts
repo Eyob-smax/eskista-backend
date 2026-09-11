@@ -6,10 +6,12 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { validateEnv, type Env } from './config/env.validation';
+import { AgreementsModule } from './modules/agreements/agreements.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { EquipmentModule } from './modules/equipment/equipment.module';
 import { HealthModule } from './modules/health/health.module';
 import { NumberingModule } from './modules/numbering/numbering.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { VendorBookingsModule } from './modules/vendor-bookings/vendor-bookings.module';
 import { VendorModule } from './modules/vendor/vendor.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
@@ -70,6 +72,8 @@ import { StorageModule } from './modules/storage/storage.module';
     PrismaModule,
     StorageModule,
     NumberingModule,
+    SettingsModule,
+    AgreementsModule,
     AuthModule,
     HealthModule,
 

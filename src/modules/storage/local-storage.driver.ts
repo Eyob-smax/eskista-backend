@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, extname, join, posix } from 'node:path';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -29,8 +29,23 @@ export class LocalStorageDriver implements StorageDriver {
     return { key, url: this.urlFor(key), size: buffer.byteLength, mimeType };
   }
 
+  async read(key: string): Promise<Buffer> {
+    return readFile(join(this.root, this.safeKey(key)));
+  }
+
   async remove(key: string): Promise<void> {
-    await unlink(join(this.root, key)).catch(() => undefined);
+    await unlink(join(this.root, this.safeKey(key))).catch(() => undefined);
+  }
+
+  /**
+   * Rejects traversal. Keys are generated internally, but `read` and `remove` take them
+   * from database rows, and a key is only ever as trustworthy as whatever wrote it.
+   */
+  private safeKey(key: string): string {
+    if (key.includes('..') || key.startsWith('/') || /^[a-zA-Z]:/.test(key)) {
+      throw new Error(`Refusing to resolve unsafe storage key: ${key}`);
+    }
+    return key;
   }
 
   urlFor(key: string): string {

@@ -11,7 +11,8 @@ import {
   MinLength,
 } from 'class-validator';
 
-const trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
+const trim = () =>
+  Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value));
 
 export class CreateVendorProfileDto {
   @ApiProperty({ example: 'Afro Studio' })
@@ -160,8 +161,7 @@ export class VendorProfileResponse {
   documents!: VendorDocumentResponse[];
 
   @ApiProperty({
-    description:
-      'What still blocks verification. Empty means the profile is ready to submit.',
+    description: 'What still blocks verification. Empty means the profile is ready to submit.',
     type: [String],
   })
   outstandingRequirements!: string[];

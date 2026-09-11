@@ -25,7 +25,8 @@ import {
 } from 'class-validator';
 import { PaginationQuery, SearchQuery, SortQuery } from '../../../common/dto/pagination.dto';
 
-const trim = () => Transform(({ value }) => (typeof value === 'string' ? value.trim() : value));
+const trim = () =>
+  Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value));
 
 // ── Nested pieces ────────────────────────────────────────────────────────────
 

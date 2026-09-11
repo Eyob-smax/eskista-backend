@@ -6,6 +6,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AgreementStatus,
+  AgreementType,
   BookingStatus,
   DocumentStatus,
   ListingStatus,
@@ -24,6 +26,12 @@ import {
   UPLOAD_LIMITS,
   type UploadedFile,
 } from '../../common/upload';
+import { AgreementsService } from '../agreements/agreements.service';
+import type {
+  AgreementBodyResponse,
+  AgreementResponse,
+  SignAgreementDto,
+} from '../agreements/dto/agreement.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
 import type {
@@ -48,6 +56,7 @@ const PENDING_BOOKING_STATUSES: BookingStatus[] = [
 
 const vendorInclude = {
   documents: { orderBy: { createdAt: 'desc' } },
+  agreements: true,
 } satisfies Prisma.VendorProfileInclude;
 
 type VendorWithDocuments = Prisma.VendorProfileGetPayload<{ include: typeof vendorInclude }>;
@@ -56,6 +65,7 @@ type VendorWithDocuments = Prisma.VendorProfileGetPayload<{ include: typeof vend
 export class VendorService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly agreements: AgreementsService,
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
@@ -190,10 +200,7 @@ export class VendorService {
       field: 'document',
     });
 
-    if (
-      type === SupplierDocumentType.BUSINESS_REGISTRATION &&
-      vendor.kind !== VendorKind.COMPANY
-    ) {
+    if (type === SupplierDocumentType.BUSINESS_REGISTRATION && vendor.kind !== VendorKind.COMPANY) {
       throw new BadRequestException(
         'Business registration applies to company vendors only. Switch the vendor kind to COMPANY first.',
       );
@@ -270,21 +277,57 @@ export class VendorService {
       throw new BadRequestException('Suspended profiles cannot be resubmitted; contact support');
     }
 
-    const outstanding = this.outstandingRequirements(vendor);
-    if (outstanding.length > 0) {
+    const blocking = this.outstandingRequirements(vendor);
+    if (blocking.length > 0) {
       throw new BadRequestException({
         message: 'Profile is not ready for verification',
-        outstandingRequirements: outstanding,
+        outstandingRequirements: blocking,
       });
     }
 
-    const updated = await this.prisma.vendorProfile.update({
+    await this.prisma.vendorProfile.update({
       where: { id: vendor.id },
       data: { status: VerificationStatus.PENDING_REVIEW, rejectionReason: null },
-      include: vendorInclude,
     });
 
-    return this.toProfileResponse(updated);
+    // Issued on submission rather than after approval, so the vendor can read and sign
+    // the contract while Eskista reviews their documents instead of waiting twice.
+    await this.agreements.issueVendorOnboarding(vendor.id);
+
+    return this.toProfileResponse(await this.requireVendor(userId));
+  }
+
+  /** The Eskista-to-vendor agreement with its frozen text, for display before signing. */
+  async getOnboardingAgreement(userId: string): Promise<AgreementBodyResponse> {
+    const vendor = await this.requireVendor(userId);
+    const agreement = vendor.agreements.find((a) => a.kind === AgreementType.VENDOR_ONBOARDING);
+    if (!agreement) {
+      throw new NotFoundException(
+        'No vendor agreement has been issued yet. Submit your profile for verification first.',
+      );
+    }
+
+    return {
+      ...this.toAgreementResponse(agreement),
+      body: await this.agreements.getBody(agreement.id, userId),
+    };
+  }
+
+  async signOnboardingAgreement(
+    userId: string,
+    dto: SignAgreementDto,
+    ipAddress?: string,
+  ): Promise<AgreementResponse> {
+    const vendor = await this.requireVendor(userId);
+    const agreement = vendor.agreements.find((a) => a.kind === AgreementType.VENDOR_ONBOARDING);
+    if (!agreement) throw new NotFoundException('No vendor agreement has been issued yet');
+
+    const signed = await this.agreements.sign(agreement.id, userId, {
+      signerName: dto.signerName,
+      signerPhone: dto.signerPhone ?? vendor.phone ?? undefined,
+      ipAddress,
+    });
+    return this.toAgreementResponse(signed);
   }
 
   /** The vendor home screen: four KPI tiles plus the "Needs Your Attention" feed. */
@@ -388,20 +431,19 @@ export class VendorService {
   }
 
   /**
-   * What still blocks verification, per the client's requirements: Fayda ID always,
-   * business registration for companies, and the signed rental agreement for everyone.
+   * What still blocks submission.
+   *
+   * Client, confirmed: a COMPANY must supply a business registration; for an INDIVIDUAL
+   * the Fayda ID alone is enough. The rental agreement is deliberately absent here — it
+   * is no longer an uploaded document but a generated Eskista-to-vendor agreement the
+   * vendor signs, tracked in postSubmissionRequirements below.
    */
   private outstandingRequirements(vendor: VendorWithDocuments): string[] {
     const present = new Set(
-      vendor.documents
-        .filter((d) => d.status !== DocumentStatus.REJECTED)
-        .map((d) => d.type),
+      vendor.documents.filter((d) => d.status !== DocumentStatus.REJECTED).map((d) => d.type),
     );
 
-    const required: SupplierDocumentType[] = [
-      SupplierDocumentType.FAYDA_ID,
-      SupplierDocumentType.RENTAL_AGREEMENT,
-    ];
+    const required: SupplierDocumentType[] = [SupplierDocumentType.FAYDA_ID];
     if (vendor.kind === VendorKind.COMPANY) {
       required.push(SupplierDocumentType.BUSINESS_REGISTRATION);
     }
@@ -409,7 +451,6 @@ export class VendorService {
     const labels: Record<string, string> = {
       FAYDA_ID: 'Upload your Fayda ID',
       BUSINESS_REGISTRATION: 'Upload your business registration',
-      RENTAL_AGREEMENT: 'Upload the signed rental agreement',
     };
 
     const missing = required.filter((type) => !present.has(type)).map((t) => labels[t] ?? t);
@@ -420,8 +461,56 @@ export class VendorService {
     return missing;
   }
 
+  /**
+   * Requirements that only apply once the profile has been submitted — currently the
+   * Eskista-to-vendor agreement, which is issued at submission and must be signed before
+   * Eskista can verify the profile.
+   */
+  private postSubmissionRequirements(vendor: VendorWithDocuments): string[] {
+    const onboarding = vendor.agreements.find((a) => a.kind === AgreementType.VENDOR_ONBOARDING);
+    if (!onboarding) return [];
+    if (onboarding.status === AgreementStatus.SIGNED) return [];
+    if (onboarding.status === AgreementStatus.DECLINED) {
+      return ['You declined the Eskista vendor agreement - contact support to continue'];
+    }
+    return ['Review and sign the Eskista vendor agreement'];
+  }
+
+  private toAgreementResponse(agreement: {
+    id: string;
+    kind: AgreementType;
+    status: AgreementStatus;
+    version: number;
+    contentHash: string | null;
+    documentKey: string | null;
+    sentAt: Date | null;
+    signedAt: Date | null;
+    signerName: string | null;
+    declinedAt: Date | null;
+    declineReason: string | null;
+    createdAt: Date;
+  }): AgreementResponse {
+    return {
+      id: agreement.id,
+      kind: agreement.kind,
+      status: agreement.status,
+      version: agreement.version,
+      contentHash: agreement.contentHash,
+      documentUrl: agreement.documentKey ? this.storage.urlFor(agreement.documentKey) : null,
+      sentAt: agreement.sentAt,
+      signedAt: agreement.signedAt,
+      signerName: agreement.signerName,
+      declinedAt: agreement.declinedAt,
+      declineReason: agreement.declineReason,
+      createdAt: agreement.createdAt,
+    };
+  }
+
   private toProfileResponse(vendor: VendorWithDocuments): VendorProfileResponse {
-    const outstanding = this.outstandingRequirements(vendor);
+    const outstanding = [
+      ...this.outstandingRequirements(vendor),
+      ...this.postSubmissionRequirements(vendor),
+    ];
     return {
       id: vendor.id,
       businessName: vendor.businessName,

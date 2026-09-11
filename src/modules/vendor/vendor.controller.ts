@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Ip,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -23,6 +24,11 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import {
+  AgreementBodyResponse,
+  AgreementResponse,
+  SignAgreementDto,
+} from '../agreements/dto/agreement.dto';
 import { CurrentUser, Roles } from '../auth/auth.decorators';
 import type { UploadedFile } from '../../common/upload';
 import {
@@ -121,7 +127,9 @@ export class VendorController {
     summary: 'Upload a verification document',
     description:
       'Re-uploading the same type replaces the previous file. PNG, JPEG, WebP or PDF, ' +
-      'up to 5MB.',
+      'up to 5MB. Fayda ID is required for every vendor; business registration only ' +
+      'for company vendors. The rental agreement is not uploaded here - Eskista ' +
+      'generates it for signature at /vendor/me/agreement.',
   })
   @ApiBody({
     schema: {
@@ -131,7 +139,7 @@ export class VendorController {
         file: { type: 'string', format: 'binary' },
         type: {
           type: 'string',
-          enum: ['FAYDA_ID', 'BUSINESS_REGISTRATION', 'RENTAL_AGREEMENT', 'TIN_CERTIFICATE', 'OTHER'],
+          enum: ['FAYDA_ID', 'BUSINESS_REGISTRATION', 'TIN_CERTIFICATE', 'OTHER'],
         },
       },
     },
@@ -168,6 +176,38 @@ export class VendorController {
   @ApiOkResponse({ type: VendorProfileResponse })
   submitForVerification(@CurrentUser('id') userId: string): Promise<VendorProfileResponse> {
     return this.vendorService.submitForVerification(userId);
+  }
+
+  @Get('me/agreement')
+  @Roles('VENDOR')
+  @ApiOperation({
+    summary: 'Read the Eskista vendor agreement',
+    description:
+      'Returns the agreement between Eskista and this vendor, including the exact text ' +
+      'frozen when it was issued. Render `body` for the signer — re-rendering from the ' +
+      'template would not match `contentHash`. Issued when the profile is submitted; the ' +
+      'wording differs for individual and company vendors.',
+  })
+  @ApiOkResponse({ type: AgreementBodyResponse })
+  getAgreement(@CurrentUser('id') userId: string): Promise<AgreementBodyResponse> {
+    return this.vendorService.getOnboardingAgreement(userId);
+  }
+
+  @Post('me/agreement/sign')
+  @Roles('VENDOR')
+  @ApiOperation({
+    summary: 'Sign the Eskista vendor agreement',
+    description:
+      'Records the signature against the frozen content hash, with the signer name and ' +
+      'originating IP address. Signing is required before Eskista can verify the profile.',
+  })
+  @ApiOkResponse({ type: AgreementResponse })
+  signAgreement(
+    @CurrentUser('id') userId: string,
+    @Body() dto: SignAgreementDto,
+    @Ip() ipAddress: string,
+  ): Promise<AgreementResponse> {
+    return this.vendorService.signOnboardingAgreement(userId, dto, ipAddress);
   }
 
   @Get('me/dashboard')

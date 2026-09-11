@@ -49,11 +49,17 @@ model User {
   telegramUsername String?
 
   /// Primary contact number.
-  phone String? @unique
+  phone           String? @unique
   /// Client request: a second reachable number, collected at onboarding or first booking.
   additionalPhone String?
 
   languageCode String @default("en")
+
+  /// Ethiopian TIN, for customers who need it printed on their invoice.
+  tinNumber String?
+  /// Client: "some customers (even companies) might not want to pay the VAT." This is
+  /// the default for new invoices; an admin can still override per invoice.
+  vatExempt Boolean @default(false)
 
   /// Which experience the user is currently in. They can switch at any time, and
   /// switching must never change what they are *authorised* to do — see RoleMembership.
@@ -76,21 +82,22 @@ model User {
   statusEvents      BookingStatusEvent[]
   reviewsAuthored   Review[]                  @relation("ReviewAuthor")
   signedAgreements  Agreement[]               @relation("AgreementSigner")
+  agreementsAsParty Agreement[]               @relation("AgreementCounterparty")
   messages          Message[]
   conversations     ConversationParticipant[]
 
   // ── Admin-side back-references ──
-  verifiedVendors    VendorProfile[]   @relation("VendorVerifiedBy")
-  verifiedTalents    TalentProfile[]   @relation("TalentVerifiedBy")
-  reviewedDocuments  SupplierDocument[]
-  reviewedListings   Listing[]
-  approvedBookings   Booking[]         @relation("BookingApprovedBy")
-  verifiedPayments   Payment[]
-  inspectionsDone    Inspection[]
-  settlementsPaid    Settlement[]      @relation("SettlementPaidBy")
-  batchesPaid        SettlementBatch[] @relation("BatchPaidBy")
-  invoicesIssued     Invoice[]
-  auditEntries       AdminAuditLog[]
+  verifiedVendors   VendorProfile[]    @relation("VendorVerifiedBy")
+  verifiedTalents   TalentProfile[]    @relation("TalentVerifiedBy")
+  reviewedDocuments SupplierDocument[]
+  reviewedListings  Listing[]
+  approvedBookings  Booking[]          @relation("BookingApprovedBy")
+  verifiedPayments  Payment[]
+  inspectionsDone   Inspection[]
+  settlementsPaid   Settlement[]       @relation("SettlementPaidBy")
+  batchesPaid       SettlementBatch[]  @relation("BatchPaidBy")
+  invoicesIssued    Invoice[]
+  auditEntries      AdminAuditLog[]
 
   @@index([isBlocked])
   @@index([phone])
@@ -218,10 +225,10 @@ model VendorProfile {
   logoKey      String?
   about        String?
 
-  status             VerificationStatus @default(DRAFT)
-  rejectionReason    String?
-  verifiedAt         DateTime?
-  verifiedByAdminId  String?            @db.Uuid
+  status            VerificationStatus @default(DRAFT)
+  rejectionReason   String?
+  verifiedAt        DateTime?
+  verifiedByAdminId String?            @db.Uuid
 
   /// Per-vendor override of the platform default commission, in basis points.
   commissionRateBps Int?
@@ -236,6 +243,7 @@ model VendorProfile {
   user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   verifiedByAdmin User?              @relation("VendorVerifiedBy", fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
   documents       SupplierDocument[]
+  agreements      Agreement[]
   listings        Listing[]
   bookings        Booking[]
   settlements     Settlement[]
@@ -295,9 +303,10 @@ model TalentProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user            User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  verifiedByAdmin User?                   @relation("TalentVerifiedBy", fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
+  user            User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verifiedByAdmin User?                    @relation("TalentVerifiedBy", fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
   documents       SupplierDocument[]
+  agreements      Agreement[]
   services        TalentService[]
   portfolio       PortfolioItem[]
   blockedDates    TalentBlockedDateRange[]
@@ -363,12 +372,13 @@ model TalentBlockedDateRange {
   @@index([talentProfileId, startDate, endDate])
 }
 
-/// Client: "Only business registration and Fayda Id will be required, and of course the
-/// rental agreement." One table serves vendors and talent; exactly one owner is set.
+/// Client, confirmed: a company vendor must supply a business registration; for an
+/// individual, the Fayda ID alone is enough. The rental agreement is NOT here — it is a
+/// generated, signed Agreement between Eskista and the vendor (see AgreementType).
+/// One table serves vendors and talent; exactly one owner is set.
 enum SupplierDocumentType {
   FAYDA_ID
   BUSINESS_REGISTRATION
-  RENTAL_AGREEMENT
   TIN_CERTIFICATE
   OTHER
 }
@@ -728,18 +738,21 @@ model Booking {
 
   // ── Priced snapshot. "Estimated" until approval, then frozen so a later price
   //    change on the listing cannot rewrite history. ──
-  currency             String    @default("ETB")
-  unitPriceMinor       Int
-  subtotalMinor        Int
-  deliveryFeeMinor     Int       @default(0)
-  securityDepositMinor Int       @default(0)
-  discountMinor        Int       @default(0)
-  taxMinor             Int       @default(0)
-  totalMinor           Int
-  commissionRateBps    Int
-  commissionMinor      Int
+  currency              String    @default("ETB")
+  unitPriceMinor        Int
+  subtotalMinor         Int
+  deliveryFeeMinor      Int       @default(0)
+  securityDepositMinor  Int       @default(0)
+  discountMinor         Int       @default(0)
+  /// Snapshot of the rate actually applied, so a later change to the platform VAT
+  /// setting cannot silently restate an existing booking.
+  taxRateBps            Int       @default(0)
+  taxMinor              Int       @default(0)
+  totalMinor            Int
+  commissionRateBps     Int
+  commissionMinor       Int
   supplierEarningsMinor Int
-  pricedAt             DateTime?
+  pricedAt              DateTime?
 
   /// Return deadline carries a time: "no later than 5:00 PM".
   dueAt DateTime?
@@ -767,7 +780,7 @@ model Booking {
   invoice       Invoice?
   agreements    Agreement[]
   reviews       Review[]
-  conversation  Conversation?
+  conversations Conversation[]
 
   @@index([customerId, status])
   @@index([vendorId, status])
@@ -791,14 +804,14 @@ model EquipmentBookingDetail {
 /// Talent-only booking fields. The client's flow ends "once the talent accepts and the
 /// final price is set", so the customer states a budget and the agreed figure is separate.
 model TalentBookingDetail {
-  bookingId     String  @id @db.Uuid
-  eventLocation String
-  requirements  String?
-  headcount     Int?
-  budgetMinor   Int?
+  bookingId       String    @id @db.Uuid
+  eventLocation   String
+  requirements    String?
+  headcount       Int?
+  budgetMinor     Int?
   /// Agreed during Eskista's coordination step; drives the invoice, not `budgetMinor`.
   finalPriceMinor Int?
-  agreedAt      DateTime?
+  agreedAt        DateTime?
 
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 }
@@ -843,7 +856,13 @@ model BookingStatusEvent {
 
 // ═════════════════════════════════════════════════════════ agreements
 
+/// Two distinct contracts, confirmed by the client:
+///   • Eskista ↔ Supplier, signed once at onboarding.
+///   • Eskista ↔ Customer, generated per booking.
+/// Eskista is always one party; suppliers and customers never contract with each other.
 enum AgreementType {
+  VENDOR_ONBOARDING
+  TALENT_ONBOARDING
   EQUIPMENT_RENTAL
   TALENT_ENGAGEMENT
 }
@@ -857,7 +876,7 @@ enum AgreementStatus {
 }
 
 /// Versioned contract text. Never edit a published version — add a new one, so a signed
-/// agreement can always be reproduced exactly as the customer saw it.
+/// agreement can always be reproduced exactly as the signer saw it.
 model AgreementTemplate {
   id           String        @id @default(uuid()) @db.Uuid
   key          String
@@ -865,23 +884,34 @@ model AgreementTemplate {
   version      Int
   title        String
   bodyMarkdown String
+  /// Client: the individual/company split "will also affect the agreements generated".
+  /// An individual has no business registration to warrant, so the onboarding text
+  /// differs. Null means the template applies to either kind.
+  vendorKind   VendorKind?
   isActive     Boolean       @default(false)
   createdAt    DateTime      @default(now())
 
   agreements Agreement[]
 
   @@unique([key, version])
-  @@index([kind, isActive])
+  @@index([kind, vendorKind, isActive])
 }
 
-/// Client: "Generate Agreement per Booking that the Customer will sign."
 model Agreement {
   id         String          @id @default(uuid()) @db.Uuid
-  bookingId  String          @db.Uuid
-  templateId String?         @db.Uuid
   kind       AgreementType
+  templateId String?         @db.Uuid
   version    Int
   status     AgreementStatus @default(DRAFT)
+
+  /// Exactly one subject is set, matching `kind`: a booking for the customer-facing
+  /// agreements, a supplier profile for the onboarding ones.
+  bookingId       String? @db.Uuid
+  vendorId        String? @db.Uuid
+  talentProfileId String? @db.Uuid
+
+  /// The party Eskista is contracting with, and who must sign.
+  counterpartyId String @db.Uuid
 
   /// Rendered PDF in the storage driver, plus a hash of the exact bytes signed.
   documentKey String?
@@ -900,12 +930,20 @@ model Agreement {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  booking  Booking            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  template AgreementTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  signedBy User?              @relation("AgreementSigner", fields: [signedById], references: [id], onDelete: SetNull)
+  booking       Booking?           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  vendor        VendorProfile?     @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  talentProfile TalentProfile?     @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
+  template      AgreementTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  counterparty  User               @relation("AgreementCounterparty", fields: [counterpartyId], references: [id])
+  signedBy      User?              @relation("AgreementSigner", fields: [signedById], references: [id], onDelete: SetNull)
 
+  // Postgres treats NULLs as distinct, so these constrain only the rows that set the
+  // corresponding subject — one agreement of each kind per booking / vendor / talent.
   @@unique([bookingId, kind])
+  @@unique([vendorId, kind])
+  @@unique([talentProfileId, kind])
   @@index([status])
+  @@index([counterpartyId, status])
 }
 
 // ═════════════════════════════════════════════════════════ invoicing
@@ -932,15 +970,24 @@ model Invoice {
   deliveryFeeMinor     Int    @default(0)
   securityDepositMinor Int    @default(0)
   discountMinor        Int    @default(0)
-  taxMinor             Int    @default(0)
-  totalMinor           Int
-  amountPaidMinor      Int    @default(0)
+
+  /// Client: VAT is configurable per invoice, because some customers — including
+  /// companies — do not pay it. `taxRateBps` records the rate actually charged, so a
+  /// reissued PDF always matches the original.
+  taxRateBps         Int     @default(0)
+  taxMinor           Int     @default(0)
+  vatExempt          Boolean @default(false)
+  vatExemptionReason String?
+
+  totalMinor      Int
+  amountPaidMinor Int @default(0)
 
   /// Snapshot of biller/customer details, so a reissued PDF matches the original even
   /// after the profile changes.
   billedToName    String
   billedToPhone   String?
   billedToAddress String?
+  billedToTin     String?
 
   pdfKey     String?
   issuedAt   DateTime?
@@ -1063,17 +1110,17 @@ enum InspectionOutcome {
 
 /// "Equipment will be inspected on receipt."
 model Inspection {
-  id             String            @id @default(uuid()) @db.Uuid
-  bookingId      String            @unique @db.Uuid
-  outcome        InspectionOutcome
-  condition      ConditionGrade?
-  damageNotes    String?
+  id                   String            @id @default(uuid()) @db.Uuid
+  bookingId            String            @unique @db.Uuid
+  outcome              InspectionOutcome
+  condition            ConditionGrade?
+  damageNotes          String?
   /// Damage or late fee withheld from the deposit.
-  feeMinor       Int               @default(0)
-  depositReturnedMinor Int         @default(0)
-  currency       String            @default("ETB")
-  inspectedById  String?           @db.Uuid
-  inspectedAt    DateTime          @default(now())
+  feeMinor             Int               @default(0)
+  depositReturnedMinor Int               @default(0)
+  currency             String            @default("ETB")
+  inspectedById        String?           @db.Uuid
+  inspectedAt          DateTime          @default(now())
 
   booking     Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   inspectedBy User?             @relation(fields: [inspectedById], references: [id], onDelete: SetNull)
@@ -1083,8 +1130,8 @@ model Inspection {
 }
 
 model InspectionPhoto {
-  id           String @id @default(uuid()) @db.Uuid
-  inspectionId String @db.Uuid
+  id           String  @id @default(uuid()) @db.Uuid
+  inspectionId String  @db.Uuid
   fileKey      String
   caption      String?
 
@@ -1146,9 +1193,9 @@ model SettlementBatch {
 
 /// Per-booking payout line. Drives the Earnings screen's Paid/Pending chips.
 model Settlement {
-  id        String @id @default(uuid()) @db.Uuid
-  bookingId String @unique @db.Uuid
-  batchId   String? @db.Uuid
+  id        String    @id @default(uuid()) @db.Uuid
+  bookingId String    @unique @db.Uuid
+  batchId   String?   @db.Uuid
   payeeKind PayeeKind
 
   vendorId        String? @db.Uuid
@@ -1208,8 +1255,8 @@ model Review {
   comment String?
 
   /// Admin can withhold a review from public listings without deleting it.
-  isPublished Boolean   @default(true)
-  hiddenAt    DateTime?
+  isPublished  Boolean   @default(true)
+  hiddenAt     DateTime?
   hiddenReason String?
 
   createdAt DateTime @default(now())
@@ -1231,26 +1278,38 @@ model Review {
 
 // ═════════════════════════════════════════════════════════ messaging
 
-/// Client's talent flow: "Manage: Track your booking's progress and message the talent
-/// directly through Eskista."
+/// Eskista mediates ALL communication, for both rental and talent — confirmed by the
+/// client, resolving the apparent contradiction between the talent flow ("message the
+/// talent directly through Eskista") and the vendor screens ("Eskista manages all
+/// communication with the customer").
 ///
-/// NOTE: the equipment vendor screens say the opposite — "Eskista manages all
-/// communication with the customer". `isAdminMediated` records which regime applies, so
-/// equipment threads can stay admin-only while talent threads are direct.
+/// Consequence: there is no customer↔supplier thread. A booking has up to two
+/// conversations, each between Eskista and one party, and every thread must include an
+/// ADMIN participant.
+/// Which side of a booking Eskista is talking to on this thread.
+enum ConversationParty {
+  CUSTOMER
+  VENDOR
+  TALENT
+}
+
 model Conversation {
-  id              String    @id @default(uuid()) @db.Uuid
-  bookingId       String?   @unique @db.Uuid
-  subject         String?
-  isAdminMediated Boolean   @default(false)
-  lastMessageAt   DateTime?
-  closedAt        DateTime?
-  createdAt       DateTime  @default(now())
+  id            String            @id @default(uuid()) @db.Uuid
+  bookingId     String?           @db.Uuid
+  party         ConversationParty
+  subject       String?
+  lastMessageAt DateTime?
+  closedAt      DateTime?
+  createdAt     DateTime          @default(now())
 
   booking      Booking?                  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   participants ConversationParticipant[]
   messages     Message[]
 
+  /// One thread per counterparty per booking: Eskista↔customer and Eskista↔supplier.
+  @@unique([bookingId, party])
   @@index([lastMessageAt])
+  @@index([party, closedAt])
 }
 
 model ConversationParticipant {
