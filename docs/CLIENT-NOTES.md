@@ -57,25 +57,70 @@ there is nothing to hand back.
 The customer states a **budget**; the agreed figure is a separate field. Invoicing uses
 `finalPriceMinor`, never `budgetMinor`.
 
-## ⚠ Open questions
+## ✅ Resolved by the client (2026-09-11)
 
-1. **Messaging contradicts the equipment designs.** The talent flow says the customer can
-   "message the talent directly through Eskista", but the vendor booking screens state
-   *"Eskista manages all communication with the customer. For questions or changes, contact
-   Eskista Support."* Modelled as `Conversation.isAdminMediated` so the two regimes can
-   coexist — talent threads direct, equipment threads admin-only. **Confirm that's intended**,
-   because it means equipment vendors still cannot contact customers.
-2. **Does an individual vendor need a business registration?** "Vendor (can be individual or
-   company). Only business registration and Fayda Id will be required" reads as though both
-   are always mandatory, which an individual freelancer may not have. Current assumption:
-   Fayda ID always required; business registration required only when `kind = COMPANY`.
-3. **Who signs the "rental agreement" the client lists under vendor requirements?** It is
-   currently a `SupplierDocument` the vendor uploads at onboarding — distinct from the
-   per-booking `Agreement` the *customer* signs. Confirm these are two different documents.
-4. **Talent verification requirements** were not specified. Currently reuses
-   `SupplierDocument` with Fayda ID; no portfolio verification.
-5. **Tax/VAT.** `taxMinor` exists on `Booking` and `Invoice` but no rate was given. Ethiopian
-   VAT is 15% — confirm whether it applies and whether prices are inclusive or exclusive.
-   This changes every displayed total.
-6. **Deposit handling.** Is the security deposit collected up front with the rental payment,
-   or authorised separately? Currently modelled as a line on the same invoice.
+**1. Messaging — Eskista mediates everything, rental *and* talent.**
+The talent flow's "message the talent directly" means *through* Eskista, not peer-to-peer.
+`Conversation.isAdminMediated` is gone; instead each thread carries a
+`party` (`CUSTOMER | VENDOR | TALENT`) and every thread is Eskista ↔ that party. A booking
+therefore has up to two threads and `Conversation.bookingId` is no longer unique —
+`@@unique([bookingId, party])` replaces it. There is no customer↔supplier thread anywhere
+in the model, which is now a structural guarantee rather than a convention.
+
+**2. Vendor documents depend on kind.**
+`COMPANY` → Fayda ID **and** business registration. `INDIVIDUAL` → Fayda ID alone.
+Enforced in `VendorService.outstandingRequirements`, and uploading a business registration
+as an individual is rejected outright rather than silently stored.
+
+**3. Two separate agreements, both with Eskista as a party.**
+
+| | Parties | Scope | Where |
+| --- | --- | --- | --- |
+| Vendor agreement | Eskista ↔ Vendor | once, at onboarding | `AgreementType.VENDOR_ONBOARDING` |
+| Rental agreement | Eskista ↔ Customer | per booking | `AgreementType.EQUIPMENT_RENTAL` / `TALENT_ENGAGEMENT` |
+
+This removed `SupplierDocumentType.RENTAL_AGREEMENT` — the vendor agreement is **generated
+and signed in-app**, not uploaded. `Agreement.bookingId` is now nullable and
+`vendorId`/`talentProfileId` were added, with `counterpartyId` naming who must sign.
+
+Per answer 2, the vendor agreement text **differs by vendor kind**: the company template
+carries corporate-standing and signing-authority warranties an individual cannot give.
+`AgreementTemplate.vendorKind` selects it, falling back to a generic template.
+
+The agreement is issued when the vendor submits for verification — not after approval — so
+they can read and sign while Eskista reviews their documents instead of waiting twice.
+
+**4. VAT is decided per invoice.**
+`PlatformSetting` holds `tax.vat_enabled` and `tax.vat_bps` (15%) as the default; each
+invoice stores `taxRateBps`, `vatExempt` and `vatExemptionReason`, and `User.vatExempt`
+provides a per-customer default an admin can override. `User.tinNumber` is snapshotted onto
+the invoice as `billedToTin`. `Booking.taxRateBps` records the rate actually applied, so
+changing the platform default can never restate an existing booking.
+
+### Signature integrity
+
+A signature is only worth something if you can prove what was signed. At issue time the
+rendered body is frozen to storage and hashed (`contentHash`, SHA-256); signing records the
+signer's name, phone and IP. Re-rendering from a later template version cannot change what
+was agreed.
+
+PDF rendering is **not yet implemented** — the frozen artefact is Markdown today. It hashes
+and archives identically, so adding a PDF renderer later invalidates nothing already signed.
+
+## ⚠ Still open
+
+1. **Is VAT inclusive or exclusive?** Implemented as **exclusive** — 15% added on top of
+   rental + delivery. If listed prices are meant to be VAT-inclusive, every total in the app
+   changes and the calculation inverts.
+2. **What is VAT charged on?** Currently rental + delivery, excluding the security deposit
+   (a refundable holding, not consideration). Confirm the deposit is genuinely outside scope.
+3. **Who sets VAT exemption?** Currently a per-customer default that an admin overrides per
+   invoice. Should a customer be able to declare exemption themselves, with a TIN, or must
+   Eskista set it?
+4. **Does talent sign an onboarding agreement too?** `TALENT_ONBOARDING` exists in the enum
+   but has no template. What does talent need to supply — Fayda ID only?
+5. **Commission on talent** — the same 15% as equipment, or a different rate?
+6. **Messaging scope.** Now that Eskista mediates everything: do vendors and talent get a
+   messaging inbox at all, or does Eskista reach them by phone and Telegram, with threads
+   existing only on the customer side?
+7. **Deposit refund timing** — released at inspection, or on a later schedule?

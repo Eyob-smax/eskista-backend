@@ -10,6 +10,9 @@
  *
  * Run with:  pnpm db:seed
  */
+import { createHash } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import {
   AgreementStatus,
   AgreementType,
@@ -43,6 +46,7 @@ import {
 const prisma = new PrismaClient();
 
 const DEFAULT_COMMISSION_BPS = 1500; // 15%
+const VAT_BPS = 1500; // Ethiopian VAT, 15%
 const CURRENCY = 'ETB';
 
 /** ETB major → minor units. */
@@ -54,6 +58,22 @@ const daysFromNow = (days: number): Date => {
   d.setUTCDate(d.getUTCDate() + days);
   return d;
 };
+
+const STORAGE_ROOT = process.env.STORAGE_LOCAL_ROOT ?? './storage';
+
+/**
+ * Writes a frozen agreement body into the storage root and returns its real SHA-256.
+ *
+ * The seed previously recorded a documentKey with no file behind it, which made
+ * GET /vendor/me/agreement fail once anything actually tried to read it. Seeded data
+ * should be indistinguishable from data the app produced itself.
+ */
+function freezeSeedDocument(key: string, body: string): string {
+  const absolute = join(STORAGE_ROOT, key);
+  mkdirSync(dirname(absolute), { recursive: true });
+  writeFileSync(absolute, body, 'utf8');
+  return `sha256:${createHash('sha256').update(Buffer.from(body, 'utf8')).digest('hex')}`;
+}
 
 const inclusiveDays = (start: Date, end: Date): number =>
   Math.max(Math.round((end.getTime() - start.getTime()) / 86_400_000), 1);
@@ -87,6 +107,9 @@ interface SeedUser {
   telegramUserId: string;
   roles: Role[];
   activeRole: Role;
+  /// Seeded VAT-exempt so the per-invoice switch has a worked example.
+  vatExempt?: boolean;
+  tinNumber?: string;
 }
 
 const USERS: SeedUser[] = [
@@ -134,6 +157,8 @@ const USERS: SeedUser[] = [
     telegramUserId: '900000005',
     roles: [Role.CUSTOMER],
     activeRole: Role.CUSTOMER,
+    vatExempt: true,
+    tinNumber: '0012345678',
   },
   {
     key: 'talentDawit',
@@ -157,6 +182,8 @@ async function seedUsers(): Promise<Map<string, string>> {
         name: u.name,
         email: u.email,
         emailVerified: true,
+        vatExempt: u.vatExempt ?? false,
+        tinNumber: u.tinNumber,
         phone: u.phone,
         telegramUserId: u.telegramUserId,
         activeRole: u.activeRole,
@@ -220,9 +247,16 @@ async function seedPlatformSettings(): Promise<void> {
       description: 'Flat delivery fee inside Addis Ababa, in minor units.',
     },
     {
+      key: 'tax.vat_enabled',
+      value: true,
+      description: 'Master switch for VAT. When false, no invoice charges tax.',
+    },
+    {
       key: 'tax.vat_bps',
-      value: 0,
-      description: 'VAT in basis points. Left at 0 until the client confirms treatment.',
+      value: 1500,
+      description:
+        'Standard Ethiopian VAT (15%). This is only the default — VAT is decided per ' +
+        'invoice, because some customers, including companies, are exempt.',
     },
     {
       key: 'payment.accounts',
@@ -253,6 +287,92 @@ async function seedPlatformSettings(): Promise<void> {
 }
 
 async function seedAgreementTemplates(): Promise<string> {
+  // Eskista <-> Vendor, individual. No business registration to warrant.
+  await prisma.agreementTemplate.upsert({
+    where: { key_version: { key: 'vendor-onboarding-individual', version: 1 } },
+    update: { isActive: true },
+    create: {
+      key: 'vendor-onboarding-individual',
+      kind: AgreementType.VENDOR_ONBOARDING,
+      vendorKind: VendorKind.INDIVIDUAL,
+      version: 1,
+      title: 'Eskista Vendor Agreement (Individual)',
+      isActive: true,
+      bodyMarkdown: [
+        '# Eskista Vendor Agreement',
+        '',
+        'Between **Eskista Marketplace PLC** ("Eskista") and **{{vendorName}}**, an',
+        'individual vendor of {{vendorLocation}} ("the Vendor"), dated {{issuedAt}}.',
+        '',
+        '## 1. Listing and verification',
+        'The Vendor confirms their identity with a valid Fayda ID and warrants that they',
+        'own, or are entitled to rent out, every item they list.',
+        '',
+        '## 2. Commission',
+        'Eskista retains {{commissionRate}} of the rental value of each completed booking.',
+        'Eskista collects payment from customers and settles the balance to the Vendor.',
+        '',
+        '## 3. Availability',
+        'The Vendor keeps availability current and honours confirmed bookings. Blocked',
+        'dates prevent Eskista from accepting requests.',
+        '',
+        '## 4. Condition and loss',
+        'Equipment is inspected on return. Damage or loss is assessed against the declared',
+        'replacement value and deducted from the customer security deposit.',
+        '',
+        '## 5. Communication',
+        'All communication with customers is conducted through Eskista.',
+        '',
+        'Accepted by {{signerName}} ({{vendorPhone}}).',
+      ].join('\n'),
+    },
+  });
+
+  // Eskista <-> Vendor, company. Adds the registration and authority warranties.
+  await prisma.agreementTemplate.upsert({
+    where: { key_version: { key: 'vendor-onboarding-company', version: 1 } },
+    update: { isActive: true },
+    create: {
+      key: 'vendor-onboarding-company',
+      kind: AgreementType.VENDOR_ONBOARDING,
+      vendorKind: VendorKind.COMPANY,
+      version: 1,
+      title: 'Eskista Vendor Agreement (Company)',
+      isActive: true,
+      bodyMarkdown: [
+        '# Eskista Vendor Agreement',
+        '',
+        'Between **Eskista Marketplace PLC** ("Eskista") and **{{vendorName}}**, a company',
+        'registered in Ethiopia of {{vendorLocation}} ("the Vendor"), dated {{issuedAt}}.',
+        '',
+        '## 1. Corporate standing',
+        'The Vendor warrants that its business registration is current and that the',
+        'signatory is authorised to bind the company.',
+        '',
+        '## 2. Listing and verification',
+        'The Vendor warrants that it owns, or is entitled to rent out, every item listed,',
+        'and that each listing accurately states condition and included items.',
+        '',
+        '## 3. Commission',
+        'Eskista retains {{commissionRate}} of the rental value of each completed booking.',
+        'Eskista collects payment from customers and settles the balance to the Vendor.',
+        '',
+        '## 4. Availability',
+        'The Vendor keeps availability current and honours confirmed bookings. Blocked',
+        'dates prevent Eskista from accepting requests.',
+        '',
+        '## 5. Condition and loss',
+        'Equipment is inspected on return. Damage or loss is assessed against the declared',
+        'replacement value and deducted from the customer security deposit.',
+        '',
+        '## 6. Communication',
+        'All communication with customers is conducted through Eskista.',
+        '',
+        'Accepted by {{signerName}} for and on behalf of {{vendorName}} ({{vendorEmail}}).',
+      ].join('\n'),
+    },
+  });
+
   const template = await prisma.agreementTemplate.upsert({
     where: { key_version: { key: 'equipment-rental', version: 1 } },
     update: { isActive: true },
@@ -273,7 +393,7 @@ async function seedAgreementTemplates(): Promise<string> {
         '',
         '## 2. Charges',
         'Rental: {{subtotal}}. Delivery: {{deliveryFee}}. Security deposit: {{deposit}}.',
-        'Total payable: **{{total}}**.',
+        'VAT: {{tax}}. Total payable: **{{total}}**.',
         '',
         '## 3. Condition and return',
         'The Renter receives the equipment in the stated condition and returns it in the',
@@ -368,11 +488,12 @@ async function seedVendors(userIds: Map<string, string>): Promise<Map<string, st
     ids.set(v.key, vendor.id);
 
     // Verified KYC set: Fayda ID + business registration + signed rental agreement.
-    const docs: SupplierDocumentType[] = [
-      SupplierDocumentType.FAYDA_ID,
-      SupplierDocumentType.BUSINESS_REGISTRATION,
-      SupplierDocumentType.RENTAL_AGREEMENT,
-    ];
+    // Fayda ID for everyone; business registration only for companies. The rental
+    // agreement is a generated Agreement, not an uploaded document.
+    const docs: SupplierDocumentType[] = [SupplierDocumentType.FAYDA_ID];
+    if (v.kind === VendorKind.COMPANY) {
+      docs.push(SupplierDocumentType.BUSINESS_REGISTRATION);
+    }
     for (const type of docs) {
       const existing = await prisma.supplierDocument.findFirst({
         where: { vendorId: vendor.id, type },
@@ -909,7 +1030,12 @@ async function seedBookings(
     const deliveryFee = plan.collectionMethod === CollectionMethod.DELIVERY ? etb(500) : 0;
     const deposit = (listing.securityDepositMinor ?? 0) * plan.quantity;
     const commission = Math.round((subtotal * DEFAULT_COMMISSION_BPS) / 10_000);
-    const total = subtotal + deliveryFee + deposit;
+
+    // Skyline Events is seeded VAT-exempt, to exercise the per-invoice switch.
+    const vatExempt = plan.customerKey === 'customerSkyline';
+    const taxRateBps = vatExempt ? 0 : VAT_BPS;
+    const tax = Math.round(((subtotal + deliveryFee) * taxRateBps) / 10_000);
+    const total = subtotal + deliveryFee + tax + deposit;
 
     const dueAt = new Date(endDate);
     dueAt.setUTCHours(17, 0, 0, 0);
@@ -938,6 +1064,8 @@ async function seedBookings(
         subtotalMinor: subtotal,
         deliveryFeeMinor: deliveryFee,
         securityDepositMinor: deposit,
+        taxRateBps,
+        taxMinor: tax,
         totalMinor: total,
         commissionRateBps: DEFAULT_COMMISSION_BPS,
         commissionMinor: commission,
@@ -987,12 +1115,18 @@ async function seedBookings(
           subtotalMinor: subtotal,
           deliveryFeeMinor: deliveryFee,
           securityDepositMinor: deposit,
+          taxRateBps,
+          taxMinor: tax,
+          vatExempt,
+          vatExemptionReason: vatExempt ? 'Customer registered as VAT exempt' : null,
           totalMinor: total,
           amountPaidMinor: plan.withPayment ? total : 0,
-          billedToName: (await prisma.user.findUniqueOrThrow({
-            where: { id: userIds.get(plan.customerKey)! },
-            select: { name: true },
-          })).name,
+          billedToName: (
+            await prisma.user.findUniqueOrThrow({
+              where: { id: userIds.get(plan.customerKey)! },
+              select: { name: true },
+            })
+          ).name,
           billedToPhone: '+251911234567',
           billedToAddress: 'Bole, Addis Ababa',
           issuedAt: daysFromNow(-1),
@@ -1022,15 +1156,37 @@ async function seedBookings(
     }
 
     if (plan.withAgreement) {
+      const agreementKey = `seed/bookings/${plan.ref}/agreement.md`;
+      const agreementHash = freezeSeedDocument(
+        agreementKey,
+        [
+          '# Equipment Rental Agreement',
+          '',
+          `Reference: ${plan.ref}`,
+          `Item: ${listing.name}`,
+          `Rental period: ${startDate.toISOString().slice(0, 10)} to ${endDate.toISOString().slice(0, 10)}`,
+          '',
+          `Rental: ${subtotal / 100} ETB`,
+          `Delivery: ${deliveryFee / 100} ETB`,
+          `Security deposit: ${deposit / 100} ETB`,
+          `VAT: ${tax / 100} ETB`,
+          `Total payable: ${total / 100} ETB`,
+          '',
+          'Equipment is inspected on return. Damage or missing items are deducted from',
+          'the security deposit.',
+        ].join('\n'),
+      );
+
       await prisma.agreement.create({
         data: {
           bookingId: booking.id,
           templateId,
           kind: AgreementType.EQUIPMENT_RENTAL,
+          counterpartyId: userIds.get(plan.customerKey)!,
           version: 1,
           status: plan.withPayment ? AgreementStatus.SIGNED : AgreementStatus.SENT,
-          documentKey: `seed/agreements/${plan.ref}.pdf`,
-          contentHash: `sha256:seed-${plan.ref.toLowerCase()}`,
+          documentKey: agreementKey,
+          contentHash: agreementHash,
           sentAt: daysFromNow(-2),
           ...(plan.withPayment
             ? {
@@ -1087,6 +1243,64 @@ async function seedBookings(
         },
       });
     }
+  }
+}
+
+/**
+ * Signs the Eskista-to-vendor agreement for each seeded vendor, picking the template
+ * that matches the vendor kind — individual and company wording differ.
+ */
+async function seedVendorAgreements(vendorIds: Map<string, string>): Promise<void> {
+  for (const [key, vendorId] of vendorIds) {
+    const vendor = await prisma.vendorProfile.findUniqueOrThrow({
+      where: { id: vendorId },
+      include: { user: { select: { id: true, name: true } } },
+    });
+
+    const templateKey =
+      vendor.kind === VendorKind.COMPANY
+        ? 'vendor-onboarding-company'
+        : 'vendor-onboarding-individual';
+    const template = await prisma.agreementTemplate.findUniqueOrThrow({
+      where: { key_version: { key: templateKey, version: 1 } },
+    });
+
+    // Recreate rather than skip: skipping meant a re-run kept stale content from an
+    // earlier seed, including its hash, so the row no longer matched the stored file.
+    await prisma.agreement.deleteMany({
+      where: { vendorId, kind: AgreementType.VENDOR_ONBOARDING },
+    });
+
+    const body = template.bodyMarkdown
+      .replace(/\{\{\s*vendorName\s*\}\}/g, vendor.businessName)
+      .replace(/\{\{\s*vendorLocation\s*\}\}/g, vendor.location)
+      .replace(/\{\{\s*vendorEmail\s*\}\}/g, vendor.email)
+      .replace(/\{\{\s*vendorPhone\s*\}\}/g, vendor.phone ?? '-')
+      .replace(/\{\{\s*vendorKind\s*\}\}/g, vendor.kind)
+      .replace(/\{\{\s*commissionRate\s*\}\}/g, '15.00%')
+      .replace(/\{\{\s*signerName\s*\}\}/g, vendor.user.name)
+      .replace(/\{\{\s*issuedAt\s*\}\}/g, daysFromNow(-41).toISOString().slice(0, 10));
+
+    const documentKey = `seed/vendors/${key}/agreement.md`;
+    const contentHash = freezeSeedDocument(documentKey, body);
+
+    await prisma.agreement.create({
+      data: {
+        kind: AgreementType.VENDOR_ONBOARDING,
+        templateId: template.id,
+        version: template.version,
+        vendorId,
+        counterpartyId: vendor.user.id,
+        status: AgreementStatus.SIGNED,
+        documentKey,
+        contentHash,
+        sentAt: daysFromNow(-41),
+        signedAt: daysFromNow(-40),
+        signedById: vendor.user.id,
+        signerName: vendor.user.name,
+        signerIpAddress: '196.188.0.1',
+      },
+    });
   }
 }
 
@@ -1196,6 +1410,9 @@ async function main(): Promise<void> {
 
   const talentId = await seedTalent(userIds, categoryIds);
   console.log(`  talent:           1 (${talentId.slice(0, 8)}…)`);
+
+  await seedVendorAgreements(vendorIds);
+  console.log('  vendor agreements: signed');
 
   const listingIds = await seedListings(vendorIds, categoryIds, userIds.get('admin')!);
   console.log(`  listings:         ${listingIds.size} (published, with units + specs)`);
