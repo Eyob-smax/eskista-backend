@@ -1,3 +1,8 @@
+/* eslint-disable @typescript-eslint/only-throw-error --
+ * Better Auth's APIError does extend Error at runtime. Its type chain lives in
+ * @better-auth/core, which is a transitive dependency and not resolvable from this
+ * project under pnpm's strict node_modules layout, so the rule cannot prove it.
+ */
 import type { BetterAuthPlugin } from 'better-auth';
 import { APIError, createAuthEndpoint } from 'better-auth/api';
 import { setSessionCookie } from 'better-auth/cookies';
@@ -137,7 +142,7 @@ export const telegramMiniApp = (options: TelegramMiniAppOptions): BetterAuthPlug
                 code: 'TELEGRAM_INVALID_INIT_DATA',
               });
             }
-            user = found as unknown as UserRow;
+            user = found;
 
             // Telegram is the source of truth for these, so refresh them on every login.
             const changes: Record<string, unknown> = {};
@@ -149,14 +154,11 @@ export const telegramMiniApp = (options: TelegramMiniAppOptions): BetterAuthPlug
               changes.telegramUsername = tgUser.username ?? null;
             }
             if (Object.keys(changes).length > 0) {
-              user = (await ctx.context.internalAdapter.updateUser(
-                user.id,
-                changes,
-              )) as unknown as UserRow;
+              user = await ctx.context.internalAdapter.updateUser(user.id, changes);
             }
           } else {
             isNewUser = true;
-            user = (await ctx.context.internalAdapter.createUser(
+            user = await ctx.context.internalAdapter.createUser(
               {
                 name: displayName,
                 // Telegram never gives us an address; a placeholder keeps Better Auth's
@@ -170,7 +172,7 @@ export const telegramMiniApp = (options: TelegramMiniAppOptions): BetterAuthPlug
                 languageCode: tgUser.language_code ?? 'en',
               },
               { method: 'telegram-mini-app' },
-            )) as unknown as UserRow;
+            );
 
             await ctx.context.internalAdapter.createAccount({
               userId: user.id,

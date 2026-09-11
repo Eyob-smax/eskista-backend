@@ -57,8 +57,7 @@ export type InitDataFailureReason =
   | 'MALFORMED_USER';
 
 export type InitDataResult =
-  | { ok: true; data: ValidatedInitData }
-  | { ok: false; reason: InitDataFailureReason };
+  { ok: true; data: ValidatedInitData } | { ok: false; reason: InitDataFailureReason };
 
 export interface VerifyInitDataOptions {
   /** Reject payloads older than this. Telegram suggests checking auth_date; 24h is a sane cap. */

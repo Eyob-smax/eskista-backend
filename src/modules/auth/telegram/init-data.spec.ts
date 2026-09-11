@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { telegramDisplayName, verifyTelegramInitData } from './init-data';
 
 const BOT_TOKEN = '123456:AAEyDpKKl0Y_abcdefghijklmnopqrstuvw';
@@ -91,10 +91,7 @@ describe('verifyTelegramInitData', () => {
       .sort()
       .map((k) => `${k}=${fields[k]}`)
       .join('\n');
-    const wrongSecret = require('node:crypto')
-      .createHash('sha256')
-      .update(BOT_TOKEN)
-      .digest();
+    const wrongSecret = createHash('sha256').update(BOT_TOKEN).digest();
     const hash = createHmac('sha256', wrongSecret).update(dataCheckString).digest('hex');
     const params = new URLSearchParams(fields);
     params.set('hash', hash);

@@ -25,10 +25,9 @@ const logger = new Logger('Auth');
             BETTER_AUTH_SECRET: config.get('BETTER_AUTH_SECRET', { infer: true }),
             BETTER_AUTH_URL: config.get('BETTER_AUTH_URL', { infer: true }),
             TELEGRAM_BOT_TOKEN: config.get('TELEGRAM_BOT_TOKEN', { infer: true }),
-            TELEGRAM_INIT_DATA_MAX_AGE_SECONDS: config.get(
-              'TELEGRAM_INIT_DATA_MAX_AGE_SECONDS',
-              { infer: true },
-            ),
+            TELEGRAM_INIT_DATA_MAX_AGE_SECONDS: config.get('TELEGRAM_INIT_DATA_MAX_AGE_SECONDS', {
+              infer: true,
+            }),
             GOOGLE_CLIENT_ID: config.get('GOOGLE_CLIENT_ID', { infer: true }),
             GOOGLE_CLIENT_SECRET: config.get('GOOGLE_CLIENT_SECRET', { infer: true }),
           } as Env,

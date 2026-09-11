@@ -157,7 +157,8 @@ export function computePriceBreakdown(
 
 /** Inclusive day count, matching how the designs price a rental ("Aug 18 → Aug 21" = 3). */
 export function billablePeriods(startDate: Date, endDate: Date): number {
-  const ms = Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate()) -
+  const ms =
+    Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate()) -
     Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate());
   const days = Math.round(ms / 86_400_000);
   return Math.max(days, 1);

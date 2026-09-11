@@ -70,7 +70,7 @@ export class SessionGuard implements CanActivate {
       name: raw.name,
       email: raw.email,
       image: raw.image ?? null,
-      activeRole: raw.activeRole ?? ('CUSTOMER' as Role),
+      activeRole: raw.activeRole ?? 'CUSTOMER',
       isBlocked: false,
       telegramUserId: raw.telegramUserId ?? null,
       roles: memberships.map((m) => m.role),

@@ -49,7 +49,7 @@ export class SearchQuery {
   @IsOptional()
   @IsString()
   @MaxLength(120)
-  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
   q?: string;
 }
 
