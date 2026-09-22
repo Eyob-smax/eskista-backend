@@ -1,4 +1,3 @@
-import { join } from 'node:path';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
@@ -59,10 +58,9 @@ async function bootstrap(): Promise<void> {
   );
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  // Local-disk storage driver: serve uploads from the mounted volume.
-  app.useStaticAssets(join(process.cwd(), config.get('STORAGE_LOCAL_ROOT', { infer: true })), {
-    prefix: '/files/',
-  });
+  // Uploads are NOT served statically. The storage root holds Fayda ID scans, payment
+  // receipts and signed agreements, so every read goes through FilesController, which
+  // checks entitlement before streaming. See src/modules/storage/file-access.service.ts.
 
   if (config.get('NODE_ENV', { infer: true }) !== 'production') {
     const swaggerConfig = new DocumentBuilder()

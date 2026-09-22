@@ -32,7 +32,9 @@ export const envSchema = z.object({
 
   STORAGE_DRIVER: z.enum(['local']).default('local'),
   STORAGE_LOCAL_ROOT: z.string().default('./storage'),
-  STORAGE_PUBLIC_BASE_URL: z.string().default('http://localhost:3000/files'),
+  /// Base for file URLs. Points at the authorised FilesController route, not at a
+  /// static directory — uploads are never served without an entitlement check.
+  STORAGE_PUBLIC_BASE_URL: z.string().default('http://localhost:3000/api/v1/files'),
   STORAGE_MAX_FILE_SIZE_BYTES: z.coerce.number().int().positive().default(10_485_760),
 });
 

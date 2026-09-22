@@ -494,19 +494,37 @@ async function seedVendors(userIds: Map<string, string>): Promise<Map<string, st
     if (v.kind === VendorKind.COMPANY) {
       docs.push(SupplierDocumentType.BUSINESS_REGISTRATION);
     }
+    // Recreate rather than skip: a pre-existing row would keep a stale fileKey pointing
+    // at a file that no longer exists.
+    await prisma.supplierDocument.deleteMany({ where: { vendorId: vendor.id } });
+
     for (const type of docs) {
-      const existing = await prisma.supplierDocument.findFirst({
-        where: { vendorId: vendor.id, type },
-      });
-      if (!existing) {
+      {
+        // Owner-scoped key (`vendors/<vendorId>/...`), so the seeded dataset exercises the
+        // same entitlement path as a real upload, and a real file behind it so reads work.
+        const docKey = `vendors/${vendor.id}/documents/${type.toLowerCase()}.txt`;
+        freezeSeedDocument(
+          docKey,
+          [
+            `ESKISTA — SEEDED DOCUMENT PLACEHOLDER`,
+            ``,
+            `Type:    ${type}`,
+            `Vendor:  ${vendor.businessName}`,
+            `Status:  VERIFIED`,
+            ``,
+            `This stands in for a scanned document in the demo dataset. It is deliberately`,
+            `not a real identity document.`,
+          ].join('\n'),
+        );
+
         await prisma.supplierDocument.create({
           data: {
             vendorId: vendor.id,
             type,
-            fileKey: `seed/vendors/${vendor.id}/${type.toLowerCase()}.pdf`,
-            fileName: `${type.toLowerCase()}.pdf`,
-            mimeType: 'application/pdf',
-            sizeBytes: 248_000,
+            fileKey: docKey,
+            fileName: `${type.toLowerCase()}.txt`,
+            mimeType: 'text/plain',
+            sizeBytes: 248,
             status: DocumentStatus.VERIFIED,
             reviewedAt: daysFromNow(-40),
             reviewedById: userIds.get('admin')!,
@@ -852,7 +870,7 @@ async function seedListings(
     await prisma.listingImage.createMany({
       data: Array.from({ length: 3 }, (_, i) => ({
         listingId: listing.id,
-        fileKey: `seed/listings/${slug}/${i + 1}.jpg`,
+        fileKey: `listings/${listing.id}/${i + 1}.jpg`,
         altText: `${l.name} — photo ${i + 1}`,
         isPrimary: i === 0,
         sortOrder: i,
@@ -1137,6 +1155,19 @@ async function seedBookings(
     }
 
     if (plan.withPayment) {
+      const receiptKey = `bookings/${plan.ref}/receipts/payment.txt`;
+      freezeSeedDocument(
+        receiptKey,
+        [
+          'ESKISTA — SEEDED PAYMENT RECEIPT PLACEHOLDER',
+          '',
+          `Booking: ${plan.ref}`,
+          `Amount:  ${total / 100} ETB`,
+          '',
+          'Stands in for a Telebirr screenshot or bank transfer confirmation.',
+        ].join('\n'),
+      );
+
       await prisma.payment.create({
         data: {
           bookingId: booking.id,
@@ -1144,9 +1175,9 @@ async function seedBookings(
           transactionReference: `TBR${Math.floor(Math.random() * 9_000_000 + 1_000_000)}XZ`,
           amountMinor: total,
           currency: CURRENCY,
-          receiptFileKey: `seed/receipts/${plan.ref}.jpg`,
-          receiptFileName: `${plan.ref}-receipt.jpg`,
-          receiptMimeType: 'image/jpeg',
+          receiptFileKey: receiptKey,
+          receiptFileName: `${plan.ref}-receipt.txt`,
+          receiptMimeType: 'text/plain',
           receiptSizeBytes: 184_000,
           status: PaymentStatus.VERIFIED,
           verifiedAt: daysFromNow(-1),
@@ -1156,7 +1187,7 @@ async function seedBookings(
     }
 
     if (plan.withAgreement) {
-      const agreementKey = `seed/bookings/${plan.ref}/agreement.md`;
+      const agreementKey = `bookings/${plan.ref}/agreements/rental.md`;
       const agreementHash = freezeSeedDocument(
         agreementKey,
         [
@@ -1251,7 +1282,7 @@ async function seedBookings(
  * that matches the vendor kind — individual and company wording differ.
  */
 async function seedVendorAgreements(vendorIds: Map<string, string>): Promise<void> {
-  for (const [key, vendorId] of vendorIds) {
+  for (const vendorId of vendorIds.values()) {
     const vendor = await prisma.vendorProfile.findUniqueOrThrow({
       where: { id: vendorId },
       include: { user: { select: { id: true, name: true } } },
@@ -1281,7 +1312,7 @@ async function seedVendorAgreements(vendorIds: Map<string, string>): Promise<voi
       .replace(/\{\{\s*signerName\s*\}\}/g, vendor.user.name)
       .replace(/\{\{\s*issuedAt\s*\}\}/g, daysFromNow(-41).toISOString().slice(0, 10));
 
-    const documentKey = `seed/vendors/${key}/agreement.md`;
+    const documentKey = `vendors/${vendorId}/agreements/onboarding.md`;
     const contentHash = freezeSeedDocument(documentKey, body);
 
     await prisma.agreement.create({
