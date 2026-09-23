@@ -74,7 +74,10 @@ Profile tab.
 - [ ] `CustomerProfile` + migration; one per user, created on demand
 - [ ] `GET/PATCH /api/v1/customer/me`
 - [ ] `POST /api/v1/customer/me/documents` (ID upload, 5MB, image or PDF)
-- [ ] `GET /api/v1/customer/me/stats` → bookings count, rating, distinct vendors
+- [ ] `GET /api/v1/customer/me/stats` → the Profile screen's three counters exactly:
+      total bookings, average rating received, distinct vendors dealt with
+- [ ] Profile returns the "Verified customer · Addis Ababa" subtitle parts as separate
+      fields (`verificationStatus`, `city`) — never a pre-joined string
 - [ ] Verification status transitions are admin-only, not self-serve
 
 **Verification:**
@@ -97,6 +100,10 @@ search, filters, and listing detail. Only `PUBLISHED` listings from `VERIFIED` v
 - [ ] `GET /api/v1/catalogue/equipment` — search, category, price range, location, sort, cursor paging
 - [ ] `GET /api/v1/catalogue/equipment/:id` — specs, included items, images, accessories, vendor, reviews
 - [ ] `GET /api/v1/catalogue/equipment/:id/availability?from&to`
+- [ ] `GET /api/v1/catalogue/home` — one call for the Home screen: categories,
+      featured rail, popular rail, and the latest booking-update banner
+- [ ] Every card carries `availabilityToday: AVAILABLE | BOOKED` for the badge, derived
+      from confirmed bookings covering now — not stored
 - [ ] Draft, pending, rejected and archived listings are never returned
 - [ ] Endpoints are `@Public()`
 
@@ -129,9 +136,14 @@ through `computePriceBreakdown`.
 - [ ] `POST /api/v1/customer/bookings/:id/submit` → prices, assigns `ESK-#####`, writes a status event
 - [ ] Rejects unavailable dates, below-minimum periods, and blocked ranges
 - [ ] Pricing matches the design exactly: (subtotal + delivery) × 15% VAT, deposit separate
+- [ ] Returns **both** totals (AD-9): `totalMinor` 12,575 and `amountDueMinor` 16,575
+- [ ] `serviceFeeRateBps` + `serviceFeeMinor` snapshotted, defaulting to 0 (AD-12)
+- [ ] `projectType` from the fixed chip list, plus free-text `projectDescription`
 
 **Verification:**
 - [ ] Test asserting `10,500 + 500 → VAT 1,575 → total 12,575`, deposit shown apart
+- [ ] Test asserting `amountDueMinor` is 16,575 — total plus the 4,000 deposit
+- [ ] Test: a non-zero service fee rate adds a line without disturbing the VAT base
 - [ ] Test: submitting over a blocked range is rejected
 
 **Dependencies:** Tasks 2, 3
@@ -149,6 +161,10 @@ and the full Booking Details screen.
 - [ ] `GET /api/v1/customer/bookings?tab=` — mixed types, correct per-state actions
 - [ ] `GET /api/v1/customer/bookings/:reference` — equipment, payment, fulfilment, inspection, documents
 - [ ] Serial numbers of assigned units are exposed
+- [ ] `timeline[]` computed server-side (AD-10) — 8 steps for equipment, 6 for talent
+- [ ] `actions[]` returned per booking (AD-11) so the card renders the right primary CTA
+- [ ] `documents[]` lists agreement, payment evidence and settlement record with
+      download URLs, omitting any not yet generated rather than returning dead links
 - [ ] Another customer's reference returns 404
 
 **Verification:**
@@ -305,7 +321,12 @@ specializations, languages, availability and reviews.
 exact amount.
 
 **Acceptance criteria:**
-- [ ] `TalentBookingDetail` gains employment type, work mode, start/end time, city, access notes, budget band
+- [ ] `TalentBookingDetail` gains employment type, work mode, start/end time, city, venue,
+      access notes, project type and budget band — all shown on Track Request
+- [ ] Five steps, matching the design's real order: Project → Schedule → Location →
+      References → Budget, then Review. (The sheet labels three screens "Step 3 of 5";
+      the order above is the one the content implies.)
+- [ ] Talent timeline is the 6-step variant, not the equipment 8
 - [ ] `TalentRequestFile` for reference uploads
 - [ ] Draft and submit endpoints mirroring Task 4
 - [ ] Reference `ESK-TLT-#####`

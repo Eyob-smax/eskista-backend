@@ -84,6 +84,79 @@ Every screen in this set shows one item from one vendor. The multi-item, multi-v
 quotation belongs to the managed path and is **still blocked** on the open question. Nothing
 in this plan assumes either shape, so neither answer invalidates it.
 
+### AD-9 — The booking exposes two totals, because the design shows two
+
+The Finalize screen totals **ETB 12,575** with the deposit in a separate box; the Payment
+screen totals **ETB 16,575**, the same figure plus the ETB 4,000 deposit. Both are correct:
+one is the value of the goods and services, the other is what the customer must transfer.
+
+Collapsing them into one field guarantees the frontend picks the wrong one somewhere. The
+API returns both, named for what they mean:
+
+- `totalMinor` — rental + delivery − discount + VAT. The invoice and VAT base. Excludes the deposit.
+- `amountDueMinor` — `totalMinor` + refundable deposit. What the customer actually pays.
+
+`securityDepositMinor` stays separate and is never taxed.
+
+### AD-10 — The status timeline is computed by the backend, not hardcoded by the client
+
+Three different timelines appear in this design set: equipment has **8** steps, talent has
+**6** (Request Submitted → Talent Confirmation → Payment → Booking Confirmed → Project/Hire →
+Completed), delivery tracking has **4**, and return has **5**.
+
+Hardcoding three step lists in the client guarantees they drift from `BookingStatus` the
+first time a status is added. The API returns the timeline as data:
+
+```jsonc
+"timeline": [
+  { "key": "REQUEST_SUBMITTED", "label": "Request Submitted", "state": "DONE",        "occurredAt": "…" },
+  { "key": "ESKISTA_REVIEW",    "label": "Under Review",      "state": "IN_PROGRESS", "occurredAt": null },
+  { "key": "AWAITING_PAYMENT",  "label": "Payment",           "state": "PENDING",     "occurredAt": null }
+]
+```
+
+The client renders whatever it receives. Adding a status never requires a frontend release.
+
+### AD-11 — Available actions are returned with the booking
+
+Every booking card and detail screen shows a different primary action: *Complete Payment*,
+*Track Booking*, *Arrange Return*, *Complete Service*, *Book Again*, *Cancel Request*. Which
+one is legal depends on status, payment state, supplier response and agreement state — rules
+that live in the service layer and are already enforced there.
+
+Re-deriving them in the client means the same rules written twice, in two languages, drifting
+apart. Each booking therefore carries:
+
+```jsonc
+"actions": [
+  { "key": "COMPLETE_PAYMENT", "label": "Complete Payment", "primary": true,  "enabled": true },
+  { "key": "CANCEL_REQUEST",   "label": "Cancel Request",   "primary": false, "enabled": true }
+]
+```
+
+The endpoints still enforce every rule independently — this list is for rendering, never for
+authorisation.
+
+### AD-12 — The service fee is a configured rate, snapshotted, defaulting to zero
+
+The Booking Details screen shows a **Service fee** line (ETB 300) that no other screen
+mentions and no document defines. Rather than block on it, it is modelled the way commission
+and VAT already are: a platform setting in basis points, applied to the rental subtotal,
+snapshotted onto the booking as `serviceFeeRateBps` + `serviceFeeMinor`.
+
+It defaults to **0**, so the line is absent until Eskista configures it, and no existing
+arithmetic changes. When the answer arrives it is a settings change, not a migration.
+
+### AD-13 — The talent price is proposed by the talent, and the customer accepts it
+
+The *Price Modification* dialog reads "The Service Provider requested specific payment amount
+of ETB 14,500", with Decline and Accept. That settles open question 2: the customer states a
+**budget** (a band or an exact figure), the talent counter-proposes a **specific amount**, and
+the customer accepts or declines.
+
+`PriceProposal` (AD-3) therefore records `proposedByRole`, and a customer-side accept is what
+sets `finalPriceMinor` and reprices the booking. A booking is never priced from the budget.
+
 ---
 
 ## Dependency graph
@@ -129,15 +202,42 @@ Tasks live in `tasks/todo.md`.
 
 ## Open questions
 
-Carried from `docs/TALENT-FLOW.md` §5 and `docs/OPERATIONS-MODEL.md` §7. None block Phase 1.
+Carried from `docs/TALENT-FLOW.md` §5 and `docs/OPERATIONS-MODEL.md` §7, revised after the
+September 2026 design set. **Answered by the designs** are recorded as decisions and are not
+blocking; the rest are assumptions I have made explicit so they are cheap to correct.
 
-1. Does Eskista counter-sign per agreement, or is the stored template sufficient? **Assumed
-   resolved** — stored template (AD-2).
-2. Who proposes the final talent price — the talent, or Eskista on their behalf?
-3. What does "Verified customer" require beyond the ID upload in the booking flow?
-4. Who rates customers, and where is that captured?
-5. What are the valid employment types, and is on-site/remote a separate dimension?
-6. Service fee — flat, percentage, or per booking?
-7. Are couriers Eskista staff, a Logistics vendor, or their own entity?
-8. **Can one customer order span multiple vendors?** Still the biggest open item, but no
-   longer blocking, per AD-8.
+### Answered by the designs
+
+1. **Does Eskista counter-sign each agreement?** No — a stored template, applied at issue
+   time and snapshotted (AD-2). Confirmed by the product owner.
+2. **Who proposes the final talent price?** The talent. The *Price Modification* dialog says
+   "The Service Provider requested specific payment amount of…", and the customer accepts or
+   declines (AD-13).
+5. **What are the valid employment types, and is on-site/remote separate?** Both exist and are
+   separate dimensions — the request detail shows "Booking type: **Full Time · On-site**".
+   Employment type and work mode are modelled as two enums.
+
+### Decided by me, flagged for correction
+
+6. **Service fee — flat, percentage, or per booking?** Modelled as a configurable rate in
+   basis points, defaulting to 0 so the line stays hidden until Eskista sets it (AD-12). If
+   it is meant to be a flat ETB amount, that is a settings change, not a migration.
+3. **What does "Verified customer" require?** Assumed: an admin has approved the uploaded ID
+   document. `CustomerProfile.verificationStatus` is admin-only; the customer can upload but
+   never self-verify. The Profile screen's "Verified customer" label reads from it.
+4. **Who rates customers, and where?** `ReviewKind` already has no CUSTOMER variant. The
+   Profile screen shows a 4.9 rating for the customer, so one is needed. Assumed: the vendor
+   rates the customer after inspection closes, via a `CUSTOMER` review kind. Not built in this
+   phase — the customer side only needs to *read* the aggregate.
+
+### Still genuinely open — none blocking
+
+7. **Are couriers Eskista staff, a Logistics vendor, or their own entity?** The tracking
+   screen shows a named courier with a vehicle and plate, labelled "Eskista Courier".
+   Modelled as fields on `Fulfilment` rather than a `Courier` entity, which is the cheapest
+   shape to promote later if couriers need their own logins.
+8. **Can one customer order span multiple vendors?** Every screen in this set still shows one
+   item from one vendor. AD-8 holds: nothing here assumes either shape.
+9. **What closes a talent booking?** The equipment path ends in return → inspection →
+   settlement. Talent has no equipment to return, and the card CTA is *Complete Service*.
+   Assumed: the customer confirms completion, which opens the review and the settlement.
