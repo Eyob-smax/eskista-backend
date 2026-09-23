@@ -41,6 +41,27 @@ export function applyBps(amountMinor: number, rateBps: number): number {
 }
 
 /**
+ * The tax already contained in a VAT-inclusive amount.
+ *
+ * Every price on the platform is quoted VAT-inclusive, so VAT is **extracted**, never
+ * added: at 15%, the tax inside ETB 11,000 is `11,000 × 15/115 = 1,434.78`, not
+ * `11,000 × 15% = 1,650`. Using `applyBps` here would overstate the tax by about 15% of
+ * itself on every invoice.
+ */
+export function extractInclusiveTax(inclusiveMinor: number, rateBps: number): number {
+  if (inclusiveMinor < 0) throw new RangeError('inclusiveMinor must not be negative');
+  if (rateBps < 0 || rateBps > BPS_DIVISOR) {
+    throw new RangeError(`rateBps out of range: ${rateBps}`);
+  }
+  return Math.round((inclusiveMinor * rateBps) / (BPS_DIVISOR + rateBps));
+}
+
+/** What is left of a VAT-inclusive amount once the tax is taken out. */
+export function netOfInclusiveTax(inclusiveMinor: number, rateBps: number): number {
+  return inclusiveMinor - extractInclusiveTax(inclusiveMinor, rateBps);
+}
+
+/**
  * Commission on a gross amount.
  *
  * Rounding is applied once, here, so the supplier's earnings always equal
@@ -83,22 +104,37 @@ export interface PriceBreakdownInput {
 
 export interface PriceBreakdown {
   currency: string;
+  /** VAT-inclusive, as listed by the supplier. */
   unitPriceMinor: number;
   periods: number;
   quantity: number;
+  /** VAT-inclusive rental line. */
   subtotalMinor: number;
   deliveryFeeMinor: number;
   securityDepositMinor: number;
   discountMinor: number;
-  taxMinor: number;
   serviceFeeRateBps: number;
   serviceFeeMinor: number;
-  /** Value of the goods and services. The VAT base and the invoice total. Excludes the deposit. */
+  /**
+   * The VAT *already contained* in `totalMinor` — not an addition to it. Show it as
+   * "Includes VAT (15%)", never as a line that sums into the total.
+   */
+  taxMinor: number;
+  taxRateBps: number;
+  /** `totalMinor` less the VAT it contains. The figure that matters for accounting. */
+  netTotalMinor: number;
+  /**
+   * What the customer owes for the goods and services, VAT included. Excludes the
+   * refundable deposit.
+   */
   totalMinor: number;
   /** What the customer actually transfers: `totalMinor` plus the refundable deposit. */
   amountDueMinor: number;
   commissionRateBps: number;
+  /** Commission, taken on the rental net of VAT. */
   commissionMinor: number;
+  /** The rental subtotal net of the VAT it contains. The base commission is taken on. */
+  netSubtotalMinor: number;
   supplierEarningsMinor: number;
 }
 
@@ -106,22 +142,27 @@ export interface PriceBreakdown {
  * The single place a booking total is computed, so the customer's total, the vendor's
  * earnings and the invoice can never drift apart.
  *
- * Deliberate choices:
- *  - Commission is taken on the **rental subtotal only** — not on the delivery fee (that
- *    is Eskista's own revenue) and not on the refundable deposit.
- *  - Tax applies to the **rental subtotal − discount**, and to nothing else. Two screens
- *    fix this independently: Finalize Booking shows 10,500 + 500 delivery + 1,575 VAT =
- *    12,575, and Booking Details shows the same 1,575 beside a 300 service fee. In both,
- *    1,575 is 15% of 10,500 — taxing the delivery fee too would give 1,650 and neither
- *    total would reconcile. Delivery, the service fee and the refundable deposit are all
- *    outside the base.
- *  - The service fee sits **outside the VAT base**. That is what the Booking Details
- *    screen shows: 10,500 + 500 + 1,575 VAT + 300 fee = 12,875, where the VAT is 15% of
- *    11,000 and not of 11,300. Normal VAT treatment would tax the fee, so this is worth
- *    confirming — but the fee defaults to 0, so nothing turns on it until it is switched on.
- *  - Two totals are returned, because the designs show two (AD-9): `totalMinor` is the
- *    value of the goods (ETB 12,575 in the worked example) and `amountDueMinor` adds the
- *    refundable deposit (ETB 16,575). Returning one invites the caller to pick the wrong one.
+ * **Every price entering this function is VAT-inclusive**, per the client's September 2026
+ * instruction: "all platform-facing prices across all categories are 15% VAT-inclusive."
+ * VAT is therefore extracted from the total, never added to it.
+ *
+ * This deliberately contradicts the design sheets, which print
+ * `10,500 + 500 delivery + 1,575 VAT = 12,575` — unambiguously additive. Under the rule
+ * the client confirmed, the same booking totals **11,000**, of which 1,434.78 is VAT. The
+ * printed totals on Finalize Booking, Complete Payment and Booking Details are wrong and
+ * need reissuing. Recorded here because the arithmetic is the thing most likely to be
+ * "corrected" back by someone comparing code against the mockups.
+ *
+ * Other deliberate choices:
+ *  - Commission is taken on the rental **net of VAT**, because the VAT inside a price
+ *    belongs to the tax authority and is not revenue Eskista may take a share of.
+ *  - Commission applies to the rental only — not the delivery fee, which is Eskista's own
+ *    revenue, and not the refundable deposit.
+ *  - The **security deposit carries no VAT** and sits outside every total. It is a
+ *    returnable holding, not consideration for a supply.
+ *  - Two totals are returned (AD-9): `totalMinor` is the value of the goods and services,
+ *    `amountDueMinor` adds the deposit. Returning one invites the caller to pick the wrong
+ *    one on the payment screen.
  */
 export function computePriceBreakdown(
   input: PriceBreakdownInput,
@@ -150,18 +191,24 @@ export function computePriceBreakdown(
   }
 
   const subtotalMinor = unitPriceMinor * periods * quantity;
-  const cappedDiscount = Math.min(discountMinor, subtotalMinor + deliveryFeeMinor);
-
-  // The discount comes off the rental before tax, but can never push the base below zero
-  // when it is large enough to eat into the delivery fee as well.
-  const taxableMinor = Math.max(subtotalMinor - cappedDiscount, 0);
-  const taxMinor = applyBps(taxableMinor, taxRateBps);
   const serviceFeeMinor = applyBps(subtotalMinor, serviceFeeRateBps);
 
-  const totalMinor = subtotalMinor + deliveryFeeMinor - cappedDiscount + taxMinor + serviceFeeMinor;
+  const billableMinor = subtotalMinor + deliveryFeeMinor + serviceFeeMinor;
+  const cappedDiscount = Math.min(discountMinor, billableMinor);
+
+  // Everything above is VAT-inclusive, so the total is simply what the customer pays and
+  // the tax is extracted from it rather than added on.
+  const totalMinor = billableMinor - cappedDiscount;
+  const taxMinor = extractInclusiveTax(totalMinor, taxRateBps);
+  const netTotalMinor = totalMinor - taxMinor;
+
   const amountDueMinor = totalMinor + securityDepositMinor;
 
-  const split = splitCommission(subtotalMinor, commissionRateBps);
+  // Commission is taken on the rental net of its own VAT, so Eskista never takes a share
+  // of money owed to the tax authority. The discount is not applied here: a discount is
+  // Eskista's concession to the customer, not a reduction of what the supplier earns.
+  const netSubtotalMinor = netOfInclusiveTax(subtotalMinor, taxRateBps);
+  const split = splitCommission(netSubtotalMinor, commissionRateBps);
 
   return {
     currency,
@@ -172,13 +219,16 @@ export function computePriceBreakdown(
     deliveryFeeMinor,
     securityDepositMinor,
     discountMinor: cappedDiscount,
-    taxMinor,
     serviceFeeRateBps,
     serviceFeeMinor,
+    taxMinor,
+    taxRateBps,
+    netTotalMinor,
     totalMinor,
     amountDueMinor,
     commissionRateBps,
     commissionMinor: split.commissionMinor,
+    netSubtotalMinor,
     supplierEarningsMinor: split.supplierEarningsMinor,
   };
 }

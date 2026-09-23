@@ -416,13 +416,6 @@ export class CatalogueService {
     if (breakdown.deliveryFeeMinor > 0) {
       lines.push({ kind: 'DELIVERY', label: 'Delivery', amountMinor: breakdown.deliveryFeeMinor });
     }
-    if (breakdown.taxMinor > 0) {
-      lines.push({
-        kind: 'VAT',
-        label: `VAT (${(vatBps / 100).toFixed(0)}%)`,
-        amountMinor: breakdown.taxMinor,
-      });
-    }
     if (breakdown.serviceFeeMinor > 0) {
       lines.push({
         kind: 'SERVICE_FEE',
@@ -430,6 +423,10 @@ export class CatalogueService {
         amountMinor: breakdown.serviceFeeMinor,
       });
     }
+
+    // VAT is deliberately NOT a line here. Every price above already contains it, so
+    // listing it alongside them would imply it should be added again. It is reported on
+    // its own as `taxMinor` with `taxNote` for the "Inc. 15% VAT" subtext.
 
     return {
       from: query.from,
@@ -442,6 +439,8 @@ export class CatalogueService {
       deliveryFeeMinor: breakdown.deliveryFeeMinor,
       taxMinor: breakdown.taxMinor,
       taxRateBps: vatBps,
+      taxNote: vatBps > 0 ? `Inc. ${(vatBps / 100).toFixed(0)}% VAT` : null,
+      netTotalMinor: breakdown.netTotalMinor,
       serviceFeeMinor: breakdown.serviceFeeMinor,
       securityDepositMinor: breakdown.securityDepositMinor,
       totalMinor: breakdown.totalMinor,

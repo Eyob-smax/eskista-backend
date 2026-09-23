@@ -100,7 +100,12 @@ export class BookingTotalsResponse {
   @ApiProperty({ example: 'ETB' })
   currency!: string;
 
-  @ApiProperty({ type: [MoneyLineResponse], description: 'Print in order; zero lines omitted.' })
+  @ApiProperty({
+    type: [MoneyLineResponse],
+    description:
+      'Print in order; zero lines omitted. They sum exactly to `totalMinor`, because VAT ' +
+      'is already inside each one rather than added after — there is no VAT line.',
+  })
   lines!: MoneyLineResponse[];
 
   @ApiProperty({ example: 1050000 })
@@ -112,11 +117,29 @@ export class BookingTotalsResponse {
   @ApiProperty({ example: 0 })
   discountMinor!: number;
 
-  @ApiProperty({ example: 157500 })
+  @ApiProperty({
+    example: 143478,
+    description:
+      'The VAT **already contained** in `totalMinor`. Never add it to the total — all ' +
+      'platform prices are VAT-inclusive.',
+  })
   taxMinor!: number;
 
   @ApiProperty({ example: 1500, description: 'Rate actually charged, in basis points.' })
   taxRateBps!: number;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Ready-made subtext for the VAT badge. Null for an exempt customer.',
+    example: 'Inc. 15% VAT',
+  })
+  taxNote!: string | null;
+
+  @ApiProperty({
+    example: 956522,
+    description: '`totalMinor` less the VAT inside it. For accounting, not for display.',
+  })
+  netTotalMinor!: number;
 
   @ApiProperty({ example: 0 })
   serviceFeeMinor!: number;
@@ -128,18 +151,18 @@ export class BookingTotalsResponse {
   securityDepositMinor!: number;
 
   @ApiProperty({
-    example: 1257500,
+    example: 1100000,
     description:
-      'Value of the goods and services — the "Total" on **Finalize Booking**. ' +
-      'Excludes the deposit.',
+      'What the customer owes for the goods and services, VAT included. Excludes the ' +
+      'refundable deposit.',
   })
   totalMinor!: number;
 
   @ApiProperty({
-    example: 1657500,
+    example: 1500000,
     description:
-      'What the customer transfers — the "Total" on **Complete Payment**. ' +
-      '`totalMinor` plus the deposit. Use this one on the payment screen and nowhere else.',
+      '`totalMinor` plus the refundable deposit — what the customer actually transfers. ' +
+      'Use this on the payment screen and nowhere else.',
   })
   amountDueMinor!: number;
 }

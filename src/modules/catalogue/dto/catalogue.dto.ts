@@ -164,8 +164,10 @@ export class BrowseTalentQuery extends CursorPaginationQuery {
   categorySlug?: string;
 
   @ApiPropertyOptional({
-    description: 'Match any one of these specializations.',
-    example: ['Music Video', 'Documentary'],
+    description:
+      'Match talent practising any one of these professions. Skills were merged into ' +
+      'profession in the September 2026 review, so this is the only discipline filter.',
+    example: ['Cinematographer', 'Editor'],
     type: [String],
   })
   @IsOptional()
@@ -173,7 +175,7 @@ export class BrowseTalentQuery extends CursorPaginationQuery {
   @Transform(({ value }: { value: unknown }) =>
     typeof value === 'string' ? value.split(',').map((v) => v.trim()) : value,
   )
-  specializations?: string[];
+  professions?: string[];
 
   @ApiPropertyOptional({ enum: ExperienceLevel })
   @IsOptional()
@@ -474,9 +476,10 @@ export class AvailabilityDayResponse {
 export class QuoteLineResponse {
   @ApiProperty({
     example: 'RENTAL',
-    enum: ['RENTAL', 'DELIVERY', 'DISCOUNT', 'VAT', 'SERVICE_FEE'],
+    enum: ['RENTAL', 'DELIVERY', 'DISCOUNT', 'SERVICE_FEE'],
+    description: 'There is no VAT line: every amount here already includes it. See `taxMinor`.',
   })
-  kind!: 'RENTAL' | 'DELIVERY' | 'DISCOUNT' | 'VAT' | 'SERVICE_FEE';
+  kind!: 'RENTAL' | 'DELIVERY' | 'DISCOUNT' | 'SERVICE_FEE';
 
   @ApiProperty({
     description: 'Ready to print, exactly as the design phrases it.',
@@ -506,7 +509,9 @@ export class QuoteResponse {
 
   @ApiProperty({
     type: [QuoteLineResponse],
-    description: 'Print these in order; zero-value lines are omitted.',
+    description:
+      'Print these in order; zero-value lines are omitted. They sum exactly to ' +
+      '`totalMinor`, because VAT is already inside each one rather than added after.',
   })
   lines!: QuoteLineResponse[];
 
@@ -516,11 +521,29 @@ export class QuoteResponse {
   @ApiProperty({ example: 50000 })
   deliveryFeeMinor!: number;
 
-  @ApiProperty({ example: 157500, description: 'VAT on the rental subtotal only.' })
+  @ApiProperty({
+    example: 143478,
+    description:
+      'The VAT **already contained** in `totalMinor`. Do not add it — every listed price ' +
+      'on the platform is VAT-inclusive. Show it as subtext, not as a line in the sum.',
+  })
   taxMinor!: number;
 
   @ApiProperty({ example: 1500, description: 'Basis points; 1500 = 15%.' })
   taxRateBps!: number;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Ready-made subtext for the badge the client asked for. Null when exempt.',
+    example: 'Inc. 15% VAT',
+  })
+  taxNote!: string | null;
+
+  @ApiProperty({
+    example: 956522,
+    description: '`totalMinor` less the VAT inside it. For accounting, not for display.',
+  })
+  netTotalMinor!: number;
 
   @ApiProperty({ example: 0 })
   serviceFeeMinor!: number;
@@ -532,18 +555,20 @@ export class QuoteResponse {
   securityDepositMinor!: number;
 
   @ApiProperty({
-    example: 1257500,
+    example: 1100000,
     description:
-      'Value of the goods and services — the figure the **Finalize Booking** screen calls ' +
-      '“Total”. Excludes the refundable deposit.',
+      'What the customer owes for the goods and services, VAT included. Excludes the ' +
+      'refundable deposit. **Note:** the design sheets print a larger figure here ' +
+      '(12,575 for this example) because they add VAT on top. Prices are VAT-inclusive, ' +
+      'so that printed total is superseded.',
   })
   totalMinor!: number;
 
   @ApiProperty({
-    example: 1657500,
+    example: 1500000,
     description:
-      'What the customer actually transfers: `totalMinor` plus the deposit. This is the ' +
-      'figure the **Complete Payment** screen shows. Do not confuse the two.',
+      'What the customer actually transfers: `totalMinor` plus the refundable deposit. ' +
+      'Use this on the payment screen and nowhere else.',
   })
   amountDueMinor!: number;
 
@@ -651,8 +676,12 @@ export class TalentCardResponse {
   @ApiProperty({ enum: ExperienceLevel })
   experienceLevel!: ExperienceLevel;
 
-  @ApiProperty({ type: [String], example: ['Commercial', 'Music Video'] })
-  specializations!: string[];
+  @ApiProperty({
+    type: [String],
+    description: 'One person may practise several. Replaces the old skills list.',
+    example: ['Cinematographer', 'Editor'],
+  })
+  professions!: string[];
 }
 
 export class TalentDetailResponse extends TalentCardResponse {

@@ -153,8 +153,12 @@ export class CustomerBookingsService {
     const supportPhone = await this.settings.supportPhone();
 
     const occurredAt = this.stepTimestamps(booking.type, booking.statusEvents);
+    // Awaiting the customer's scan, or rejected and needing a new one — either way the
+    // next move is theirs.
     const pendingAgreement = booking.agreements.find(
-      (a) => a.counterpartyId === userId && a.status === AgreementStatus.SENT,
+      (a) =>
+        a.counterpartyId === userId &&
+        (a.status === AgreementStatus.AWAITING_UPLOAD || a.status === AgreementStatus.REJECTED),
     );
     const latestPayment = booking.payments[0];
 
@@ -163,7 +167,7 @@ export class CustomerBookingsService {
 
     const card = this.toCard(booking, {
       agreementSigned: booking.agreements.some(
-        (a) => a.counterpartyId === userId && a.status === AgreementStatus.SIGNED,
+        (a) => a.counterpartyId === userId && a.status === AgreementStatus.APPROVED,
       ),
       agreementPending: pendingAgreement !== undefined,
       paymentPending: latestPayment?.status === PaymentStatus.SUBMITTED,
@@ -352,19 +356,18 @@ export class CustomerBookingsService {
     if (row.discountMinor > 0) {
       lines.push({ label: 'Discount', amountMinor: -row.discountMinor });
     }
-    if (row.taxMinor > 0) {
-      lines.push({
-        label: `VAT (${(row.taxRateBps / 100).toFixed(0)}%)`,
-        amountMinor: row.taxMinor,
-      });
-    }
     if (row.serviceFeeMinor > 0) {
       lines.push({ label: 'Service fee', amountMinor: row.serviceFeeMinor });
     }
 
+    // No VAT line: every amount above already contains it, so listing it here would
+    // imply it gets added again. It is reported separately as `taxMinor` / `taxNote`.
+
     return {
       currency: row.currency,
       lines,
+      taxNote: row.taxRateBps > 0 ? `Inc. ${(row.taxRateBps / 100).toFixed(0)}% VAT` : null,
+      netTotalMinor: row.totalMinor - row.taxMinor,
       subtotalMinor: row.subtotalMinor,
       deliveryFeeMinor: row.deliveryFeeMinor,
       discountMinor: row.discountMinor,
@@ -562,8 +565,11 @@ export class CustomerBookingsService {
       if (!a.bookingId) continue;
       const flags = result.get(a.bookingId);
       if (!flags) continue;
-      if (a.status === AgreementStatus.SIGNED) flags.agreementSigned = true;
-      if (a.status === AgreementStatus.SENT) flags.agreementPending = true;
+      if (a.status === AgreementStatus.APPROVED) flags.agreementSigned = true;
+      if (a.status === AgreementStatus.AWAITING_UPLOAD || a.status === AgreementStatus.REJECTED) {
+        // A rejected scan is still the customer's move: they have to re-upload.
+        flags.agreementPending = true;
+      }
     }
     for (const p of payments) {
       const flags = result.get(p.bookingId);
