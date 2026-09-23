@@ -1,5 +1,12 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { BookingStatus, CustomerKind, Prisma, type CustomerProfile } from '@prisma/client';
+import {
+  BookingStatus,
+  CustomerDocumentType,
+  CustomerKind,
+  Prisma,
+  VerificationStatus,
+  type CustomerProfile,
+} from '@prisma/client';
 import { DOCUMENT_MIME_TYPES, UPLOAD_LIMITS, assertValidFile } from '../../common/upload';
 import type { UploadedFile } from '../../common/upload';
 import { PrismaService } from '../prisma/prisma.service';
@@ -16,7 +23,7 @@ import {
  * Exported so the booking service enforces the same list rather than keeping its own copy
  * that drifts. The ID document is included because the request wizard marks it required.
  */
-export const BOOKING_REQUIRED_FIELDS = ['contactPerson', 'phone', 'idDocument'] as const;
+export const BOOKING_REQUIRED_FIELDS = ['contactPerson', 'phone'] as const;
 
 @Injectable()
 export class CustomerService {
@@ -99,19 +106,25 @@ export class CustomerService {
   }
 
   /**
-   * Stores the customer's ID document.
+   * Stores a business document, which is what earns the "Verified customer" badge.
    *
-   * Replacing an existing document resets verification to PENDING_REVIEW — a verified
-   * customer who swaps their ID must be looked at again, or the check means nothing.
+   * Business License, Commercial Registration or TIN certificate — not an identity scan.
+   * Entirely optional: verification is a badge, never a gate, so nothing here is required
+   * to book.
+   *
+   * Replacing an existing document resets verification to PENDING_REVIEW. A verified
+   * customer who swaps their paperwork has to be looked at again, or the check means
+   * nothing.
    */
-  async uploadIdDocument(
+  async uploadVerificationDocument(
     userId: string,
+    documentType: CustomerDocumentType,
     file: UploadedFile | undefined,
   ): Promise<CustomerProfileResponse> {
     const valid = assertValidFile(file, {
       allowed: DOCUMENT_MIME_TYPES,
       maxBytes: UPLOAD_LIMITS.document,
-      field: 'idDocument',
+      field: 'document',
     });
 
     const profile = await this.getOrCreateProfile(userId);
@@ -121,20 +134,21 @@ export class CustomerService {
       originalName: valid.originalname,
       mimeType: valid.mimetype,
       // Owner-scoped so FileAccessService can authorise it from the key alone.
-      folder: `customers/${userId}/id-document`,
+      folder: `customers/${userId}/documents`,
     });
 
-    const previousKey = profile.idDocumentKey;
+    const previousKey = profile.documentKey;
 
     const updated = await this.prisma.customerProfile.update({
       where: { userId },
       data: {
-        idDocumentKey: stored.key,
-        idDocumentName: valid.originalname,
-        idDocumentMimeType: valid.mimetype,
-        idDocumentSizeBytes: valid.size,
-        idDocumentUploadedAt: new Date(),
-        verificationStatus: 'PENDING_REVIEW',
+        documentType,
+        documentKey: stored.key,
+        documentName: valid.originalname,
+        documentMimeType: valid.mimetype,
+        documentSizeBytes: valid.size,
+        documentUploadedAt: new Date(),
+        verificationStatus: VerificationStatus.PENDING_REVIEW,
         rejectionReason: null,
       },
     });
@@ -144,7 +158,7 @@ export class CustomerService {
       // an orphan rather than a broken profile.
       await this.storage.remove(previousKey).catch((error: unknown) => {
         this.logger.warn(
-          `Could not remove superseded ID document ${previousKey}: ${String(error)}`,
+          `Could not remove superseded verification document ${previousKey}: ${String(error)}`,
         );
       });
     }
@@ -153,14 +167,15 @@ export class CustomerService {
   }
 
   /**
-   * The three counters on the Profile screen.
+   * The counters on the Profile screen.
    *
    * "Vendors" counts distinct vendors across closed bookings — the designs label it as a
    * relationship count, not a booking count, so two rentals from one vendor count once.
+   *
+   * There is no customer rating. Reviews are one-way: clients rate talent, and nobody
+   * rates the client. The "4.9 Rating" tile in the mockup has no source and is dropped.
    */
   async getStats(userId: string): Promise<CustomerStatsResponse> {
-    const profile = await this.getOrCreateProfile(userId);
-
     const [bookings, vendorGroups] = await Promise.all([
       this.prisma.booking.count({
         where: { customerId: userId, status: BookingStatus.CLOSED },
@@ -175,12 +190,7 @@ export class CustomerService {
       }),
     ]);
 
-    return {
-      bookings,
-      rating: profile.ratingCount > 0 ? Number(profile.ratingAvg) : null,
-      ratingCount: profile.ratingCount,
-      vendors: vendorGroups.length,
-    };
+    return { bookings, vendors: vendorGroups.length };
   }
 
   // ── mapping ────────────────────────────────────────────────────────────────
@@ -200,14 +210,15 @@ export class CustomerService {
       address: profile.address,
       verificationStatus: profile.verificationStatus,
       rejectionReason: profile.rejectionReason,
-      idDocument:
-        profile.idDocumentKey && profile.idDocumentUploadedAt
+      document:
+        profile.documentKey && profile.documentUploadedAt
           ? {
-              fileName: profile.idDocumentName ?? 'id-document',
-              url: this.storage.urlFor(profile.idDocumentKey),
-              mimeType: profile.idDocumentMimeType ?? 'application/octet-stream',
-              sizeBytes: profile.idDocumentSizeBytes ?? 0,
-              uploadedAt: profile.idDocumentUploadedAt.toISOString(),
+              documentType: profile.documentType ?? CustomerDocumentType.BUSINESS_LICENSE,
+              fileName: profile.documentName ?? 'document',
+              url: this.storage.urlFor(profile.documentKey),
+              mimeType: profile.documentMimeType ?? 'application/octet-stream',
+              sizeBytes: profile.documentSizeBytes ?? 0,
+              uploadedAt: profile.documentUploadedAt.toISOString(),
             }
           : null,
       isBookingReady: outstanding.length === 0,
@@ -227,7 +238,6 @@ export class CustomerService {
 
     if (!profile.contactPerson.trim()) missing.push('contactPerson');
     if (!profile.phone) missing.push('phone');
-    if (!profile.idDocumentKey) missing.push('idDocument');
 
     // A company that cannot be named cannot be invoiced correctly.
     if (profile.kind === CustomerKind.COMPANY && !profile.organisationName) {

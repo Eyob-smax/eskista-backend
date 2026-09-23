@@ -78,14 +78,15 @@ model User {
   telegramChats TelegramChat[]
   notifications Notification[]
 
-  bookings          Booking[]                 @relation("CustomerBookings")
-  cancelledBookings Booking[]                 @relation("CancelledByUser")
-  statusEvents      BookingStatusEvent[]
-  reviewsAuthored   Review[]                  @relation("ReviewAuthor")
-  signedAgreements  Agreement[]               @relation("AgreementSigner")
-  agreementsAsParty Agreement[]               @relation("AgreementCounterparty")
-  messages          Message[]
-  conversations     ConversationParticipant[]
+  bookings           Booking[]                 @relation("CustomerBookings")
+  cancelledBookings  Booking[]                 @relation("CancelledByUser")
+  statusEvents       BookingStatusEvent[]
+  reviewsAuthored    Review[]                  @relation("ReviewAuthor")
+  uploadedAgreements Agreement[]               @relation("AgreementUploader")
+  reviewedAgreements Agreement[]               @relation("AgreementReviewer")
+  agreementsAsParty  Agreement[]               @relation("AgreementCounterparty")
+  messages           Message[]
+  conversations      ConversationParticipant[]
 
   // ── Admin-side back-references ──
   verifiedVendors   VendorProfile[]    @relation("VendorVerifiedBy")
@@ -103,8 +104,6 @@ model User {
 
   incidentsReported   Incident[]          @relation("IncidentReporter")
   incidentsResolved   Incident[]          @relation("IncidentResolver")
-  pricesProposed      PriceProposal[]     @relation("PriceProposalProposer")
-  pricesAnswered      PriceProposal[]     @relation("PriceProposalResponder")
   attachmentsUploaded BookingAttachment[] @relation("BookingAttachmentUploader")
 
   @@index([isBlocked])
@@ -287,9 +286,13 @@ model TalentProfile {
 
   experienceLevel ExperienceLevel @default(INTERMEDIATE)
   yearsExperience Int?
-  /// Free-form tags the client's "specializations" filter searches on.
-  specializations String[]
-  languages       String[]
+
+  /// Skills were merged into profession in the September 2026 review, and the field is
+  /// multi-select: one person may be both a cinematographer and an editor.
+  professions      String[]
+  /// A single free-text line. The structured education section was removed.
+  highestEducation String?
+  languages        String[]
 
   /// Indicative rate shown before coordination; the booked price is negotiated.
   pricingModel  PricingModel @default(PER_DAY)
@@ -352,11 +355,14 @@ model TalentService {
 }
 
 /// Portfolio entries backing the client's "Evaluate: review profiles and portfolios".
+/// A curated showcase of 3-5 pieces, editable by the talent at any time.
 model PortfolioItem {
   id              String   @id @default(uuid()) @db.Uuid
   talentProfileId String   @db.Uuid
   title           String
   description     String?
+  /// Who the work was produced for — "Zeleman", "Spotlight". Shown under each piece.
+  clientOrAgency  String?
   fileKey         String?
   externalUrl     String?
   sortOrder       Int      @default(0)
@@ -793,19 +799,18 @@ model Booking {
   equipmentDetail EquipmentBookingDetail?
   talentDetail    TalentBookingDetail?
 
-  assignedUnits  BookingUnit[]
-  statusEvents   BookingStatusEvent[]
-  attachments    BookingAttachment[]
-  priceProposals PriceProposal[]
-  incidents      Incident[]
-  payments       Payment[]
-  fulfilments    Fulfilment[]
-  inspection     Inspection?
-  settlement     Settlement?
-  invoice        Invoice?
-  agreements     Agreement[]
-  reviews        Review[]
-  conversations  Conversation[]
+  assignedUnits BookingUnit[]
+  statusEvents  BookingStatusEvent[]
+  attachments   BookingAttachment[]
+  incidents     Incident[]
+  payments      Payment[]
+  fulfilments   Fulfilment[]
+  inspection    Inspection?
+  settlement    Settlement?
+  invoice       Invoice?
+  agreements    Agreement[]
+  reviews       Review[]
+  conversations Conversation[]
 
   @@index([customerId, status])
   @@index([vendorId, status])
@@ -838,12 +843,13 @@ model TalentBookingDetail {
   /// the booking is confirmed, per the note on the Location step.
   locationNotes String?
 
-  employmentType EmploymentType @default(FULL_TIME)
-  workMode       WorkMode       @default(ON_SITE)
+  /// Talent are engaged per day or per project only. The traditional employment
+  /// categories were removed in the September 2026 review.
+  engagementModel EngagementModel @default(PER_DAY)
   /// The engagement runs 08:00-18:00 on a given day, so the clock times matter and the
   /// booking's own start/end dates cannot carry them.
-  startTime      String?
-  endTime        String?
+  startTime       String?
+  endTime         String?
 
   requirements String?
   headcount    Int?
@@ -910,10 +916,18 @@ enum AgreementType {
   TALENT_ENGAGEMENT
 }
 
+/// Contracts are generated as a PDF, printed, signed by hand, and the scan uploaded.
+/// There is no in-app signature pad: the client replaced that flow in September 2026.
 enum AgreementStatus {
   DRAFT
-  SENT
-  SIGNED
+  /// Issued and downloadable; waiting for the counterparty to upload their scan.
+  AWAITING_UPLOAD
+  /// A scan has been uploaded and is waiting for Eskista to check it.
+  UNDER_REVIEW
+  /// Eskista accepted the scan. The agreement is in force.
+  APPROVED
+  /// Eskista rejected the scan — wrong document, unsigned, illegible.
+  REJECTED
   DECLINED
   VOID
 }
@@ -960,15 +974,25 @@ model Agreement {
   documentKey String?
   contentHash String?
 
-  sentAt            DateTime?
-  signedAt          DateTime?
-  signedById        String?   @db.Uuid
-  signerName        String?
-  signerPhone       String?
-  signerIpAddress   String?
-  signatureImageKey String?
-  declinedAt        DateTime?
-  declineReason     String?
+  sentAt               DateTime?
+  /// The counterparty's scanned, hand-signed copy.
+  scannedCopyKey       String?
+  scannedCopyName      String?
+  scannedCopyMimeType  String?
+  scannedCopySizeBytes Int?
+  uploadedAt           DateTime?
+  uploadedById         String?   @db.Uuid
+
+  /// Eskista's review of that scan.
+  reviewedAt      DateTime?
+  reviewedById    String?   @db.Uuid
+  rejectionReason String?
+
+  signerName  String?
+  signerPhone String?
+
+  declinedAt    DateTime?
+  declineReason String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -978,7 +1002,8 @@ model Agreement {
   talentProfile TalentProfile?     @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
   template      AgreementTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   counterparty  User               @relation("AgreementCounterparty", fields: [counterpartyId], references: [id])
-  signedBy      User?              @relation("AgreementSigner", fields: [signedById], references: [id], onDelete: SetNull)
+  uploadedBy    User?              @relation("AgreementUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  reviewedBy    User?              @relation("AgreementReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
 
   // Postgres treats NULLs as distinct, so these constrain only the rows that set the
   // corresponding subject — one agreement of each kind per booking / vendor / talent.
@@ -1289,8 +1314,6 @@ enum ReviewKind {
   EQUIPMENT
   TALENT
   PLATFORM_SERVICE
-  /// The supply side rating the customer. Feeds the rating counter on the Profile screen.
-  CUSTOMER
 }
 
 model Review {
@@ -1300,10 +1323,9 @@ model Review {
   authorId  String     @db.Uuid
 
   /// Set according to `kind`; PLATFORM_SERVICE reviews target none of them.
-  listingId         String? @db.Uuid
-  vendorId          String? @db.Uuid
-  talentProfileId   String? @db.Uuid
-  customerProfileId String? @db.Uuid
+  listingId       String? @db.Uuid
+  vendorId        String? @db.Uuid
+  talentProfileId String? @db.Uuid
 
   rating  Int
   comment String?
@@ -1316,19 +1338,17 @@ model Review {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  booking         Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  author          User             @relation("ReviewAuthor", fields: [authorId], references: [id])
-  listing         Listing?         @relation(fields: [listingId], references: [id], onDelete: Cascade)
-  vendor          VendorProfile?   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
-  talentProfile   TalentProfile?   @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
-  customerProfile CustomerProfile? @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  booking       Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  author        User           @relation("ReviewAuthor", fields: [authorId], references: [id])
+  listing       Listing?       @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  vendor        VendorProfile? @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  talentProfile TalentProfile? @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
 
   /// One review of each kind per booking.
   @@unique([bookingId, kind])
   @@index([listingId, isPublished, createdAt])
   @@index([vendorId, isPublished])
   @@index([talentProfileId, isPublished])
-  @@index([customerProfileId, isPublished])
   @@index([kind, rating])
 }
 
@@ -1474,6 +1494,20 @@ enum CustomerKind {
   COMPANY
 }
 
+/// What earns the "Verified customer" badge. Verification is **never** a prerequisite for
+/// booking: both verified businesses and unverified individuals order freely.
+enum CustomerDocumentType {
+  BUSINESS_LICENSE
+  COMMERCIAL_REGISTRATION
+  TIN_CERTIFICATE
+}
+
+/// Talent are engaged per day or per project. Nothing else.
+enum EngagementModel {
+  PER_DAY
+  PER_PROJECT
+}
+
 /// The chips on the talent request's "Project / Purpose" step. Equipment requests use
 /// free text instead, so this is optional on the booking.
 enum ProjectType {
@@ -1488,21 +1522,6 @@ enum ProjectType {
   OTHER
 }
 
-/// Shown joined with the work mode on Track Request: "Full Time · On-site".
-enum EmploymentType {
-  FULL_TIME
-  PART_TIME
-  HOURLY
-  CONTRACT
-  PROJECT_BASED
-}
-
-enum WorkMode {
-  ON_SITE
-  REMOTE
-  HYBRID
-}
-
 /// The five preset bands on the Budget step. A customer may pick a band or give an exact
 /// figure; a band is never used to price anything, only to open the negotiation.
 enum BudgetBand {
@@ -1511,20 +1530,6 @@ enum BudgetBand {
   FROM_10K_TO_25K
   FROM_25K_TO_50K
   OVER_50K
-}
-
-enum ProposerRole {
-  TALENT
-  CUSTOMER
-  ESKISTA
-}
-
-enum PriceProposalStatus {
-  PENDING
-  ACCEPTED
-  DECLINED
-  WITHDRAWN
-  SUPERSEDED
 }
 
 enum IncidentType {
@@ -1586,12 +1591,14 @@ model CustomerProfile {
   city    String?
   address String?
 
-  /// Proof of identity, uploaded during the first booking request.
-  idDocumentKey        String?
-  idDocumentName       String?
-  idDocumentMimeType   String?
-  idDocumentSizeBytes  Int?
-  idDocumentUploadedAt DateTime?
+  /// Business License, Commercial Registration or TIN certificate. Optional: uploading
+  /// one earns the "Verified customer" badge, but nothing is blocked without it.
+  documentType       CustomerDocumentType?
+  documentKey        String?
+  documentName       String?
+  documentMimeType   String?
+  documentSizeBytes  Int?
+  documentUploadedAt DateTime?
 
   /// Admin-controlled. A customer may upload, but can never verify themselves; the
   /// Profile screen's "Verified customer" label reads from this.
@@ -1600,17 +1607,15 @@ model CustomerProfile {
   verifiedByAdminId  String?            @db.Uuid
   rejectionReason    String?
 
-  /// Aggregates behind the Profile screen's three counters.
-  ratingAvg         Decimal @default(0) @db.Decimal(3, 2)
-  ratingCount       Int     @default(0)
-  completedBookings Int     @default(0)
+  /// Reviews are one-way — clients rate talent, never the reverse — so a customer has no
+  /// rating of their own. Only the booking count is aggregated here.
+  completedBookings Int @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  verifiedByAdmin User?    @relation("CustomerVerifiedBy", fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
-  reviews         Review[]
+  user            User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verifiedByAdmin User? @relation("CustomerVerifiedBy", fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
 
   @@index([verificationStatus])
   @@index([city])
@@ -1618,35 +1623,6 @@ model CustomerProfile {
 
 /// One round of the talent price negotiation.
 ///
-/// Append-only: a new round supersedes the last rather than overwriting it, so the whole
-/// exchange stays auditable the way `BookingStatusEvent` keeps the status history.
-model PriceProposal {
-  id        String @id @default(uuid()) @db.Uuid
-  bookingId String @db.Uuid
-
-  /// Which side put this number forward. The Price Modification dialog attributes it to
-  /// "the Service Provider", so a talent-proposed round is the common case.
-  proposedByRole ProposerRole
-  proposedById   String?      @db.Uuid
-
-  amountMinor Int
-  currency    String  @default("ETB")
-  message     String?
-
-  status        PriceProposalStatus @default(PENDING)
-  respondedAt   DateTime?
-  respondedById String?             @db.Uuid
-  declineReason String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  booking     Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  proposedBy  User?   @relation("PriceProposalProposer", fields: [proposedById], references: [id], onDelete: SetNull)
-  respondedBy User?   @relation("PriceProposalResponder", fields: [respondedById], references: [id], onDelete: SetNull)
-
-  @@index([bookingId, status, createdAt])
-}
 
 model BookingAttachment {
   id        String                @id @default(uuid()) @db.Uuid

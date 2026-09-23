@@ -1,11 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  BudgetBand,
-  CollectionMethod,
-  EmploymentType,
-  ProjectType,
-  WorkMode,
-} from '@prisma/client';
+import { BudgetBand, CollectionMethod, EngagementModel, ProjectType } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
   IsEnum,
@@ -199,19 +193,17 @@ export class UpsertTalentRequestDto {
   @Matches(CLOCK_TIME, { message: 'endTime must be HH:mm on a 24-hour clock' })
   endTime?: string;
 
-  @ApiPropertyOptional({ enum: EmploymentType, example: EmploymentType.FULL_TIME })
-  @IsOptional()
-  @IsEnum(EmploymentType)
-  employmentType?: EmploymentType;
-
   @ApiPropertyOptional({
-    enum: WorkMode,
-    example: WorkMode.ON_SITE,
-    description: 'Joined with the employment type for display: "Full Time · On-site".',
+    enum: EngagementModel,
+    example: EngagementModel.PER_DAY,
+    default: EngagementModel.PER_DAY,
+    description:
+      'Talent are engaged per day or per project, and nothing else. The Full-Time / ' +
+      'Part-Time / On-site / Remote options were removed in the September 2026 review.',
   })
   @IsOptional()
-  @IsEnum(WorkMode)
-  workMode?: WorkMode;
+  @IsEnum(EngagementModel)
+  engagementModel?: EngagementModel;
 
   // ── Step 3: Location ──
   @ApiPropertyOptional({ example: 'Addis Ababa', maxLength: 80 })

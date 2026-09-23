@@ -5,7 +5,6 @@ import {
   Get,
   HttpCode,
   HttpStatus,
-  Ip,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -27,7 +26,7 @@ import {
 import {
   AgreementBodyResponse,
   AgreementResponse,
-  SignAgreementDto,
+  UploadSignedAgreementDto,
 } from '../agreements/dto/agreement.dto';
 import { CurrentUser, Roles } from '../auth/auth.decorators';
 import type { UploadedFile } from '../../common/upload';
@@ -193,21 +192,49 @@ export class VendorController {
     return this.vendorService.getOnboardingAgreement(userId);
   }
 
-  @Post('me/agreement/sign')
+  @Post('me/agreement/signed-copy')
   @Roles('VENDOR')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
   @ApiOperation({
-    summary: 'Sign the Eskista vendor agreement',
-    description:
-      'Records the signature against the frozen content hash, with the signer name and ' +
-      'originating IP address. Signing is required before Eskista can verify the profile.',
+    summary: 'Upload the signed Eskista vendor agreement',
+    description: `
+Contracts are signed **on paper**: download the agreement, print it, sign it by hand, and
+upload the scan here. There is no in-app signature pad.
+
+The upload moves the agreement to \`UNDER_REVIEW\`. Eskista then checks the scan is the
+right document, legible and actually signed, and either approves or rejects it. Approval is
+required before the vendor profile can be verified.
+
+Re-uploading over a **rejected** scan is expected — that is how a blurred photo gets fixed.
+Re-uploading over an **approved** one returns 409.
+
+PNG, JPEG, WebP or PDF, up to 10 MB.
+`.trim(),
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file', 'signerName'],
+      properties: {
+        file: { type: 'string', format: 'binary', description: 'The scan. Max 10 MB.' },
+        signerName: {
+          type: 'string',
+          description: 'Who physically signed it.',
+          example: 'Shebelaw Bogale',
+        },
+        signerPhone: { type: 'string', example: '+251911234567' },
+      },
+    },
   })
   @ApiOkResponse({ type: AgreementResponse })
-  signAgreement(
+  uploadSignedAgreement(
     @CurrentUser('id') userId: string,
-    @Body() dto: SignAgreementDto,
-    @Ip() ipAddress: string,
+    @Body() dto: UploadSignedAgreementDto,
+    @UploadedFileParam() file: UploadedFile,
   ): Promise<AgreementResponse> {
-    return this.vendorService.signOnboardingAgreement(userId, dto, ipAddress);
+    return this.vendorService.uploadSignedOnboardingAgreement(userId, dto, file);
   }
 
   @Get('me/dashboard')

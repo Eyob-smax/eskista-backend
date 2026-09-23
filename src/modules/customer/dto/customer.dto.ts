@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { CustomerKind, VerificationStatus } from '@prisma/client';
+import { CustomerDocumentType, CustomerKind, VerificationStatus } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { IsEmail, IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
@@ -92,13 +92,30 @@ export class UpdateCustomerProfileDto {
   address?: string;
 }
 
-export class CustomerIdDocumentResponse {
-  @ApiProperty({ example: 'selam-fayda.jpg' })
+export class UploadVerificationDocumentDto {
+  @ApiProperty({
+    enum: CustomerDocumentType,
+    description: 'Which of the three accepted documents is being uploaded.',
+    example: CustomerDocumentType.BUSINESS_LICENSE,
+  })
+  @IsEnum(CustomerDocumentType)
+  documentType!: CustomerDocumentType;
+}
+
+export class CustomerDocumentResponse {
+  @ApiProperty({
+    enum: CustomerDocumentType,
+    description: 'Which of the three accepted documents this is.',
+    example: CustomerDocumentType.BUSINESS_LICENSE,
+  })
+  documentType!: CustomerDocumentType;
+
+  @ApiProperty({ example: 'business-licence.pdf' })
   fileName!: string;
 
   @ApiProperty({
     description: 'Authorised download URL. Only this customer and Eskista staff may read it.',
-    example: '/api/v1/files/customers/6f1c.../id-document/selam-fayda.jpg',
+    example: '/api/v1/files/customers/6f1c.../documents/business-licence.pdf',
   })
   url!: string;
 
@@ -143,27 +160,36 @@ export class CustomerProfileResponse {
   @ApiProperty({
     enum: VerificationStatus,
     description:
-      'Admin-controlled. A customer can upload an ID but can never verify themselves, so ' +
-      'this only ever changes through Eskista review. Render the “Verified customer” ' +
-      'badge when it is `VERIFIED`.',
+      'Admin-controlled. A customer can upload a document but can never verify ' +
+      'themselves, so this only ever changes through Eskista review. Render the ' +
+      '“Verified customer” badge when it is `VERIFIED`.\n\n' +
+      '**This is a badge, not a gate.** Unverified customers place bookings exactly like ' +
+      'verified ones; never use it to disable an action.',
     example: VerificationStatus.VERIFIED,
   })
   verificationStatus!: VerificationStatus;
 
   @ApiPropertyOptional({
     description: 'Why the last verification attempt was rejected, if it was.',
-    example: 'The uploaded ID was too blurred to read.',
+    example: 'The uploaded licence was too blurred to read.',
     nullable: true,
   })
   rejectionReason!: string | null;
 
-  @ApiPropertyOptional({ type: CustomerIdDocumentResponse, nullable: true })
-  idDocument!: CustomerIdDocumentResponse | null;
+  @ApiPropertyOptional({
+    type: CustomerDocumentResponse,
+    nullable: true,
+    description:
+      'The business document behind the "Verified customer" badge. Null until one is ' +
+      'uploaded — which is entirely optional.',
+  })
+  document!: CustomerDocumentResponse | null;
 
   @ApiProperty({
     description:
       'True once every field a booking request needs is present. The client can use this ' +
-      'to skip the “Customer & Contact” step and go straight to project details.',
+      'to skip the “Customer & Contact” step and go straight to project details. ' +
+      'Verification is **not** part of this: an unverified individual can book freely.',
     example: true,
   })
   isBookingReady!: boolean;
@@ -171,8 +197,8 @@ export class CustomerProfileResponse {
   @ApiProperty({
     description:
       'Field names still missing before a booking can be submitted. Empty when ' +
-      '`isBookingReady` is true.',
-    example: ['idDocument'],
+      '`isBookingReady` is true. Never includes documents — those are optional.',
+    example: ['phone'],
     type: [String],
   })
   outstandingRequirements!: string[];
@@ -187,18 +213,6 @@ export class CustomerStatsResponse {
     example: 12,
   })
   bookings!: number;
-
-  @ApiProperty({
-    description:
-      'Average rating this customer has received from vendors, to one decimal place. ' +
-      '`null` until at least one rating exists — render a dash, not a zero.',
-    example: 4.9,
-    nullable: true,
-  })
-  rating!: number | null;
-
-  @ApiProperty({ description: 'How many ratings the average is drawn from.', example: 7 })
-  ratingCount!: number;
 
   @ApiProperty({
     description: 'Distinct vendors this customer has completed a booking with.',

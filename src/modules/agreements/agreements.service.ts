@@ -12,11 +12,14 @@ import { formatMoney } from '../../common/money';
 import { PrismaService } from '../prisma/prisma.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
 
-export interface SignAgreementInput {
+export interface UploadSignedCopyInput {
+  /** Who physically signed the printed contract. */
   signerName: string;
   signerPhone?: string;
-  ipAddress?: string;
-  signatureImageKey?: string;
+  fileKey: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
 }
 
 /**
@@ -26,13 +29,17 @@ export interface SignAgreementInput {
  *     because an individual has no business registration to warrant.
  *   • Eskista ↔ Customer — generated per booking.
  *
- * A signature is only meaningful if you can prove *what* was signed, so the rendered
- * body is frozen to storage and hashed at issue time. `contentHash` covers the exact
- * bytes; re-rendering later from a mutated template cannot change what was agreed.
+ * Signing is **offline**: Eskista generates the contract, the counterparty downloads and
+ * prints it, signs it by hand, and uploads the scan. There is no in-app signature pad —
+ * the client replaced that flow in September 2026. The lifecycle is therefore
+ * `AWAITING_UPLOAD → UNDER_REVIEW → APPROVED`, with Eskista checking each scan.
  *
- * PDF rendering is deliberately not implemented yet — see `renderDocument`. The signed
- * artefact is currently stored as Markdown, which hashes and archives identically; a PDF
- * renderer can be layered on without invalidating anything already signed.
+ * A contract is only meaningful if you can prove *what* was agreed, so the rendered body
+ * is frozen to storage and hashed at issue time. `contentHash` covers the exact bytes, so
+ * the scan can always be checked against the document that was actually issued.
+ *
+ * PDF rendering is not implemented yet. The frozen artefact is Markdown, which hashes and
+ * archives identically; a renderer can be layered on without invalidating anything.
  */
 @Injectable()
 export class AgreementsService {
@@ -83,7 +90,7 @@ export class AgreementsService {
         version: template.version,
         vendorId,
         counterpartyId: vendor.user.id,
-        status: AgreementStatus.SENT,
+        status: AgreementStatus.AWAITING_UPLOAD,
         sentAt: new Date(),
         documentKey,
         contentHash,
@@ -145,7 +152,7 @@ export class AgreementsService {
         version: template.version,
         bookingId,
         counterpartyId: booking.customer.id,
-        status: AgreementStatus.SENT,
+        status: AgreementStatus.AWAITING_UPLOAD,
         sentAt: new Date(),
         documentKey,
         contentHash,
@@ -154,12 +161,20 @@ export class AgreementsService {
   }
 
   /**
-   * Records a signature.
+   * Accepts the counterparty's scan of the hand-signed contract.
    *
-   * Only the counterparty may sign, and only once. The IP address is captured because a
-   * signature with no provenance is not worth much in a dispute.
+   * Moves the agreement to UNDER_REVIEW rather than straight to APPROVED: a scan is a
+   * claim that the document was signed, and only Eskista can confirm it is the right
+   * document, legible, and actually signed.
+   *
+   * Re-uploading over a rejected scan is allowed and expected — that is how a customer
+   * fixes a blurred photo. Re-uploading over an approved one is not.
    */
-  async sign(agreementId: string, userId: string, input: SignAgreementInput): Promise<Agreement> {
+  async uploadSignedCopy(
+    agreementId: string,
+    userId: string,
+    input: UploadSignedCopyInput,
+  ): Promise<Agreement> {
     const agreement = await this.prisma.agreement.findUnique({ where: { id: agreementId } });
     if (!agreement) throw new NotFoundException('Agreement not found');
 
@@ -167,8 +182,11 @@ export class AgreementsService {
       // 404 rather than 403 — do not confirm the id exists to someone not party to it.
       throw new NotFoundException('Agreement not found');
     }
-    if (agreement.status === AgreementStatus.SIGNED) {
-      throw new ConflictException('This agreement is already signed');
+    if (agreement.status === AgreementStatus.APPROVED) {
+      throw new ConflictException('This agreement has already been approved');
+    }
+    if (agreement.status === AgreementStatus.UNDER_REVIEW) {
+      throw new ConflictException('Your uploaded copy is already being reviewed');
     }
     if (agreement.status === AgreementStatus.VOID) {
       throw new ConflictException('This agreement has been voided');
@@ -180,13 +198,20 @@ export class AgreementsService {
     return this.prisma.agreement.update({
       where: { id: agreementId },
       data: {
-        status: AgreementStatus.SIGNED,
-        signedAt: new Date(),
-        signedById: userId,
+        status: AgreementStatus.UNDER_REVIEW,
+        scannedCopyKey: input.fileKey,
+        scannedCopyName: input.fileName,
+        scannedCopyMimeType: input.mimeType,
+        scannedCopySizeBytes: input.sizeBytes,
+        uploadedAt: new Date(),
+        uploadedById: userId,
         signerName: input.signerName,
         signerPhone: input.signerPhone,
-        signerIpAddress: input.ipAddress,
-        signatureImageKey: input.signatureImageKey,
+        // A fresh upload clears the previous verdict, so the customer is not shown a stale
+        // rejection reason beside a scan they have already replaced.
+        rejectionReason: null,
+        reviewedAt: null,
+        reviewedById: null,
         declinedAt: null,
         declineReason: null,
       },
@@ -198,8 +223,8 @@ export class AgreementsService {
     if (!agreement || agreement.counterpartyId !== userId) {
       throw new NotFoundException('Agreement not found');
     }
-    if (agreement.status === AgreementStatus.SIGNED) {
-      throw new ConflictException('A signed agreement cannot be declined');
+    if (agreement.status === AgreementStatus.APPROVED) {
+      throw new ConflictException('An approved agreement cannot be declined');
     }
 
     return this.prisma.agreement.update({

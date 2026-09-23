@@ -20,12 +20,14 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { CustomerDocumentType } from '@prisma/client';
 import { CurrentUser } from '../auth/auth.decorators';
 import type { UploadedFile } from '../../common/upload';
 import {
   CustomerProfileResponse,
   CustomerStatsResponse,
   UpdateCustomerProfileDto,
+  UploadVerificationDocumentDto,
 } from './dto/customer.dto';
 import { CustomerService } from './customer.service';
 
@@ -73,7 +75,8 @@ Partial update — send only the fields that changed.
 
 Editing is allowed after verification: the details on file are what an invoice needs to be
 current, and re-running the ID check because someone corrected a phone number would achieve
-nothing. Replacing the **ID document** does reset verification; see \`POST /customer/me/id-document\`.
+nothing. Replacing the **verification document** does reset it; see
+\`POST /customer/me/verification-document\`.
 
 \`verificationStatus\` cannot be set here under any circumstances. It is Eskista's decision.
 `.trim(),
@@ -87,51 +90,64 @@ nothing. Replacing the **ID document** does reset verification; see \`POST /cust
     return this.customerService.updateProfile(userId, dto);
   }
 
-  @Post('me/id-document')
+  @Post('me/verification-document')
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
-    summary: 'Upload or replace my ID document',
+    summary: 'Upload the document that earns the Verified badge',
     description: `
-Backs the **"Click to add your id image"** control on the request wizard.
+Accepts a **Business License**, **Commercial Registration** or **TIN certificate** — the
+three documents that earn the "Verified customer" badge.
 
-Accepts PNG, JPEG, WebP or PDF, up to **5 MB** — the limit the design states.
+**Entirely optional.** Verification is a badge, never a gate: an unverified individual
+places bookings exactly like a verified company. Do not disable anything on the absence of
+this document, and do not prompt for it inside the booking wizard.
+
+PNG, JPEG, WebP or PDF, up to **5 MB**.
 
 Uploading **always** moves \`verificationStatus\` to \`PENDING_REVIEW\` and clears any
-previous rejection reason, including for an already-verified customer. A verified customer
-who swaps their ID has to be looked at again, or the check means nothing. The superseded
-file is deleted.
+previous rejection reason, including for an already-verified customer — swapping the
+paperwork has to be re-checked or the check means nothing. The superseded file is deleted.
 
-The returned \`idDocument.url\` is **not public**. It is readable only by this customer and
-by Eskista staff; anyone else gets a 404.
+The returned \`document.url\` is **not public**: readable only by this customer and by
+Eskista staff. Anyone else gets a 404.
 `.trim(),
   })
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['file'],
+      required: ['file', 'documentType'],
       properties: {
         file: {
           type: 'string',
           format: 'binary',
           description: 'PNG, JPEG, WebP or PDF. Max 5 MB.',
         },
+        documentType: {
+          type: 'string',
+          enum: Object.values(CustomerDocumentType),
+          description: 'Which of the three accepted documents this is.',
+          example: CustomerDocumentType.BUSINESS_LICENSE,
+        },
       },
     },
   })
   @ApiOkResponse({
     type: CustomerProfileResponse,
-    description: 'The updated profile, now with `idDocument` populated.',
+    description: 'The updated profile, now with `document` populated.',
   })
   @ApiBadRequestResponse({
-    description: 'Missing file, unsupported type, empty file, or larger than 5 MB.',
+    description:
+      'Missing or unknown `documentType`, missing file, unsupported type, empty file, ' +
+      'or larger than 5 MB.',
   })
-  uploadIdDocument(
+  uploadVerificationDocument(
     @CurrentUser('id') userId: string,
+    @Body() dto: UploadVerificationDocumentDto,
     @UploadedFileParam() file: UploadedFile,
   ): Promise<CustomerProfileResponse> {
-    return this.customerService.uploadIdDocument(userId, file);
+    return this.customerService.uploadVerificationDocument(userId, dto.documentType, file);
   }
 
   @Get('me/stats')

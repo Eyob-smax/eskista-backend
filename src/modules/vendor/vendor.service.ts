@@ -30,7 +30,7 @@ import { AgreementsService } from '../agreements/agreements.service';
 import type {
   AgreementBodyResponse,
   AgreementResponse,
-  SignAgreementDto,
+  UploadSignedAgreementDto,
 } from '../agreements/dto/agreement.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
@@ -313,21 +313,43 @@ export class VendorService {
     };
   }
 
-  async signOnboardingAgreement(
+  /**
+   * Accepts the vendor's scan of the hand-signed onboarding agreement.
+   *
+   * Contracts are signed on paper and scanned back in — there is no in-app signature pad.
+   * The upload puts the agreement into UNDER_REVIEW; Eskista approves it separately.
+   */
+  async uploadSignedOnboardingAgreement(
     userId: string,
-    dto: SignAgreementDto,
-    ipAddress?: string,
+    dto: UploadSignedAgreementDto,
+    file: UploadedFile | undefined,
   ): Promise<AgreementResponse> {
     const vendor = await this.requireVendor(userId);
     const agreement = vendor.agreements.find((a) => a.kind === AgreementType.VENDOR_ONBOARDING);
     if (!agreement) throw new NotFoundException('No vendor agreement has been issued yet');
 
-    const signed = await this.agreements.sign(agreement.id, userId, {
+    const valid = assertValidFile(file, {
+      allowed: DOCUMENT_MIME_TYPES,
+      maxBytes: UPLOAD_LIMITS.receipt,
+      field: 'signedAgreement',
+    });
+
+    const stored = await this.storage.put({
+      buffer: valid.buffer,
+      originalName: valid.originalname,
+      mimeType: valid.mimetype,
+      folder: `vendors/${vendor.id}/agreements/signed`,
+    });
+
+    const uploaded = await this.agreements.uploadSignedCopy(agreement.id, userId, {
       signerName: dto.signerName,
       signerPhone: dto.signerPhone ?? vendor.phone ?? undefined,
-      ipAddress,
+      fileKey: stored.key,
+      fileName: valid.originalname,
+      mimeType: valid.mimetype,
+      sizeBytes: valid.size,
     });
-    return this.toAgreementResponse(signed);
+    return this.toAgreementResponse(uploaded);
   }
 
   /** The vendor home screen: four KPI tiles plus the "Needs Your Attention" feed. */
@@ -469,11 +491,17 @@ export class VendorService {
   private postSubmissionRequirements(vendor: VendorWithDocuments): string[] {
     const onboarding = vendor.agreements.find((a) => a.kind === AgreementType.VENDOR_ONBOARDING);
     if (!onboarding) return [];
-    if (onboarding.status === AgreementStatus.SIGNED) return [];
+    if (onboarding.status === AgreementStatus.APPROVED) return [];
+    if (onboarding.status === AgreementStatus.UNDER_REVIEW) {
+      return ['Eskista is checking your signed agreement'];
+    }
+    if (onboarding.status === AgreementStatus.REJECTED) {
+      return ['Your signed agreement was not accepted - upload a clearer scan'];
+    }
     if (onboarding.status === AgreementStatus.DECLINED) {
       return ['You declined the Eskista vendor agreement - contact support to continue'];
     }
-    return ['Review and sign the Eskista vendor agreement'];
+    return ['Download, sign and upload the Eskista vendor agreement'];
   }
 
   private toAgreementResponse(agreement: {
@@ -484,7 +512,10 @@ export class VendorService {
     contentHash: string | null;
     documentKey: string | null;
     sentAt: Date | null;
-    signedAt: Date | null;
+    uploadedAt: Date | null;
+    reviewedAt: Date | null;
+    scannedCopyKey: string | null;
+    rejectionReason: string | null;
     signerName: string | null;
     declinedAt: Date | null;
     declineReason: string | null;
@@ -498,7 +529,12 @@ export class VendorService {
       contentHash: agreement.contentHash,
       documentUrl: agreement.documentKey ? this.storage.urlFor(agreement.documentKey) : null,
       sentAt: agreement.sentAt,
-      signedAt: agreement.signedAt,
+      uploadedAt: agreement.uploadedAt,
+      reviewedAt: agreement.reviewedAt,
+      signedCopyUrl: agreement.scannedCopyKey
+        ? this.storage.urlFor(agreement.scannedCopyKey)
+        : null,
+      rejectionReason: agreement.rejectionReason,
       signerName: agreement.signerName,
       declinedAt: agreement.declinedAt,
       declineReason: agreement.declineReason,

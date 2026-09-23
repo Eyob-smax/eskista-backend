@@ -74,11 +74,11 @@ export class TalentCatalogueService {
         { displayName: { contains: query.q, mode: 'insensitive' } },
         { headline: { contains: query.q, mode: 'insensitive' } },
         { bio: { contains: query.q, mode: 'insensitive' } },
-        { specializations: { hasSome: [query.q] } },
+        { professions: { hasSome: [query.q] } },
       ];
     }
-    if (query.specializations?.length) {
-      where.specializations = { hasSome: query.specializations };
+    if (query.professions?.length) {
+      where.professions = { hasSome: query.professions };
     }
     if (query.experienceLevel) where.experienceLevel = query.experienceLevel;
     if (query.location) where.location = { contains: query.location, mode: 'insensitive' };
@@ -266,7 +266,7 @@ export class TalentCatalogueService {
       currency: row.currency,
       isAvailableForHire: row.isAvailableForHire,
       experienceLevel: row.experienceLevel,
-      specializations: row.specializations,
+      professions: row.professions,
     };
   }
 

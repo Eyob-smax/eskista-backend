@@ -6,9 +6,9 @@ import { IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 const trim = () =>
   Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value));
 
-export class SignAgreementDto {
+export class UploadSignedAgreementDto {
   @ApiProperty({
-    description: 'Typed full name of the signer, recorded verbatim on the agreement.',
+    description: 'Full name of whoever physically signed the printed contract, recorded verbatim.',
     example: 'Shebelaw Bogale',
   })
   @IsString()
@@ -45,9 +45,36 @@ export class AgreementResponse {
     description: 'SHA-256 of the exact bytes presented for signature.',
   })
   contentHash!: string | null;
-  @ApiPropertyOptional({ nullable: true }) documentUrl!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'The blank contract to download, print and sign.',
+  })
+  documentUrl!: string | null;
+
   @ApiPropertyOptional({ nullable: true }) sentAt!: Date | null;
-  @ApiPropertyOptional({ nullable: true }) signedAt!: Date | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'When the counterparty uploaded their scanned, hand-signed copy.',
+  })
+  uploadedAt!: Date | null;
+
+  @ApiPropertyOptional({ nullable: true, description: 'When Eskista reviewed that scan.' })
+  reviewedAt!: Date | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Authorised download URL for the uploaded scan, once one exists.',
+  })
+  signedCopyUrl!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Why Eskista rejected the scan. Safe to show the counterparty verbatim.',
+    example: 'The signature page was missing.',
+  })
+  rejectionReason!: string | null;
+
   @ApiPropertyOptional({ nullable: true }) signerName!: string | null;
   @ApiPropertyOptional({ nullable: true }) declinedAt!: Date | null;
   @ApiPropertyOptional({ nullable: true }) declineReason!: string | null;
