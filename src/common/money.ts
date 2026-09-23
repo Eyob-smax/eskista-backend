@@ -76,6 +76,8 @@ export interface PriceBreakdownInput {
   securityDepositMinor?: number;
   discountMinor?: number;
   taxRateBps?: number;
+  /** Eskista's own handling fee. Defaults to 0, so the line is absent until configured. */
+  serviceFeeRateBps?: number;
   commissionRateBps: number;
 }
 
@@ -89,7 +91,12 @@ export interface PriceBreakdown {
   securityDepositMinor: number;
   discountMinor: number;
   taxMinor: number;
+  serviceFeeRateBps: number;
+  serviceFeeMinor: number;
+  /** Value of the goods and services. The VAT base and the invoice total. Excludes the deposit. */
   totalMinor: number;
+  /** What the customer actually transfers: `totalMinor` plus the refundable deposit. */
+  amountDueMinor: number;
   commissionRateBps: number;
   commissionMinor: number;
   supplierEarningsMinor: number;
@@ -102,8 +109,19 @@ export interface PriceBreakdown {
  * Deliberate choices:
  *  - Commission is taken on the **rental subtotal only** — not on the delivery fee (that
  *    is Eskista's own revenue) and not on the refundable deposit.
- *  - Tax applies to subtotal + delivery − discount, excluding the deposit, which is a
- *    returnable holding rather than consideration.
+ *  - Tax applies to the **rental subtotal − discount**, and to nothing else. Two screens
+ *    fix this independently: Finalize Booking shows 10,500 + 500 delivery + 1,575 VAT =
+ *    12,575, and Booking Details shows the same 1,575 beside a 300 service fee. In both,
+ *    1,575 is 15% of 10,500 — taxing the delivery fee too would give 1,650 and neither
+ *    total would reconcile. Delivery, the service fee and the refundable deposit are all
+ *    outside the base.
+ *  - The service fee sits **outside the VAT base**. That is what the Booking Details
+ *    screen shows: 10,500 + 500 + 1,575 VAT + 300 fee = 12,875, where the VAT is 15% of
+ *    11,000 and not of 11,300. Normal VAT treatment would tax the fee, so this is worth
+ *    confirming — but the fee defaults to 0, so nothing turns on it until it is switched on.
+ *  - Two totals are returned, because the designs show two (AD-9): `totalMinor` is the
+ *    value of the goods (ETB 12,575 in the worked example) and `amountDueMinor` adds the
+ *    refundable deposit (ETB 16,575). Returning one invites the caller to pick the wrong one.
  */
 export function computePriceBreakdown(
   input: PriceBreakdownInput,
@@ -117,6 +135,7 @@ export function computePriceBreakdown(
     securityDepositMinor = 0,
     discountMinor = 0,
     taxRateBps = 0,
+    serviceFeeRateBps = 0,
     commissionRateBps,
   } = input;
 
@@ -132,9 +151,15 @@ export function computePriceBreakdown(
 
   const subtotalMinor = unitPriceMinor * periods * quantity;
   const cappedDiscount = Math.min(discountMinor, subtotalMinor + deliveryFeeMinor);
-  const taxableMinor = subtotalMinor + deliveryFeeMinor - cappedDiscount;
+
+  // The discount comes off the rental before tax, but can never push the base below zero
+  // when it is large enough to eat into the delivery fee as well.
+  const taxableMinor = Math.max(subtotalMinor - cappedDiscount, 0);
   const taxMinor = applyBps(taxableMinor, taxRateBps);
-  const totalMinor = taxableMinor + taxMinor + securityDepositMinor;
+  const serviceFeeMinor = applyBps(subtotalMinor, serviceFeeRateBps);
+
+  const totalMinor = subtotalMinor + deliveryFeeMinor - cappedDiscount + taxMinor + serviceFeeMinor;
+  const amountDueMinor = totalMinor + securityDepositMinor;
 
   const split = splitCommission(subtotalMinor, commissionRateBps);
 
@@ -148,7 +173,10 @@ export function computePriceBreakdown(
     securityDepositMinor,
     discountMinor: cappedDiscount,
     taxMinor,
+    serviceFeeRateBps,
+    serviceFeeMinor,
     totalMinor,
+    amountDueMinor,
     commissionRateBps,
     commissionMinor: split.commissionMinor,
     supplierEarningsMinor: split.supplierEarningsMinor,
