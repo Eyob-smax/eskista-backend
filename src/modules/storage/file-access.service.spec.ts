@@ -23,13 +23,13 @@ const ADMIN = user('user-admin', [Role.ADMIN]);
 function makePrisma(overrides: Record<string, unknown> = {}) {
   return {
     vendorProfile: {
-      findUnique: jest.fn().mockResolvedValue({ userId: VENDOR_OWNER.id }),
+      findUnique: vi.fn().mockResolvedValue({ userId: VENDOR_OWNER.id }),
     },
     talentProfile: {
-      findUnique: jest.fn().mockResolvedValue({ userId: 'user-talent' }),
+      findUnique: vi.fn().mockResolvedValue({ userId: 'user-talent' }),
     },
     booking: {
-      findUnique: jest.fn().mockResolvedValue({
+      findUnique: vi.fn().mockResolvedValue({
         customerId: CUSTOMER.id,
         vendor: { userId: VENDOR_OWNER.id },
         talentProfile: null,
@@ -112,7 +112,7 @@ describe('FileAccessService', () => {
 
     it('404 when the vendor does not exist, rather than revealing absence differently', async () => {
       service = new FileAccessService(
-        makePrisma({ vendorProfile: { findUnique: jest.fn().mockResolvedValue(null) } }),
+        makePrisma({ vendorProfile: { findUnique: vi.fn().mockResolvedValue(null) } }),
       );
       await expect(
         service.assertCanRead(VENDOR_OWNER, 'vendors/missing/documents/x.pdf'),
@@ -155,7 +155,7 @@ describe('FileAccessService', () => {
 
     it('404s for a booking that does not exist', async () => {
       service = new FileAccessService(
-        makePrisma({ booking: { findUnique: jest.fn().mockResolvedValue(null) } }),
+        makePrisma({ booking: { findUnique: vi.fn().mockResolvedValue(null) } }),
       );
       await expect(service.assertCanRead(CUSTOMER, 'bookings/ESK-00000/x.pdf')).rejects.toThrow(
         NotFoundException,
@@ -166,7 +166,7 @@ describe('FileAccessService', () => {
       service = new FileAccessService(
         makePrisma({
           booking: {
-            findUnique: jest.fn().mockResolvedValue({
+            findUnique: vi.fn().mockResolvedValue({
               customerId: CUSTOMER.id,
               vendor: null,
               talentProfile: { userId: 'user-talent' },

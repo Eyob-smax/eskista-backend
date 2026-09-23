@@ -7,3 +7,5 @@ allowBuilds:
   prisma: true
   argon2: true
   '@scarf/scarf': false
+  # SWC compiles Vitest's TypeScript; its postinstall fetches the platform binary.
+  '@swc/core': true

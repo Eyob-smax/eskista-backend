@@ -22,7 +22,10 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "esModuleInterop": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    // Vitest runs with `globals: true`, so describe/it/expect/vi are ambient. Without this
+    // the specs typecheck as undefined names even though they run fine.
+    "types": ["node", "vitest/globals"]
   },
   "exclude": ["node_modules", "dist"]
 }
