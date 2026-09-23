@@ -72,6 +72,7 @@ model User {
   roles         RoleMembership[]
   vendor        VendorProfile?
   talent        TalentProfile?
+  customer      CustomerProfile?
   sessions      Session[]
   accounts      Account[]
   telegramChats TelegramChat[]
@@ -89,6 +90,7 @@ model User {
   // ── Admin-side back-references ──
   verifiedVendors   VendorProfile[]    @relation("VendorVerifiedBy")
   verifiedTalents   TalentProfile[]    @relation("TalentVerifiedBy")
+  verifiedCustomers CustomerProfile[]  @relation("CustomerVerifiedBy")
   reviewedDocuments SupplierDocument[]
   reviewedListings  Listing[]
   approvedBookings  Booking[]          @relation("BookingApprovedBy")
@@ -98,6 +100,12 @@ model User {
   batchesPaid       SettlementBatch[]  @relation("BatchPaidBy")
   invoicesIssued    Invoice[]
   auditEntries      AdminAuditLog[]
+
+  incidentsReported   Incident[]          @relation("IncidentReporter")
+  incidentsResolved   Incident[]          @relation("IncidentResolver")
+  pricesProposed      PriceProposal[]     @relation("PriceProposalProposer")
+  pricesAnswered      PriceProposal[]     @relation("PriceProposalResponder")
+  attachmentsUploaded BookingAttachment[] @relation("BookingAttachmentUploader")
 
   @@index([isBlocked])
   @@index([phone])
@@ -668,6 +676,10 @@ enum BookingType {
 /// Unified lifecycle. Equipment uses every state; talent skips the delivery, return and
 /// inspection states because there is nothing to hand back.
 enum BookingStatus {
+  /// "Save Draft" on both request wizards. A draft is the same row as the booking it
+  /// becomes, so it keeps one identity for its whole life. Excluded from every
+  /// availability calculation and never visible to a supplier.
+  DRAFT
   REQUEST_SUBMITTED
   ESKISTA_REVIEW
   AWAITING_PAYMENT
@@ -723,6 +735,9 @@ model Booking {
   /// Shown as "Purpose" / "Project description" on the vendor screens, and as the
   /// project brief on the talent request.
   projectDescription String?
+  /// Picked from chips on the talent request. Equipment requests collect free text only,
+  /// so this stays null for them.
+  projectType        ProjectType?
 
   status BookingStatus @default(REQUEST_SUBMITTED)
 
@@ -748,6 +763,13 @@ model Booking {
   /// setting cannot silently restate an existing booking.
   taxRateBps            Int       @default(0)
   taxMinor              Int       @default(0)
+  /// Eskista's handling fee, snapshotted like commission and VAT. Defaults to 0, so the
+  /// line stays absent from the breakdown until it is configured.
+  serviceFeeRateBps     Int       @default(0)
+  serviceFeeMinor       Int       @default(0)
+  /// Value of the goods and services, excluding the refundable deposit (ETB 12,575 in the
+  /// designs' worked example). What the customer transfers is this plus the deposit, and
+  /// is derived rather than stored so the two can never disagree.
   totalMinor            Int
   commissionRateBps     Int
   commissionMinor       Int
@@ -771,16 +793,19 @@ model Booking {
   equipmentDetail EquipmentBookingDetail?
   talentDetail    TalentBookingDetail?
 
-  assignedUnits BookingUnit[]
-  statusEvents  BookingStatusEvent[]
-  payments      Payment[]
-  fulfilments   Fulfilment[]
-  inspection    Inspection?
-  settlement    Settlement?
-  invoice       Invoice?
-  agreements    Agreement[]
-  reviews       Review[]
-  conversations Conversation[]
+  assignedUnits  BookingUnit[]
+  statusEvents   BookingStatusEvent[]
+  attachments    BookingAttachment[]
+  priceProposals PriceProposal[]
+  incidents      Incident[]
+  payments       Payment[]
+  fulfilments    Fulfilment[]
+  inspection     Inspection?
+  settlement     Settlement?
+  invoice        Invoice?
+  agreements     Agreement[]
+  reviews        Review[]
+  conversations  Conversation[]
 
   @@index([customerId, status])
   @@index([vendorId, status])
@@ -804,10 +829,28 @@ model EquipmentBookingDetail {
 /// Talent-only booking fields. The client's flow ends "once the talent accepts and the
 /// final price is set", so the customer states a budget and the agreed figure is separate.
 model TalentBookingDetail {
-  bookingId       String    @id @db.Uuid
-  eventLocation   String
-  requirements    String?
-  headcount       Int?
+  bookingId     String  @id @db.Uuid
+  /// Kept as the human-readable summary; `city` and `venue` are the structured form.
+  eventLocation String
+  city          String?
+  venue         String?
+  /// "Parking, access instructions, indoor / outdoor..." — withheld from the talent until
+  /// the booking is confirmed, per the note on the Location step.
+  locationNotes String?
+
+  employmentType EmploymentType @default(FULL_TIME)
+  workMode       WorkMode       @default(ON_SITE)
+  /// The engagement runs 08:00-18:00 on a given day, so the clock times matter and the
+  /// booking's own start/end dates cannot carry them.
+  startTime      String?
+  endTime        String?
+
+  requirements String?
+  headcount    Int?
+
+  /// A customer states either a band or an exact figure. Neither prices anything: the
+  /// agreed number arrives through PriceProposal.
+  budgetBand      BudgetBand?
   budgetMinor     Int?
   /// Agreed during Eskista's coordination step; drives the invoice, not `budgetMinor`.
   finalPriceMinor Int?
@@ -1081,19 +1124,27 @@ enum FulfilmentMethod {
 /// Both legs: gear to the customer, and gear back. The return leg carries the chosen
 /// slot ("Aug 21 · 10:00 AM").
 model Fulfilment {
-  id           String              @id @default(uuid()) @db.Uuid
-  bookingId    String              @db.Uuid
-  direction    FulfilmentDirection
-  method       FulfilmentMethod
-  address      String?
-  scheduledAt  DateTime?
-  courierName  String?
-  courierPhone String?
-  dispatchedAt DateTime?
-  completedAt  DateTime?
-  notes        String?
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  id                 String              @id @default(uuid()) @db.Uuid
+  bookingId          String              @db.Uuid
+  direction          FulfilmentDirection
+  method             FulfilmentMethod
+  address            String?
+  scheduledAt        DateTime?
+  courierName        String?
+  courierPhone       String?
+  /// "Motorbike · AA 3-1024" on the tracking screen. Modelled as fields rather than a
+  /// Courier entity until it is settled whether couriers need their own logins.
+  vehicleDescription String?
+  vehiclePlate       String?
+  /// "Estimated arrival — Today, 3:45 PM".
+  etaAt              DateTime?
+  /// The four-step sub-tracker that runs inside the DELIVERY_PICKUP booking status.
+  stage              DeliveryStage       @default(PREPARED)
+  dispatchedAt       DateTime?
+  completedAt        DateTime?
+  notes              String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
 
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
@@ -1238,6 +1289,8 @@ enum ReviewKind {
   EQUIPMENT
   TALENT
   PLATFORM_SERVICE
+  /// The supply side rating the customer. Feeds the rating counter on the Profile screen.
+  CUSTOMER
 }
 
 model Review {
@@ -1247,9 +1300,10 @@ model Review {
   authorId  String     @db.Uuid
 
   /// Set according to `kind`; PLATFORM_SERVICE reviews target none of them.
-  listingId       String? @db.Uuid
-  vendorId        String? @db.Uuid
-  talentProfileId String? @db.Uuid
+  listingId         String? @db.Uuid
+  vendorId          String? @db.Uuid
+  talentProfileId   String? @db.Uuid
+  customerProfileId String? @db.Uuid
 
   rating  Int
   comment String?
@@ -1262,17 +1316,19 @@ model Review {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  booking       Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  author        User           @relation("ReviewAuthor", fields: [authorId], references: [id])
-  listing       Listing?       @relation(fields: [listingId], references: [id], onDelete: Cascade)
-  vendor        VendorProfile? @relation(fields: [vendorId], references: [id], onDelete: Cascade)
-  talentProfile TalentProfile? @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
+  booking         Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  author          User             @relation("ReviewAuthor", fields: [authorId], references: [id])
+  listing         Listing?         @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  vendor          VendorProfile?   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  talentProfile   TalentProfile?   @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
+  customerProfile CustomerProfile? @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
 
   /// One review of each kind per booking.
   @@unique([bookingId, kind])
   @@index([listingId, isPublished, createdAt])
   @@index([vendorId, isPublished])
   @@index([talentProfileId, isPublished])
+  @@index([customerProfileId, isPublished])
   @@index([kind, rating])
 }
 
@@ -1407,4 +1463,249 @@ model AdminAuditLog {
 
   @@index([entityType, entityId])
   @@index([adminId, createdAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Customer side
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum CustomerKind {
+  INDIVIDUAL
+  COMPANY
+}
+
+/// The chips on the talent request's "Project / Purpose" step. Equipment requests use
+/// free text instead, so this is optional on the booking.
+enum ProjectType {
+  COMMERCIAL_PRODUCTION
+  WEDDING
+  EVENT
+  MUSIC_VIDEO
+  DOCUMENTARY
+  CORPORATE_CONTENT
+  SOCIAL_MEDIA_CONTENT
+  PHOTOGRAPHY_SESSION
+  OTHER
+}
+
+/// Shown joined with the work mode on Track Request: "Full Time · On-site".
+enum EmploymentType {
+  FULL_TIME
+  PART_TIME
+  HOURLY
+  CONTRACT
+  PROJECT_BASED
+}
+
+enum WorkMode {
+  ON_SITE
+  REMOTE
+  HYBRID
+}
+
+/// The five preset bands on the Budget step. A customer may pick a band or give an exact
+/// figure; a band is never used to price anything, only to open the negotiation.
+enum BudgetBand {
+  UNDER_5K
+  FROM_5K_TO_10K
+  FROM_10K_TO_25K
+  FROM_25K_TO_50K
+  OVER_50K
+}
+
+enum ProposerRole {
+  TALENT
+  CUSTOMER
+  ESKISTA
+}
+
+enum PriceProposalStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  WITHDRAWN
+  SUPERSEDED
+}
+
+enum IncidentType {
+  PHYSICAL_DAMAGE
+  MISSING_ACCESSORY
+  TECHNICAL_MALFUNCTION
+  DELIVERY_ISSUE
+  OTHER
+}
+
+enum IncidentPhase {
+  DURING_DELIVERY_PICKUP
+  DURING_RENTAL
+  DURING_RETURN
+}
+
+enum IncidentStatus {
+  REPORTED
+  UNDER_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+/// The four-step sub-tracker on Track Your Equipment, which runs inside the single
+/// DELIVERY_PICKUP booking status.
+enum DeliveryStage {
+  PREPARED
+  PICKED_UP
+  OUT_FOR_DELIVERY
+  DELIVERED
+}
+
+/// Reference files a customer attaches to a talent request — moodboards, briefs, scripts.
+/// Shown to the talent as "2 files (via Eskista)": Eskista mediates the handover.
+enum BookingAttachmentKind {
+  REFERENCE
+  BRIEF
+  OTHER
+}
+
+/// The commercial identity behind a booking.
+///
+/// Separate from `User` because `User` is Better Auth's and is shared across roles: the
+/// same person may be a vendor who also rents. TIN and VAT exemption deliberately stay on
+/// `User`, where invoicing already reads them, rather than being duplicated here.
+model CustomerProfile {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @unique @db.Uuid
+
+  /// "Organization / Name" on the request form. An individual may leave it unset.
+  organisationName String?
+  kind             CustomerKind @default(INDIVIDUAL)
+  /// "Contact person" — who Eskista actually calls.
+  contactPerson    String
+  email            String?
+  phone            String?
+  additionalPhone  String?
+
+  city    String?
+  address String?
+
+  /// Proof of identity, uploaded during the first booking request.
+  idDocumentKey        String?
+  idDocumentName       String?
+  idDocumentMimeType   String?
+  idDocumentSizeBytes  Int?
+  idDocumentUploadedAt DateTime?
+
+  /// Admin-controlled. A customer may upload, but can never verify themselves; the
+  /// Profile screen's "Verified customer" label reads from this.
+  verificationStatus VerificationStatus @default(DRAFT)
+  verifiedAt         DateTime?
+  verifiedByAdminId  String?            @db.Uuid
+  rejectionReason    String?
+
+  /// Aggregates behind the Profile screen's three counters.
+  ratingAvg         Decimal @default(0) @db.Decimal(3, 2)
+  ratingCount       Int     @default(0)
+  completedBookings Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verifiedByAdmin User?    @relation("CustomerVerifiedBy", fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
+  reviews         Review[]
+
+  @@index([verificationStatus])
+  @@index([city])
+}
+
+/// One round of the talent price negotiation.
+///
+/// Append-only: a new round supersedes the last rather than overwriting it, so the whole
+/// exchange stays auditable the way `BookingStatusEvent` keeps the status history.
+model PriceProposal {
+  id        String @id @default(uuid()) @db.Uuid
+  bookingId String @db.Uuid
+
+  /// Which side put this number forward. The Price Modification dialog attributes it to
+  /// "the Service Provider", so a talent-proposed round is the common case.
+  proposedByRole ProposerRole
+  proposedById   String?      @db.Uuid
+
+  amountMinor Int
+  currency    String  @default("ETB")
+  message     String?
+
+  status        PriceProposalStatus @default(PENDING)
+  respondedAt   DateTime?
+  respondedById String?             @db.Uuid
+  declineReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking     Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  proposedBy  User?   @relation("PriceProposalProposer", fields: [proposedById], references: [id], onDelete: SetNull)
+  respondedBy User?   @relation("PriceProposalResponder", fields: [respondedById], references: [id], onDelete: SetNull)
+
+  @@index([bookingId, status, createdAt])
+}
+
+model BookingAttachment {
+  id        String                @id @default(uuid()) @db.Uuid
+  bookingId String                @db.Uuid
+  kind      BookingAttachmentKind @default(REFERENCE)
+
+  fileKey   String
+  fileName  String
+  mimeType  String?
+  sizeBytes Int?
+
+  uploadedById String?  @db.Uuid
+  createdAt    DateTime @default(now())
+
+  booking    Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  uploadedBy User?   @relation("BookingAttachmentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([bookingId, kind])
+}
+
+/// A customer-reported problem. Eskista mediates every one of these — the screen says so
+/// explicitly — so an incident never routes to the vendor directly.
+model Incident {
+  id        String @id @default(uuid()) @db.Uuid
+  /// Customer-facing, e.g. "ESK-INC-00042".
+  reference String @unique
+  bookingId String @db.Uuid
+
+  reportedById String        @db.Uuid
+  type         IncidentType
+  phase        IncidentPhase
+  description  String
+
+  status            IncidentStatus @default(REPORTED)
+  resolution        String?
+  resolvedAt        DateTime?
+  resolvedByAdminId String?        @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking    Booking         @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  reportedBy User            @relation("IncidentReporter", fields: [reportedById], references: [id])
+  resolvedBy User?           @relation("IncidentResolver", fields: [resolvedByAdminId], references: [id], onDelete: SetNull)
+  photos     IncidentPhoto[]
+
+  @@index([bookingId, status])
+  @@index([status, createdAt])
+}
+
+model IncidentPhoto {
+  id         String   @id @default(uuid()) @db.Uuid
+  incidentId String   @db.Uuid
+  fileKey    String
+  caption    String?
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, sortOrder])
 }
