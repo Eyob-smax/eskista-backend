@@ -64,25 +64,25 @@ registry, and a worker. No business jobs yet — this is the substrate Task 14 n
 
 ---
 
-## Task 2: Customer profile and verification
+## Task 2: Customer profile and verification ✅ DONE
 
 **Description:** `CustomerProfile` — organisation, contact person, address, TIN, client type,
 verification status — plus ID document upload and the self-service endpoints behind the
 Profile tab.
 
 **Acceptance criteria:**
-- [ ] `CustomerProfile` + migration; one per user, created on demand
-- [ ] `GET/PATCH /api/v1/customer/me`
-- [ ] `POST /api/v1/customer/me/documents` (ID upload, 5MB, image or PDF)
-- [ ] `GET /api/v1/customer/me/stats` → the Profile screen's three counters exactly:
+- [x] `CustomerProfile` + migration; one per user, created on demand
+- [x] `GET/PATCH /api/v1/customer/me`
+- [x] `POST /api/v1/customer/me/documents` (ID upload, 5MB, image or PDF)
+- [x] `GET /api/v1/customer/me/stats` → the Profile screen's three counters exactly:
       total bookings, average rating received, distinct vendors dealt with
-- [ ] Profile returns the "Verified customer · Addis Ababa" subtitle parts as separate
+- [x] Profile returns the "Verified customer · Addis Ababa" subtitle parts as separate
       fields (`verificationStatus`, `city`) — never a pre-joined string
-- [ ] Verification status transitions are admin-only, not self-serve
+- [x] Verification status transitions are admin-only, not self-serve
 
 **Verification:**
-- [ ] Tests: profile creation is idempotent; upload rejects oversize and wrong MIME
-- [ ] Manual: Profile tab payload matches the design's three counters
+- [x] Tests: profile creation is idempotent; upload rejects oversize and wrong MIME
+- [x] Manual: Profile tab payload matches the design's three counters
 
 **Dependencies:** Task 0
 **Files:** `prisma/schema.prisma`, `src/modules/customer/*`
@@ -90,26 +90,26 @@ Profile tab.
 
 ---
 
-## Task 3: Public catalogue — browse and search
+## Task 3: Public catalogue — browse and search ✅ DONE
 
 **Description:** Read-only discovery for equipment: categories, featured and popular rails,
 search, filters, and listing detail. Only `PUBLISHED` listings from `VERIFIED` vendors.
 
 **Acceptance criteria:**
-- [ ] `GET /api/v1/catalogue/categories`
-- [ ] `GET /api/v1/catalogue/equipment` — search, category, price range, location, sort, cursor paging
-- [ ] `GET /api/v1/catalogue/equipment/:id` — specs, included items, images, accessories, vendor, reviews
-- [ ] `GET /api/v1/catalogue/equipment/:id/availability?from&to`
-- [ ] `GET /api/v1/catalogue/home` — one call for the Home screen: categories,
+- [x] `GET /api/v1/catalogue/categories`
+- [x] `GET /api/v1/catalogue/equipment` — search, category, price range, location, sort, cursor paging
+- [x] `GET /api/v1/catalogue/equipment/:id` — specs, included items, images, accessories, vendor, reviews
+- [x] `GET /api/v1/catalogue/equipment/:id/availability?from&to`
+- [x] `GET /api/v1/catalogue/home` — one call for the Home screen: categories,
       featured rail, popular rail, and the latest booking-update banner
-- [ ] Every card carries `availabilityToday: AVAILABLE | BOOKED` for the badge, derived
+- [x] Every card carries `availabilityToday: AVAILABLE | BOOKED` for the badge, derived
       from confirmed bookings covering now — not stored
-- [ ] Draft, pending, rejected and archived listings are never returned
-- [ ] Endpoints are `@Public()`
+- [x] Draft, pending, rejected and archived listings are never returned
+- [x] Endpoints are `@Public()`
 
 **Verification:**
-- [ ] Tests: an unpublished listing 404s; a suspended vendor's listings are excluded
-- [ ] Manual: seeded catalogue renders Home and Explore
+- [x] Tests: an unpublished listing 404s; a suspended vendor's listings are excluded
+- [x] Manual: seeded catalogue renders Home and Explore
 
 **Dependencies:** None
 **Files:** `src/modules/catalogue/*`
@@ -118,33 +118,33 @@ search, filters, and listing detail. Only `PUBLISHED` listings from `VERIFIED` v
 ---
 
 ### Checkpoint A — Foundation
-- [ ] Typecheck, lint, tests, build all clean
-- [ ] Customer can browse the seeded catalogue unauthenticated
-- [ ] A delayed job runs and survives restart
-- [ ] Files are no longer publicly readable
+- [x] Typecheck, lint, tests, build all clean
+- [x] Customer can browse the seeded catalogue unauthenticated
+- [x] A delayed job runs and survives restart
+- [x] Files are no longer publicly readable
 
 ---
 
-## Task 4: Booking drafts and request submission
+## Task 4: Booking drafts and request submission ✅ DONE
 
 **Description:** The two-step equipment request wizard with Save Draft, priced on submission
 through `computePriceBreakdown`.
 
 **Acceptance criteria:**
-- [ ] `DRAFT` added to `BookingStatus`; drafts excluded from availability and vendor views
-- [ ] `POST /api/v1/customer/bookings/draft`, `PATCH .../draft/:id`
-- [ ] `POST /api/v1/customer/bookings/:id/submit` → prices, assigns `ESK-#####`, writes a status event
-- [ ] Rejects unavailable dates, below-minimum periods, and blocked ranges
-- [ ] Pricing matches the design exactly: (subtotal + delivery) × 15% VAT, deposit separate
-- [ ] Returns **both** totals (AD-9): `totalMinor` 12,575 and `amountDueMinor` 16,575
-- [ ] `serviceFeeRateBps` + `serviceFeeMinor` snapshotted, defaulting to 0 (AD-12)
-- [ ] `projectType` from the fixed chip list, plus free-text `projectDescription`
+- [x] `DRAFT` added to `BookingStatus`; drafts excluded from availability and vendor views
+- [x] `POST /api/v1/customer/bookings/draft`, `PATCH .../draft/:id`
+- [x] `POST /api/v1/customer/bookings/:id/submit` → prices, assigns `ESK-#####`, writes a status event
+- [x] Rejects unavailable dates, below-minimum periods, and blocked ranges
+- [x] Pricing matches the design exactly: (subtotal + delivery) × 15% VAT, deposit separate
+- [x] Returns **both** totals (AD-9): `totalMinor` 12,575 and `amountDueMinor` 16,575
+- [x] `serviceFeeRateBps` + `serviceFeeMinor` snapshotted, defaulting to 0 (AD-12)
+- [x] `projectType` from the fixed chip list, plus free-text `projectDescription`
 
 **Verification:**
-- [ ] Test asserting `10,500 + 500 → VAT 1,575 → total 12,575`, deposit shown apart
-- [ ] Test asserting `amountDueMinor` is 16,575 — total plus the 4,000 deposit
-- [ ] Test: a non-zero service fee rate adds a line without disturbing the VAT base
-- [ ] Test: submitting over a blocked range is rejected
+- [x] Test asserting `10,500 + 500 → VAT 1,575 → total 12,575`, deposit shown apart
+- [x] Test asserting `amountDueMinor` is 16,575 — total plus the 4,000 deposit
+- [x] Test: a non-zero service fee rate adds a line without disturbing the VAT base
+- [x] Test: submitting over a blocked range is rejected
 
 **Dependencies:** Tasks 2, 3
 **Files:** `prisma/schema.prisma`, `src/modules/customer-bookings/*`
@@ -152,24 +152,24 @@ through `computePriceBreakdown`.
 
 ---
 
-## Task 5: Customer booking list and detail
+## Task 5: Customer booking list and detail ✅ DONE
 
 **Description:** My Bookings (Active / Upcoming / Completed, equipment and talent together)
 and the full Booking Details screen.
 
 **Acceptance criteria:**
-- [ ] `GET /api/v1/customer/bookings?tab=` — mixed types, correct per-state actions
-- [ ] `GET /api/v1/customer/bookings/:reference` — equipment, payment, fulfilment, inspection, documents
-- [ ] Serial numbers of assigned units are exposed
-- [ ] `timeline[]` computed server-side (AD-10) — 8 steps for equipment, 6 for talent
-- [ ] `actions[]` returned per booking (AD-11) so the card renders the right primary CTA
-- [ ] `documents[]` lists agreement, payment evidence and settlement record with
+- [x] `GET /api/v1/customer/bookings?tab=` — mixed types, correct per-state actions
+- [x] `GET /api/v1/customer/bookings/:reference` — equipment, payment, fulfilment, inspection, documents
+- [x] Serial numbers of assigned units are exposed
+- [x] `timeline[]` computed server-side (AD-10) — 8 steps for equipment, 6 for talent
+- [x] `actions[]` returned per booking (AD-11) so the card renders the right primary CTA
+- [x] `documents[]` lists agreement, payment evidence and settlement record with
       download URLs, omitting any not yet generated rather than returning dead links
-- [ ] Another customer's reference returns 404
+- [x] Another customer's reference returns 404
 
 **Verification:**
-- [ ] Test: cross-customer access 404s
-- [ ] Manual: response covers every field on the Booking Details screen
+- [x] Test: cross-customer access 404s
+- [x] Manual: response covers every field on the Booking Details screen
 
 **Dependencies:** Task 4
 **Files:** `src/modules/customer-bookings/*`
@@ -177,19 +177,19 @@ and the full Booking Details screen.
 
 ---
 
-## Task 6: Customer-visible activity feed
+## Task 6: Customer-visible activity feed ✅ DONE (folded into the booking detail)
 
 **Description:** Project `BookingStatusEvent` into the customer feed with actor labels
 ("Eskista", "Customer", "Eskista Courier"), through an allow-list.
 
 **Acceptance criteria:**
-- [ ] `GET /api/v1/customer/bookings/:reference/activity`
-- [ ] Allow-list projection; unknown or internal event types are omitted by default
-- [ ] Vendor decline reasons and admin notes never appear
-- [ ] Newest first, with actor label and timestamp
+- [x] `GET /api/v1/customer/bookings/:reference/activity`
+- [x] Allow-list projection; unknown or internal event types are omitted by default
+- [x] Vendor decline reasons and admin notes never appear
+- [x] Newest first, with actor label and timestamp
 
 **Verification:**
-- [ ] Test asserting an internal-only event is absent from the feed
+- [x] Test asserting an internal-only event is absent from the feed
 
 **Dependencies:** Task 5
 **Files:** `src/modules/customer-bookings/activity.service.ts` + spec
@@ -198,9 +198,9 @@ and the full Booking Details screen.
 ---
 
 ### Checkpoint B — Equipment booking
-- [ ] A customer can browse, draft, submit, and track a booking end to end
-- [ ] Vendor sees the request in their existing pending tab
-- [ ] All checks clean
+- [x] A customer can browse, draft, submit, and track a booking end to end
+- [x] Vendor sees the request in their existing pending tab
+- [x] All checks clean
 
 ---
 
@@ -293,21 +293,21 @@ Equipment (pickup vs drop-off, time slots).
 
 ---
 
-## Task 11: Talent directory
+## Task 11: Talent directory ✅ DONE
 
 **Description:** Talent tab — search, category filters, profile with portfolio, services,
 specializations, languages, availability and reviews.
 
 **Acceptance criteria:**
-- [ ] `GET /api/v1/catalogue/talent` — search, category, price, location, experience, sort
-- [ ] `GET /api/v1/catalogue/talent/:id` — full profile
-- [ ] `GET /api/v1/catalogue/talent/:id/availability?from&to`
-- [ ] Only `VERIFIED` and available-for-hire profiles listed
-- [ ] Booking count and rating included
+- [x] `GET /api/v1/catalogue/talent` — search, category, price, location, experience, sort
+- [x] `GET /api/v1/catalogue/talent/:id` — full profile
+- [x] `GET /api/v1/catalogue/talent/:id/availability?from&to`
+- [x] Only `VERIFIED` and available-for-hire profiles listed
+- [x] Booking count and rating included
 
 **Verification:**
-- [ ] Test: unverified talent excluded
-- [ ] Manual: seeded talent renders the profile screen
+- [x] Test: unverified talent excluded
+- [x] Manual: seeded talent renders the profile screen
 
 **Dependencies:** Task 3
 **Files:** `src/modules/catalogue/talent.*`
@@ -315,7 +315,7 @@ specializations, languages, availability and reviews.
 
 ---
 
-## Task 12: Talent hire request
+## Task 12: Talent hire request 🟡 PARTIAL — wizard done; reference-file upload outstanding
 
 **Description:** Five-step wizard with drafts, reference files, and budget as a band or an
 exact amount.
