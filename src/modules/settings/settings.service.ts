@@ -15,6 +15,8 @@ export const SETTING_KEYS = {
   vatEnabled: 'tax.vat_enabled',
   paymentAccounts: 'payment.accounts',
   returnSlotTimes: 'return.slot_times',
+  supportPhone: 'support.phone',
+  serviceFeeBps: 'fees.service_bps',
 } as const;
 
 const CACHE_TTL_MS = 60_000;
@@ -63,6 +65,28 @@ export class SettingsService {
   async paymentAccounts(): Promise<Record<string, unknown>> {
     const value = await this.raw(SETTING_KEYS.paymentAccounts);
     return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+  }
+
+  /**
+   * The number behind every "Contact Eskista" button.
+   *
+   * Configurable because it appears on the booking screens and in the agreements, and a
+   * support line that changes should not need a deploy.
+   */
+  async supportPhone(): Promise<string> {
+    const value = await this.raw(SETTING_KEYS.supportPhone);
+    return typeof value === 'string' && value.trim().length > 0 ? value : '+251966554411';
+  }
+
+  /**
+   * Eskista's own handling fee, in basis points, applied to the rental subtotal.
+   *
+   * Defaults to 0 so the line stays out of every breakdown until it is deliberately
+   * switched on — see AD-12. The Booking Details screen shows one, but no document defines
+   * how it is calculated, so nothing is assumed.
+   */
+  async serviceFeeBps(): Promise<number> {
+    return this.getNumber(SETTING_KEYS.serviceFeeBps, 0, 0, 10_000);
   }
 
   /** Invalidates the cache — call after an admin edits a setting. */

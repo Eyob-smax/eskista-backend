@@ -8,6 +8,9 @@ import { LoggerModule } from 'nestjs-pino';
 import { validateEnv, type Env } from './config/env.validation';
 import { AgreementsModule } from './modules/agreements/agreements.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { CatalogueModule } from './modules/catalogue/catalogue.module';
+import { CustomerBookingsModule } from './modules/customer-bookings/customer-bookings.module';
+import { CustomerModule } from './modules/customer/customer.module';
 import { EquipmentModule } from './modules/equipment/equipment.module';
 import { HealthModule } from './modules/health/health.module';
 import { NumberingModule } from './modules/numbering/numbering.module';
@@ -81,6 +84,11 @@ import { StorageModule } from './modules/storage/storage.module';
     VendorModule,
     EquipmentModule,
     VendorBookingsModule,
+
+    // Customer-side feature modules
+    CatalogueModule,
+    CustomerModule,
+    CustomerBookingsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

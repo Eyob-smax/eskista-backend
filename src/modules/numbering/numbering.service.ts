@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
-export type SequenceScope = 'booking' | 'invoice' | 'settlement-batch';
+export type SequenceScope =
+  'booking' | 'talent-booking' | 'agreement' | 'incident' | 'invoice' | 'settlement-batch';
 
 /**
  * Gapless, human-readable identifiers.
@@ -55,6 +56,30 @@ export class NumberingService {
   async nextBookingReference(tx?: Prisma.TransactionClient): Promise<string> {
     const value = await this.nextValue('booking', 'all', tx);
     return `ESK-${10_000 + value}`;
+  }
+
+  /**
+   * Talent engagement reference, e.g. `ESK-TLT-8847`.
+   *
+   * A separate prefix and its own counter, because the designs print talent requests as
+   * `ESK-TLT-…` and equipment rentals as `ESK-…`. Sharing one sequence would make the two
+   * indistinguishable at a glance, which is the whole point of the prefix.
+   */
+  async nextTalentBookingReference(tx?: Prisma.TransactionClient): Promise<string> {
+    const value = await this.nextValue('talent-booking', 'all', tx);
+    return `ESK-TLT-${1000 + value}`;
+  }
+
+  /** Agreement reference, e.g. `ESK-AGR-00031`. */
+  async nextAgreementReference(tx?: Prisma.TransactionClient): Promise<string> {
+    const value = await this.nextValue('agreement', 'all', tx);
+    return `ESK-AGR-${String(value).padStart(5, '0')}`;
+  }
+
+  /** Incident reference, e.g. `ESK-INC-00042`. */
+  async nextIncidentReference(tx?: Prisma.TransactionClient): Promise<string> {
+    const value = await this.nextValue('incident', 'all', tx);
+    return `ESK-INC-${String(value).padStart(5, '0')}`;
   }
 
   /** Invoice number, e.g. `ESK-INV-2026-000148`. Resets its counter each calendar year. */
