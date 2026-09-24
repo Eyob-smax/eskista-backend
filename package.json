@@ -1,7 +1,7 @@
 {
   "name": "eskista-api",
   "version": "0.1.0",
-  "description": "Eskista Marketplace \u2014 managed rental & talent marketplace API",
+  "description": "Eskista Marketplace — managed rental & talent marketplace API",
   "private": true,
   "license": "UNLICENSED",
   "packageManager": "pnpm@11.5.2",
@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@keyv/redis": "^4.2.0",
+    "@nestjs/bullmq": "^12.0.0",
     "@nestjs/cache-manager": "^3.0.1",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.0",
@@ -44,6 +45,7 @@
     "@prisma/client": "^6.3.1",
     "argon2": "^0.41.1",
     "better-auth": "^1.7.3",
+    "bullmq": "^6.3.8",
     "cache-manager": "^6.4.0",
     "cacheable": "^1.8.7",
     "class-transformer": "^0.5.1",
@@ -51,6 +53,7 @@
     "compression": "^1.7.5",
     "express": "^5.2.1",
     "helmet": "^8.0.0",
+    "ioredis": "^6.0.0",
     "nestjs-pino": "^4.3.0",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",

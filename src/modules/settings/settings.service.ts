@@ -16,6 +16,7 @@ export const SETTING_KEYS = {
   paymentAccounts: 'payment.accounts',
   returnSlotTimes: 'return.slot_times',
   supportPhone: 'support.phone',
+  returnInstructions: 'return.instructions',
   serviceFeeBps: 'fees.service_bps',
 } as const;
 
@@ -60,6 +61,20 @@ export class SettingsService {
       return value;
     }
     return ['09:00', '10:00', '14:00', '16:00'];
+  }
+
+  /**
+   * The bullet list on the Return Equipment screen.
+   *
+   * Operator-editable because what a customer must pack back differs by season and by
+   * what Eskista keeps losing.
+   */
+  async returnInstructions(): Promise<string[]> {
+    const value = await this.raw(SETTING_KEYS.returnInstructions);
+    if (Array.isArray(value) && value.every((v) => typeof v === 'string')) {
+      return value;
+    }
+    return [];
   }
 
   async paymentAccounts(): Promise<Record<string, unknown>> {

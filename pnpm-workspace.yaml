@@ -9,3 +9,7 @@ allowBuilds:
   '@scarf/scarf': false
   # SWC compiles Vitest's TypeScript; its postinstall fetches the platform binary.
   '@swc/core': true
+  # Optional native accelerator for msgpackr, which BullMQ uses to encode jobs. Pure-JS
+  # fallback is correct and fast enough for our volumes, so the native build stays off
+  # rather than becoming a compiler dependency on every machine and CI image.
+  msgpackr-extract: false

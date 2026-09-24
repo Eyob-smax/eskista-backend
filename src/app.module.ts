@@ -13,6 +13,8 @@ import { CustomerBookingsModule } from './modules/customer-bookings/customer-boo
 import { CustomerModule } from './modules/customer/customer.module';
 import { EquipmentModule } from './modules/equipment/equipment.module';
 import { HealthModule } from './modules/health/health.module';
+import { JobsModule } from './modules/jobs/jobs.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { NumberingModule } from './modules/numbering/numbering.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { VendorBookingsModule } from './modules/vendor-bookings/vendor-bookings.module';
@@ -79,6 +81,8 @@ import { StorageModule } from './modules/storage/storage.module';
     AgreementsModule,
     AuthModule,
     HealthModule,
+    NotificationsModule,
+    JobsModule,
 
     // Vendor-side feature modules
     VendorModule,

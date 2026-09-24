@@ -10,6 +10,7 @@ import {
   Role,
 } from '@prisma/client';
 import type { CursorPage } from '../../common/dto/pagination.dto';
+import { JobsService } from '../jobs/jobs.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
@@ -90,6 +91,7 @@ export class CustomerBookingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
+    private readonly jobs: JobsService,
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
@@ -280,6 +282,11 @@ export class CustomerBookingsService {
         },
       }),
     ]);
+
+    // Nothing scheduled against a cancelled booking should still fire — a reminder to
+    // return equipment that was never collected is the clearest possible sign the app is
+    // not paying attention.
+    await this.jobs.cancelBookingJobs(booking.id);
 
     return this.getDetail(userId, reference);
   }
