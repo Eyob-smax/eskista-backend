@@ -45,6 +45,7 @@ import {
   ScheduleReturnDto,
   SubmitPaymentDto,
   SubmitReviewDto,
+  TrackingResponse,
   UploadSignedCopyDto,
 } from './dto/lifecycle.dto';
 
@@ -311,6 +312,37 @@ PNG, JPEG, WebP or PDF, up to 10 MB.
     @UploadedFileParam() file: UploadedFile,
   ): Promise<{ id: string; status: string; submittedAt: string }> {
     return this.lifecycle.submitPayment(userId, reference, dto, file);
+  }
+
+  // ── Tracking ───────────────────────────────────────────────────────────────
+
+  @Get('tracking')
+  @ApiOperation({
+    summary: 'Track the courier',
+    description: `
+Backs **Track Your Equipment**: the status chip, headline, ETA, the courier card with
+**Call Courier**, and the four-step sub-tracker.
+
+A deliberately small payload. The booking detail carries the same data, but it is far
+heavier and this screen polls. **Poll about every 30 seconds while \`isLive\` is true, and
+stop when it turns false** — a delivered booking does not need watching.
+
+Follows the **return** leg once one exists, since by then that is the journey the customer
+cares about; \`direction\` says which one you are looking at.
+
+\`courierPhone\` is the courier's own number. The vendor's is never exposed — Eskista
+mediates all contact.
+
+Before a courier is assigned, every courier field is null and \`headline\` says delivery has
+not been arranged yet. Render that state rather than an empty card.
+`.trim(),
+  })
+  @ApiOkResponse({ type: TrackingResponse })
+  getTracking(
+    @CurrentUser('id') userId: string,
+    @Param('reference') reference: string,
+  ): Promise<TrackingResponse> {
+    return this.lifecycle.getTracking(userId, reference);
   }
 
   // ── Return ─────────────────────────────────────────────────────────────────

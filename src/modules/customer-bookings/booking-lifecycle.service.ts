@@ -8,6 +8,7 @@ import {
 import {
   AgreementStatus,
   BookingStatus,
+  DeliveryStage,
   FulfilmentDirection,
   FulfilmentMethod,
   IncidentStatus,
@@ -44,6 +45,7 @@ import {
   ScheduleReturnDto,
   SubmitPaymentDto,
   SubmitReviewDto,
+  TrackingResponse,
   UploadSignedCopyDto,
 } from './dto/lifecycle.dto';
 
@@ -362,6 +364,105 @@ export class BookingLifecycleService {
       status: payment.status,
       submittedAt: payment.submittedAt.toISOString(),
     };
+  }
+
+  // ── Tracking ───────────────────────────────────────────────────────────────
+
+  /**
+   * The Track Your Equipment screen, and nothing else.
+   *
+   * The booking detail carries the same data, but it is a heavy payload — activity feed,
+   * payments, documents — for a screen that polls every thirty seconds while a courier is
+   * on the road. This is the small version, with an `isLive` flag telling the client when
+   * to stop polling.
+   *
+   * Follows the return leg once one exists, because by then that is the journey the
+   * customer is watching.
+   */
+  async getTracking(userId: string, reference: string): Promise<TrackingResponse> {
+    const booking = await this.prisma.booking.findFirst({
+      where: { reference, customerId: userId },
+      include: {
+        listing: { select: { name: true } },
+        talentProfile: { select: { displayName: true } },
+        fulfilments: true,
+      },
+    });
+    if (!booking) throw new NotFoundException('Booking not found');
+
+    const outbound = booking.fulfilments.find((f) => f.direction === FulfilmentDirection.OUTBOUND);
+    const ret = booking.fulfilments.find((f) => f.direction === FulfilmentDirection.RETURN);
+    const leg = ret ?? outbound;
+    const direction = ret ? 'RETURN' : 'OUTBOUND';
+
+    const stage = leg?.stage ?? DeliveryStage.PREPARED;
+    const order: DeliveryStage[] = [
+      DeliveryStage.PREPARED,
+      DeliveryStage.PICKED_UP,
+      DeliveryStage.OUT_FOR_DELIVERY,
+      DeliveryStage.DELIVERED,
+    ];
+    const labels: Record<DeliveryStage, string> =
+      direction === 'RETURN'
+        ? {
+            PREPARED: 'Return Scheduled',
+            PICKED_UP: 'Collected',
+            OUT_FOR_DELIVERY: 'On the Way to Eskista',
+            DELIVERED: 'Received by Eskista',
+          }
+        : {
+            PREPARED: 'Equipment Prepared',
+            PICKED_UP: 'Picked Up',
+            OUT_FOR_DELIVERY: 'Out for Delivery',
+            DELIVERED: 'Delivered',
+          };
+
+    const current = order.indexOf(stage);
+    const vehicle = [leg?.vehicleDescription, leg?.vehiclePlate].filter(Boolean).join(' · ');
+
+    return {
+      bookingReference: booking.reference,
+      itemName: booking.listing?.name ?? booking.talentProfile?.displayName ?? 'Booking',
+      direction,
+      headline: this.trackingHeadline(direction, stage, leg !== undefined),
+      statusLabel: labels[stage],
+      etaAt: leg?.etaAt?.toISOString() ?? null,
+      courierName: leg?.courierName ?? null,
+      courierPhone: leg?.courierPhone ?? null,
+      vehicle: vehicle || null,
+      address: leg?.address ?? null,
+      timeline: order.map((s, index) => ({
+        key: s,
+        label: labels[s],
+        state: index < current ? 'DONE' : index === current ? 'IN_PROGRESS' : 'PENDING',
+      })),
+      // Only a courier actually on the road is worth polling for.
+      isLive:
+        leg !== undefined &&
+        (stage === DeliveryStage.PICKED_UP || stage === DeliveryStage.OUT_FOR_DELIVERY),
+    };
+  }
+
+  private trackingHeadline(
+    direction: 'OUTBOUND' | 'RETURN',
+    stage: DeliveryStage,
+    hasLeg: boolean,
+  ): string {
+    if (!hasLeg) return 'Delivery has not been arranged yet.';
+    if (direction === 'RETURN') {
+      return stage === DeliveryStage.DELIVERED
+        ? 'Your equipment is back with Eskista.'
+        : 'Your return is on its way to Eskista.';
+    }
+    switch (stage) {
+      case DeliveryStage.PREPARED:
+        return 'Your equipment is being prepared.';
+      case DeliveryStage.PICKED_UP:
+      case DeliveryStage.OUT_FOR_DELIVERY:
+        return 'Your equipment is on the way.';
+      case DeliveryStage.DELIVERED:
+        return 'Your equipment has been delivered.';
+    }
   }
 
   // ── Return scheduling ──────────────────────────────────────────────────────

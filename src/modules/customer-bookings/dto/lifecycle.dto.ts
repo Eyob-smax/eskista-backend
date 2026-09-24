@@ -453,3 +453,83 @@ export class ReviewResponse {
   @ApiProperty({ example: '2026-08-23T09:00:00.000Z' })
   createdAt!: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Courier tracking
+// ─────────────────────────────────────────────────────────────────────────────
+
+export class TrackingStepResponse {
+  @ApiProperty({ example: 'OUT_FOR_DELIVERY' })
+  key!: string;
+
+  @ApiProperty({ example: 'Out for Delivery' })
+  label!: string;
+
+  @ApiProperty({ enum: ['DONE', 'IN_PROGRESS', 'PENDING'], example: 'IN_PROGRESS' })
+  state!: 'DONE' | 'IN_PROGRESS' | 'PENDING';
+}
+
+export class TrackingResponse {
+  @ApiProperty({ example: 'ESK-10482' })
+  bookingReference!: string;
+
+  @ApiProperty({ example: 'Sony FX3 Cinema Camera' })
+  itemName!: string;
+
+  @ApiProperty({
+    enum: ['OUTBOUND', 'RETURN'],
+    description: 'Which leg this describes. Outbound until the rental ends, then the return.',
+    example: 'OUTBOUND',
+  })
+  direction!: 'OUTBOUND' | 'RETURN';
+
+  @ApiProperty({
+    description: 'Headline for the card — "Your equipment is on the way."',
+    example: 'Your equipment is on the way.',
+  })
+  headline!: string;
+
+  @ApiProperty({
+    description: 'The chip above it.',
+    example: 'Out for Delivery',
+  })
+  statusLabel!: string;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Estimated arrival. Null until a courier is assigned and on the road.',
+    example: '2026-08-18T15:45:00.000Z',
+  })
+  etaAt!: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: 'Dawit Bekele' })
+  courierName!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'For the Call Courier button. The vendor’s number is never exposed.',
+    example: '+251911223344',
+  })
+  courierPhone!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Vehicle and plate, already joined — "Motorbike · AA 3-1024".',
+    example: 'Motorbike · AA 3-1024',
+  })
+  vehicle!: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: 'Bole, Addis Ababa' })
+  address!: string | null;
+
+  @ApiProperty({ type: [TrackingStepResponse], description: 'The four-step sub-tracker.' })
+  timeline!: TrackingStepResponse[];
+
+  @ApiProperty({
+    description:
+      'True while a courier is actively moving. Poll roughly every 30s while true, and ' +
+      'stop once it is false rather than polling a delivered booking forever.',
+    example: true,
+  })
+  isLive!: boolean;
+}
