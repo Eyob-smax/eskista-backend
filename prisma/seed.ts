@@ -13,6 +13,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { computePriceBreakdown } from '../src/common/money';
 import {
   AgreementStatus,
   AgreementType,
@@ -1044,16 +1045,28 @@ async function seedBookings(
     const endDate = daysFromNow(plan.endOffset);
     const periods = inclusiveDays(startDate, endDate);
 
-    const subtotal = listing.rentalPriceMinor * periods * plan.quantity;
-    const deliveryFee = plan.collectionMethod === CollectionMethod.DELIVERY ? etb(500) : 0;
-    const deposit = (listing.securityDepositMinor ?? 0) * plan.quantity;
-    const commission = Math.round((subtotal * DEFAULT_COMMISSION_BPS) / 10_000);
-
     // Skyline Events is seeded VAT-exempt, to exercise the per-invoice switch.
     const vatExempt = plan.customerKey === 'customerSkyline';
     const taxRateBps = vatExempt ? 0 : VAT_BPS;
-    const tax = Math.round(((subtotal + deliveryFee) * taxRateBps) / 10_000);
-    const total = subtotal + deliveryFee + tax + deposit;
+
+    // Priced by the same function the API uses, so seeded bookings reconcile exactly with
+    // what a real submission would produce. A hand-rolled formula here drifted twice.
+    const priced = computePriceBreakdown({
+      supplierUnitPriceMinor: listing.rentalPriceMinor,
+      periods,
+      quantity: plan.quantity,
+      deliveryFeeMinor: plan.collectionMethod === CollectionMethod.DELIVERY ? etb(500) : 0,
+      securityDepositMinor: (listing.securityDepositMinor ?? 0) * plan.quantity,
+      taxRateBps,
+      commissionRateBps: DEFAULT_COMMISSION_BPS,
+    });
+    const subtotal = priced.subtotalMinor;
+    const deliveryFee = priced.deliveryFeeMinor;
+    const deposit = priced.securityDepositMinor;
+    const commission = priced.commissionMinor;
+    const supplierEarnings = priced.supplierEarningsMinor;
+    const tax = priced.taxMinor;
+    const total = priced.totalMinor;
 
     const dueAt = new Date(endDate);
     dueAt.setUTCHours(17, 0, 0, 0);
@@ -1078,7 +1091,7 @@ async function seedBookings(
         approvedById: plan.withInvoice ? adminId : null,
         approvedAt: plan.withInvoice ? daysFromNow(-1) : null,
         currency: CURRENCY,
-        unitPriceMinor: listing.rentalPriceMinor,
+        unitPriceMinor: priced.unitPriceMinor,
         subtotalMinor: subtotal,
         deliveryFeeMinor: deliveryFee,
         securityDepositMinor: deposit,
@@ -1087,7 +1100,7 @@ async function seedBookings(
         totalMinor: total,
         commissionRateBps: DEFAULT_COMMISSION_BPS,
         commissionMinor: commission,
-        supplierEarningsMinor: subtotal - commission,
+        supplierEarningsMinor: supplierEarnings,
         pricedAt: daysFromNow(-1),
         dueAt,
         equipmentDetail: {
@@ -1239,9 +1252,11 @@ async function seedBookings(
           bookingId: booking.id,
           payeeKind: PayeeKind.VENDOR,
           vendorId: vendorIds.get(plan.vendorKey)!,
-          grossMinor: subtotal,
+          // The vendor's own price is what they are owed — commission sits on top of it,
+          // so the settlement pays their price in full.
+          grossMinor: supplierEarnings + commission,
           commissionMinor: commission,
-          netMinor: subtotal - commission,
+          netMinor: supplierEarnings,
           currency: CURRENCY,
           status: plan.withSettlement,
           expectedAt: daysFromNow(-8),

@@ -241,3 +241,30 @@ blocking; the rest are assumptions I have made explicit so they are cheap to cor
 9. **What closes a talent booking?** The equipment path ends in return → inspection →
    settlement. Talent has no equipment to return, and the card CTA is *Complete Service*.
    Assumed: the customer confirms completion, which opens the review and the settlement.
+
+---
+
+## Pricing model — final (September 24, 2026)
+
+Supersedes every earlier VAT note in this plan and in the commit history.
+
+**Markup, not extraction.** The supplier sets the price they want to *earn*. Eskista adds its
+commission on top, VAT is added on top of that, and the customer sees the all-in figure —
+which is what "all prices are VAT-inclusive" means. The supplier is always paid exactly what
+they listed; commission never comes out of it.
+
+    talent asks 3,000/day × 3 days      9,000.00   paid to the talent in full
+    + commission 15%                    1,350.00   Eskista
+    + VAT 15% of 10,350                 1,552.50   tax authority
+    = customer pays                    11,902.50   (3 × 3,967.50)
+
+**Commission is editable**, most specific level wins: listing → vendor or talent → platform
+default (15%). An admin sets these at approval through `/admin/pricing`. Every change is
+audited, moves the catalogue immediately, and never reprices a booking already made — each
+booking snapshots the rate it was priced at.
+
+**Assumptions to confirm:** equipment follows the same model as talent; Eskista's own fees
+(delivery, service fee) are entered before VAT, and VAT is added to them too.
+
+**Counting days:** a rental is charged by the night (Aug 18 → 21 is 3); a talent by each date
+worked (Nov 23 → 24 is 2).

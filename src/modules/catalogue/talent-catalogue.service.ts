@@ -2,6 +2,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from '@nes
 import { BookingStatus, Prisma, VerificationStatus } from '@prisma/client';
 import type { CursorPage } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { PricingService } from '../settings/pricing.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
 import {
   AvailabilityDayResponse,
@@ -44,6 +45,7 @@ type TalentCard = Prisma.TalentProfileGetPayload<{ include: typeof cardInclude }
 export class TalentCatalogueService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly pricing: PricingService,
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
@@ -55,7 +57,8 @@ export class TalentCatalogueService {
       orderBy: [{ ratingAvg: 'desc' }, { completedBookings: 'desc' }, { id: 'asc' }],
       take,
     });
-    return rows.map((row) => this.toCard(row));
+    const price = await this.pricing.pricer();
+    return rows.map((row) => this.toCard(row, price));
   }
 
   async browse(query: BrowseTalentQuery): Promise<CursorPage<TalentCardResponse>> {
@@ -112,9 +115,10 @@ export class TalentCatalogueService {
 
     const hasNext = rows.length > query.limit;
     const page = hasNext ? rows.slice(0, query.limit) : rows;
+    const price = await this.pricing.pricer();
 
     return {
-      data: page.map((row) => this.toCard(row)),
+      data: page.map((row) => this.toCard(row, price)),
       meta: {
         limit: query.limit,
         nextCursor: hasNext ? (page[page.length - 1]?.id ?? null) : null,
@@ -145,22 +149,27 @@ export class TalentCatalogueService {
     // 404 rather than 403 — an unverified or hidden profile is not public knowledge.
     if (!talent) throw new NotFoundException('Talent not found');
 
+    const price = await this.pricing.pricer();
+    const overrides = { talentBps: talent.commissionRateBps };
+
     return {
-      ...this.toCard(talent),
+      ...this.toCard(talent, price),
       bio: talent.bio,
       yearsExperience: talent.yearsExperience,
+      highestEducation: talent.highestEducation,
       languages: talent.languages,
       services: talent.services.map((s) => ({
         id: s.id,
         title: s.title,
         description: s.description,
         pricingModel: s.pricingModel,
-        priceMinor: s.priceMinor,
+        priceMinor: price(s.priceMinor, overrides),
         currency: s.currency,
       })),
       portfolio: talent.portfolio.map((p) => ({
         id: p.id,
         title: p.title,
+        clientOrAgency: p.clientOrAgency,
         description: p.description,
         imageUrl: p.fileKey ? this.storage.urlFor(p.fileKey) : null,
         externalUrl: p.externalUrl,
@@ -251,7 +260,14 @@ export class TalentCatalogueService {
     }
   }
 
-  private toCard(row: TalentCard): TalentCardResponse {
+  /**
+   * One talent card. The day rate shown is what the customer pays — the talent's own rate
+   * plus commission plus VAT — never the talent's own figure.
+   */
+  private toCard(
+    row: TalentCard,
+    price: Awaited<ReturnType<PricingService['pricer']>>,
+  ): TalentCardResponse {
     return {
       id: row.id,
       displayName: row.displayName,
@@ -261,7 +277,11 @@ export class TalentCatalogueService {
       ratingAvg: Number(row.ratingAvg),
       ratingCount: row.ratingCount,
       completedBookings: row.completedBookings,
-      baseRateMinor: row.baseRateMinor,
+      baseRateMinor:
+        row.baseRateMinor === null
+          ? null
+          : price(row.baseRateMinor, { talentBps: row.commissionRateBps }),
+      priceIncludesVat: true,
       pricingModel: row.pricingModel,
       currency: row.currency,
       isAvailableForHire: row.isAvailableForHire,

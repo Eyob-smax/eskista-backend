@@ -43,10 +43,9 @@ export function applyBps(amountMinor: number, rateBps: number): number {
 /**
  * The tax already contained in a VAT-inclusive amount.
  *
- * Every price on the platform is quoted VAT-inclusive, so VAT is **extracted**, never
- * added: at 15%, the tax inside ETB 11,000 is `11,000 × 15/115 = 1,434.78`, not
- * `11,000 × 15% = 1,650`. Using `applyBps` here would overstate the tax by about 15% of
- * itself on every invoice.
+ * Used to report the VAT inside a customer's total for the invoice. At 15%, the tax inside
+ * ETB 11,500 is `11,500 × 15/115 = 1,500`, not `11,500 × 15% = 1,725`. Using `applyBps`
+ * here would overstate the tax by about 15% of itself on every invoice.
  */
 export function extractInclusiveTax(inclusiveMinor: number, rateBps: number): number {
   if (inclusiveMinor < 0) throw new RangeError('inclusiveMinor must not be negative');
@@ -89,87 +88,108 @@ export function splitCommission(grossMinor: number, rateBps: number): SplitResul
   };
 }
 
+/**
+ * Adds a basis-point rate on top of an amount, rounded half-up.
+ *
+ * The opposite direction to `extractInclusiveTax`: that takes VAT *out* of a price that
+ * already contains it; this puts it *on* a price that does not. Confusing the two is how an
+ * invoice ends up 15% of 15% wrong.
+ */
+export function grossUp(netMinor: number, rateBps: number): number {
+  return netMinor + applyBps(netMinor, rateBps);
+}
+
+/**
+ * What the customer sees per period for a supplier's price.
+ *
+ * Supplier price, plus Eskista's commission, plus VAT. This is the figure on every
+ * catalogue card — the "VAT inclusive" price — and it is derived, never stored, so a
+ * change to the commission or VAT rate moves the catalogue without touching any listing.
+ */
+export function customerUnitPrice(
+  supplierUnitMinor: number,
+  commissionRateBps: number,
+  taxRateBps: number,
+): number {
+  const withCommission = supplierUnitMinor + applyBps(supplierUnitMinor, commissionRateBps);
+  return grossUp(withCommission, taxRateBps);
+}
+
 export interface PriceBreakdownInput {
-  unitPriceMinor: number;
+  /** What the supplier asked for, per period. This is what they will be paid. */
+  supplierUnitPriceMinor: number;
   periods: number;
   quantity?: number;
+  /** Eskista's delivery charge, before VAT. */
   deliveryFeeMinor?: number;
   securityDepositMinor?: number;
+  /** A concession on the VAT-inclusive total. Comes out of Eskista's margin. */
   discountMinor?: number;
   taxRateBps?: number;
-  /** Eskista's own handling fee. Defaults to 0, so the line is absent until configured. */
+  /** Eskista's handling fee, as a share of the rental before VAT. Defaults to 0. */
   serviceFeeRateBps?: number;
   commissionRateBps: number;
 }
 
 export interface PriceBreakdown {
   currency: string;
-  /** VAT-inclusive, as listed by the supplier. */
+  /** Per period, as the customer sees it — commission and VAT included. */
   unitPriceMinor: number;
+  /** Per period, as the supplier set it. */
+  supplierUnitPriceMinor: number;
   periods: number;
   quantity: number;
-  /** VAT-inclusive rental line. */
+  /** The rental line, VAT-inclusive: `unitPriceMinor × periods × quantity`, exactly. */
   subtotalMinor: number;
+  /** Delivery, VAT-inclusive. */
   deliveryFeeMinor: number;
-  securityDepositMinor: number;
-  discountMinor: number;
   serviceFeeRateBps: number;
+  /** Service fee, VAT-inclusive. */
   serviceFeeMinor: number;
-  /**
-   * The VAT *already contained* in `totalMinor` — not an addition to it. Show it as
-   * "Includes VAT (15%)", never as a line that sums into the total.
-   */
+  discountMinor: number;
+  securityDepositMinor: number;
+  /** The VAT contained in `totalMinor`. Reported, never added again. */
   taxMinor: number;
   taxRateBps: number;
-  /** `totalMinor` less the VAT it contains. The figure that matters for accounting. */
+  /** `totalMinor` less the VAT inside it. */
   netTotalMinor: number;
-  /**
-   * What the customer owes for the goods and services, VAT included. Excludes the
-   * refundable deposit.
-   */
+  /** What the customer owes for the goods and services, VAT included. Excludes deposit. */
   totalMinor: number;
-  /** What the customer actually transfers: `totalMinor` plus the refundable deposit. */
+  /** `totalMinor` plus the refundable deposit — what the customer actually transfers. */
   amountDueMinor: number;
   commissionRateBps: number;
-  /** Commission, taken on the rental net of VAT. */
+  /** Eskista's commission on the rental, before VAT. */
   commissionMinor: number;
-  /** The rental subtotal net of the VAT it contains. The base commission is taken on. */
-  netSubtotalMinor: number;
+  /** Exactly the supplier's asked price × periods × quantity. */
   supplierEarningsMinor: number;
 }
 
 /**
- * The single place a booking total is computed, so the customer's total, the vendor's
- * earnings and the invoice can never drift apart.
+ * The single place a booking is priced, so the quote, the booking and the invoice agree.
  *
- * **Every price entering this function is VAT-inclusive**, per the client's September 2026
- * instruction: "all platform-facing prices across all categories are 15% VAT-inclusive."
- * VAT is therefore extracted from the total, never added to it.
+ * **Markup model**, per the client (September 2026): the supplier sets the price they want
+ * to *earn*; Eskista adds its commission on top; VAT is added on top of that. The customer
+ * sees the resulting all-in figure, which is what "prices are VAT-inclusive" means.
  *
- * This deliberately contradicts the design sheets, which print
- * `10,500 + 500 delivery + 1,575 VAT = 12,575` — unambiguously additive. Under the rule
- * the client confirmed, the same booking totals **11,000**, of which 1,434.78 is VAT. The
- * printed totals on Finalize Booking, Complete Payment and Booking Details are wrong and
- * need reissuing. Recorded here because the arithmetic is the thing most likely to be
- * "corrected" back by someone comparing code against the mockups.
- *
- * Other deliberate choices:
- *  - Commission is taken on the rental **net of VAT**, because the VAT inside a price
- *    belongs to the tax authority and is not revenue Eskista may take a share of.
- *  - Commission applies to the rental only — not the delivery fee, which is Eskista's own
- *    revenue, and not the refundable deposit.
- *  - The **security deposit carries no VAT** and sits outside every total. It is a
- *    returnable holding, not consideration for a supply.
- *  - Two totals are returned (AD-9): `totalMinor` is the value of the goods and services,
- *    `amountDueMinor` adds the deposit. Returning one invites the caller to pick the wrong
- *    one on the payment screen.
+ * Consequences worth stating, because each is easy to break:
+ *  - The supplier is paid **exactly** what they listed. Commission never comes out of it.
+ *  - Commission is on the supplier's price, before VAT — Eskista never takes a share of
+ *    tax. (This is the "commission on the net" answer, in the only form it can take when
+ *    the net is what the supplier set.)
+ *  - Every line is VAT-inclusive and the lines sum exactly to `totalMinor`. The rental
+ *    line is `unitPriceMinor × periods × quantity`, so "3 days × ETB 3,967.50" always
+ *    multiplies out to the printed figure.
+ *  - VAT is then *extracted* from the total for the invoice. Any sub-cent rounding across
+ *    lines lands in Eskista's margin, never in the supplier's pay or the customer's total.
+ *  - A discount comes out of Eskista's margin, not the supplier's pay.
+ *  - The refundable deposit carries no VAT and sits outside every total.
  */
 export function computePriceBreakdown(
   input: PriceBreakdownInput,
   currency = DEFAULT_CURRENCY,
 ): PriceBreakdown {
   const {
-    unitPriceMinor,
+    supplierUnitPriceMinor,
     periods,
     quantity = 1,
     deliveryFeeMinor = 0,
@@ -180,8 +200,8 @@ export function computePriceBreakdown(
     commissionRateBps,
   } = input;
 
-  if (!Number.isInteger(unitPriceMinor) || unitPriceMinor < 0) {
-    throw new RangeError('unitPriceMinor must be a non-negative integer');
+  if (!Number.isInteger(supplierUnitPriceMinor) || supplierUnitPriceMinor < 0) {
+    throw new RangeError('supplierUnitPriceMinor must be a non-negative integer');
   }
   if (!Number.isInteger(periods) || periods < 1) {
     throw new RangeError('periods must be a positive integer');
@@ -190,46 +210,44 @@ export function computePriceBreakdown(
     throw new RangeError('quantity must be a positive integer');
   }
 
-  const subtotalMinor = unitPriceMinor * periods * quantity;
-  const serviceFeeMinor = applyBps(subtotalMinor, serviceFeeRateBps);
+  const units = periods * quantity;
+  const supplierEarningsMinor = supplierUnitPriceMinor * units;
 
-  const billableMinor = subtotalMinor + deliveryFeeMinor + serviceFeeMinor;
+  // Round per unit, so the printed "N days × price" multiplies out exactly.
+  const unitNetMinor = supplierUnitPriceMinor + applyBps(supplierUnitPriceMinor, commissionRateBps);
+  const commissionMinor = (unitNetMinor - supplierUnitPriceMinor) * units;
+  const unitPriceMinor = grossUp(unitNetMinor, taxRateBps);
+  const subtotalMinor = unitPriceMinor * units;
+
+  const deliveryGrossMinor = grossUp(deliveryFeeMinor, taxRateBps);
+  const serviceFeeMinor = grossUp(applyBps(unitNetMinor * units, serviceFeeRateBps), taxRateBps);
+
+  const billableMinor = subtotalMinor + deliveryGrossMinor + serviceFeeMinor;
   const cappedDiscount = Math.min(discountMinor, billableMinor);
 
-  // Everything above is VAT-inclusive, so the total is simply what the customer pays and
-  // the tax is extracted from it rather than added on.
   const totalMinor = billableMinor - cappedDiscount;
   const taxMinor = extractInclusiveTax(totalMinor, taxRateBps);
-  const netTotalMinor = totalMinor - taxMinor;
-
-  const amountDueMinor = totalMinor + securityDepositMinor;
-
-  // Commission is taken on the rental net of its own VAT, so Eskista never takes a share
-  // of money owed to the tax authority. The discount is not applied here: a discount is
-  // Eskista's concession to the customer, not a reduction of what the supplier earns.
-  const netSubtotalMinor = netOfInclusiveTax(subtotalMinor, taxRateBps);
-  const split = splitCommission(netSubtotalMinor, commissionRateBps);
 
   return {
     currency,
     unitPriceMinor,
+    supplierUnitPriceMinor,
     periods,
     quantity,
     subtotalMinor,
-    deliveryFeeMinor,
-    securityDepositMinor,
-    discountMinor: cappedDiscount,
+    deliveryFeeMinor: deliveryGrossMinor,
     serviceFeeRateBps,
     serviceFeeMinor,
+    discountMinor: cappedDiscount,
+    securityDepositMinor,
     taxMinor,
     taxRateBps,
-    netTotalMinor,
+    netTotalMinor: totalMinor - taxMinor,
     totalMinor,
-    amountDueMinor,
+    amountDueMinor: totalMinor + securityDepositMinor,
     commissionRateBps,
-    commissionMinor: split.commissionMinor,
-    netSubtotalMinor,
-    supplierEarningsMinor: split.supplierEarningsMinor,
+    commissionMinor,
+    supplierEarningsMinor,
   };
 }
 
@@ -240,6 +258,20 @@ export function billablePeriods(startDate: Date, endDate: Date): number {
     Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate());
   const days = Math.round(ms / 86_400_000);
   return Math.max(days, 1);
+}
+
+/**
+ * Calendar days worked, counting both ends: Nov 23 → Nov 24 is **2**.
+ *
+ * Deliberately different from `billablePeriods`. A rental is charged by the night —
+ * collected on the 18th, back on the 21st, three days — but a talent works on each date
+ * they are booked for, so a two-date engagement is two days of work.
+ */
+export function workingDays(startDate: Date, endDate: Date): number {
+  const ms =
+    Date.UTC(endDate.getUTCFullYear(), endDate.getUTCMonth(), endDate.getUTCDate()) -
+    Date.UTC(startDate.getUTCFullYear(), startDate.getUTCMonth(), startDate.getUTCDate());
+  return Math.max(Math.round(ms / 86_400_000) + 1, 1);
 }
 
 /** Formats for display/PDFs, e.g. "ETB 3,200.00". */

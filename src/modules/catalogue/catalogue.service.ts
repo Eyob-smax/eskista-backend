@@ -10,6 +10,7 @@ import {
 import type { CursorPage } from '../../common/dto/pagination.dto';
 import { billablePeriods, computePriceBreakdown, formatMoney } from '../../common/money';
 import { PrismaService } from '../prisma/prisma.service';
+import { PricingService } from '../settings/pricing.service';
 import { SettingsService } from '../settings/settings.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
 import {
@@ -56,7 +57,7 @@ const VISIBLE: Prisma.ListingWhereInput = {
 };
 
 const cardInclude = {
-  vendor: { select: { id: true, businessName: true } },
+  vendor: { select: { id: true, businessName: true, commissionRateBps: true } },
   category: { select: { name: true } },
   images: { orderBy: [{ isPrimary: 'desc' }, { sortOrder: 'asc' }], take: 1 },
 } satisfies Prisma.ListingInclude;
@@ -68,6 +69,7 @@ export class CatalogueService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
+    private readonly pricing: PricingService,
     private readonly talent: TalentCatalogueService,
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
@@ -80,15 +82,33 @@ export class CatalogueService {
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
 
-    const counts =
-      kind === CategoryKind.EQUIPMENT
-        ? await this.prisma.listing.groupBy({
-            by: ['categoryId'],
-            where: VISIBLE,
-            _count: { categoryId: true },
-          })
-        : [];
-    const byCategory = new Map(counts.map((c) => [c.categoryId, c._count.categoryId]));
+    const byCategory = new Map<string, number>();
+
+    if (kind === CategoryKind.EQUIPMENT) {
+      const counts = await this.prisma.listing.groupBy({
+        by: ['categoryId'],
+        where: VISIBLE,
+        _count: { categoryId: true },
+      });
+      for (const c of counts) byCategory.set(c.categoryId, c._count.categoryId);
+    } else {
+      // A talent belongs to a category through the services they offer, so count distinct
+      // bookable people per category rather than services, which would double-count anyone
+      // offering two services in the same one.
+      const services = await this.prisma.talentService.findMany({
+        where: {
+          isActive: true,
+          categoryId: { in: categories.map((c) => c.id) },
+          talentProfile: { status: VerificationStatus.VERIFIED, isAvailableForHire: true },
+        },
+        select: { categoryId: true, talentProfileId: true },
+        distinct: ['categoryId', 'talentProfileId'],
+      });
+      for (const svc of services) {
+        if (!svc.categoryId) continue;
+        byCategory.set(svc.categoryId, (byCategory.get(svc.categoryId) ?? 0) + 1);
+      }
+    }
 
     return categories.map((c) => ({
       id: c.id,
@@ -179,10 +199,13 @@ export class CatalogueService {
 
     const hasNext = rows.length > query.limit;
     const page = hasNext ? rows.slice(0, query.limit) : rows;
-    const holding = await this.holdingToday(page.map((r) => r.id));
+    const [holding, price] = await Promise.all([
+      this.holdingToday(page.map((r) => r.id)),
+      this.pricing.pricer(),
+    ]);
 
     return {
-      data: page.map((row) => this.toCard(row, holding.has(row.id))),
+      data: page.map((row) => this.toCard(row, holding.has(row.id), price)),
       meta: {
         limit: query.limit,
         nextCursor: hasNext ? (page[page.length - 1]?.id ?? null) : null,
@@ -221,16 +244,19 @@ export class CatalogueService {
     // 404 for an unpublished listing rather than 403: a draft's existence is not public.
     if (!listing) throw new NotFoundException('Equipment not found');
 
-    const holding = await this.holdingToday([listing.id]);
+    const [holding, price] = await Promise.all([
+      this.holdingToday([listing.id]),
+      this.pricing.pricer(),
+    ]);
 
     // Only accessories that are themselves publishable may be shown.
     const accessories = listing.accessories
       .map((a) => a.accessory)
       .filter((a) => a.status === ListingStatus.PUBLISHED)
-      .map((a) => this.toCard(a, false));
+      .map((a) => this.toCard(a, false, price));
 
     return {
-      ...this.toCard(listing, holding.has(listing.id)),
+      ...this.toCard(listing, holding.has(listing.id), price),
       imageUrls: listing.images.map((i) => this.storage.urlFor(i.fileKey)),
       description: listing.description,
       mainSpecification: listing.mainSpecification,
@@ -357,11 +383,11 @@ export class CatalogueService {
     });
     if (!listing) throw new NotFoundException('Equipment not found');
 
-    const from = this.parseDate(query.from, 'from');
-    const to = this.parseDate(query.to, 'to');
-    if (to < from) throw new BadRequestException('`to` must not be before `from`');
+    const fromDate = this.parseDate(query.from, 'from');
+    const toDate = this.parseDate(query.to, 'to');
+    if (toDate < fromDate) throw new BadRequestException('`to` must not be before `from`');
 
-    const periods = billablePeriods(from, to);
+    const periods = billablePeriods(fromDate, toDate);
     const blockers: string[] = [];
 
     if (periods < listing.minRentalPeriods) {
@@ -385,23 +411,29 @@ export class CatalogueService {
       );
     }
 
-    const [vatBps, defaultDeliveryFee, commissionBps] = await Promise.all([
-      this.settings.vatBps(),
-      this.settings.deliveryFeeMinor(),
-      this.settings.commissionBps(),
-    ]);
+    const [{ commissionRateBps, taxRateBps }, defaultDeliveryFee, serviceFeeBps] =
+      await Promise.all([
+        this.pricing.rates({
+          listingBps: listing.commissionRateBps,
+          vendorBps: listing.vendor.commissionRateBps,
+        }),
+        this.settings.deliveryFeeMinor(),
+        this.settings.serviceFeeBps(),
+      ]);
+    const vatBps = taxRateBps;
 
     const deliveryFeeMinor = query.collectionMethod === 'PICKUP' ? 0 : defaultDeliveryFee;
 
     const breakdown = computePriceBreakdown(
       {
-        unitPriceMinor: listing.rentalPriceMinor,
+        supplierUnitPriceMinor: listing.rentalPriceMinor,
         periods,
         quantity: query.quantity,
         deliveryFeeMinor,
         securityDepositMinor: (listing.securityDepositMinor ?? 0) * query.quantity,
-        taxRateBps: vatBps,
-        commissionRateBps: listing.vendor.commissionRateBps ?? commissionBps,
+        taxRateBps,
+        serviceFeeRateBps: serviceFeeBps,
+        commissionRateBps,
       },
       listing.currency,
     );
@@ -409,7 +441,7 @@ export class CatalogueService {
     const lines: QuoteResponse['lines'] = [
       {
         kind: 'RENTAL',
-        label: `${periods} ${this.periodWord(listing.rentalPeriodUnit, periods)}${query.quantity > 1 ? ` × ${query.quantity} units` : ''} × ${formatMoney(listing.rentalPriceMinor, listing.currency)}`,
+        label: `${periods} ${this.periodWord(listing.rentalPeriodUnit, periods)}${query.quantity > 1 ? ` × ${query.quantity} units` : ''} × ${formatMoney(breakdown.unitPriceMinor, listing.currency)}`,
         amountMinor: breakdown.subtotalMinor,
       },
     ];
@@ -483,8 +515,11 @@ export class CatalogueService {
     take: number,
   ): Promise<EquipmentCardResponse[]> {
     const rows = await this.prisma.listing.findMany({ where, include: cardInclude, orderBy, take });
-    const holding = await this.holdingToday(rows.map((r) => r.id));
-    return rows.map((row) => this.toCard(row, holding.has(row.id)));
+    const [holding, price] = await Promise.all([
+      this.holdingToday(rows.map((r) => r.id)),
+      this.pricing.pricer(),
+    ]);
+    return rows.map((row) => this.toCard(row, holding.has(row.id), price));
   }
 
   /** Which of these listings are on rent *today*, for the Available/Booked card badge. */
@@ -505,7 +540,18 @@ export class CatalogueService {
     return new Set(rows.map((r) => r.listingId).filter((id): id is string => id !== null));
   }
 
-  private toCard(row: ListingCard, isHeldToday: boolean): EquipmentCardResponse {
+  /**
+   * One catalogue card.
+   *
+   * `pricePerPeriodMinor` is the **customer's** all-in price — the supplier's own figure
+   * plus commission plus VAT — because that is what the card shows and what the customer
+   * will pay. The supplier's own price never leaves the vendor console.
+   */
+  private toCard(
+    row: ListingCard,
+    isHeldToday: boolean,
+    price: Awaited<ReturnType<PricingService['pricer']>>,
+  ): EquipmentCardResponse {
     const image = row.images[0];
     return {
       id: row.id,
@@ -514,7 +560,11 @@ export class CatalogueService {
       vendorName: row.vendor.businessName,
       categoryName: row.category.name,
       imageUrl: image ? this.storage.urlFor(image.fileKey) : null,
-      pricePerPeriodMinor: row.rentalPriceMinor,
+      pricePerPeriodMinor: price(row.rentalPriceMinor, {
+        listingBps: row.commissionRateBps,
+        vendorBps: row.vendor.commissionRateBps,
+      }),
+      priceIncludesVat: true,
       periodUnit: row.rentalPeriodUnit,
       currency: row.currency,
       ratingAvg: Number(row.ratingAvg),

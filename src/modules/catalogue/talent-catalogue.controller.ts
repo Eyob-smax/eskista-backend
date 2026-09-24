@@ -45,8 +45,9 @@ and matches a profile carrying **any** of them.
 
 Paging is cursor-based — pass \`meta.nextCursor\` back as \`cursor\`.
 
-\`baseRateMinor\` is the indicative day rate shown on the card. It is a starting point, not
-a price: the fee for an engagement is negotiated and can differ. Never present it as final.
+\`baseRateMinor\` is the day rate the **customer** pays: the talent's own rate plus
+Eskista's commission plus VAT. Rates are fixed — this is the price, not a starting point.
+Show it with the "Inc. 15% VAT" subtext; \`priceIncludesVat\` is always true.
 `.trim(),
   })
   @ApiOkResponse({

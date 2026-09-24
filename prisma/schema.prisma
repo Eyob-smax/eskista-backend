@@ -63,8 +63,12 @@ model User {
 
   /// Which experience the user is currently in. They can switch at any time, and
   /// switching must never change what they are *authorised* to do — see RoleMembership.
-  activeRole Role    @default(CUSTOMER)
-  isBlocked  Boolean @default(false)
+  activeRole         Role      @default(CUSTOMER)
+  /// Set the first time the user picks an experience on the "How will you use Eskista?"
+  /// screen. Null means the chooser has not been shown yet; after that, switching lives on
+  /// the Profile tab.
+  experienceChosenAt DateTime?
+  isBlocked          Boolean   @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -525,6 +529,11 @@ model Listing {
   submittedAt     DateTime?
   publishedAt     DateTime?
   reviewedById    String?       @db.Uuid
+
+  /// Eskista's commission on this listing, set by an admin when approving it. Null falls
+  /// back to the vendor's rate, then the platform default. Snapshotted onto each booking,
+  /// so changing it never reprices a booking already made.
+  commissionRateBps Int?
 
   /// Admin-curated "Featured Equipment" rail.
   isFeatured    Boolean   @default(false)

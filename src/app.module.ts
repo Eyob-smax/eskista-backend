@@ -6,6 +6,8 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { validateEnv, type Env } from './config/env.validation';
+import { AccountModule } from './modules/account/account.module';
+import { AdminPricingModule } from './modules/admin-pricing/admin-pricing.module';
 import { AgreementsModule } from './modules/agreements/agreements.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { CatalogueModule } from './modules/catalogue/catalogue.module';
@@ -88,6 +90,12 @@ import { StorageModule } from './modules/storage/storage.module';
     VendorModule,
     EquipmentModule,
     VendorBookingsModule,
+
+    // Shared by every experience
+    AccountModule,
+
+    // Admin
+    AdminPricingModule,
 
     // Customer-side feature modules
     CatalogueModule,

@@ -349,8 +349,21 @@ export class EquipmentCardResponse {
   @ApiPropertyOptional({ nullable: true })
   imageUrl!: string | null;
 
-  @ApiProperty({ example: 320000, description: 'Price per period, in minor units.' })
+  @ApiProperty({
+    example: 396750,
+    description:
+      'What the **customer** pays per period, in minor units: the supplier’s own price ' +
+      'plus Eskista’s commission plus VAT. Show this with the "Inc. 15% VAT" subtext.',
+  })
   pricePerPeriodMinor!: number;
+
+  @ApiProperty({
+    description:
+      'Always true. Present so the card can render the "VAT Inclusive" badge the client ' +
+      'asked for without hardcoding the assumption.',
+    example: true,
+  })
+  priceIncludesVat!: boolean;
 
   @ApiProperty({ enum: RentalPeriodUnit, example: RentalPeriodUnit.DAY })
   periodUnit!: RentalPeriodUnit;
@@ -599,7 +612,10 @@ export class TalentServiceResponse {
   @ApiProperty({ enum: PricingModel, example: PricingModel.PER_DAY })
   pricingModel!: PricingModel;
 
-  @ApiProperty({ example: 450000 })
+  @ApiProperty({
+    example: 595125,
+    description: 'Customer price for this service, commission and VAT included.',
+  })
   priceMinor!: number;
 
   @ApiProperty({ example: 'ETB' })
@@ -612,6 +628,13 @@ export class PortfolioItemResponse {
 
   @ApiProperty({ example: 'Commercial – Ethio Telecom' })
   title!: string;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Who the work was produced for — the project-origin line under each piece.',
+    example: 'Zeleman Productions',
+  })
+  clientOrAgency!: string | null;
 
   @ApiPropertyOptional({ nullable: true })
   description!: string | null;
@@ -654,12 +677,15 @@ export class TalentCardResponse {
 
   @ApiPropertyOptional({
     nullable: true,
-    example: 120000,
+    example: 158700,
     description:
-      'Indicative day rate, for the "1,200 ETB/Day" line. Indicative only: the agreed fee ' +
-      'is negotiated per engagement and may differ.',
+      'The day rate the **customer** pays — the talent’s own rate plus commission plus ' +
+      'VAT — for the "1,587 ETB/Day" line. Fixed: there is no negotiation.',
   })
   baseRateMinor!: number | null;
+
+  @ApiProperty({ description: 'Always true; drives the "VAT Inclusive" badge.', example: true })
+  priceIncludesVat!: boolean;
 
   @ApiProperty({ enum: PricingModel, example: PricingModel.PER_DAY })
   pricingModel!: PricingModel;
@@ -693,6 +719,13 @@ export class TalentDetailResponse extends TalentCardResponse {
 
   @ApiPropertyOptional({ nullable: true, example: 8 })
   yearsExperience!: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'A single line — the structured education section was removed.',
+    example: 'BA Film Production, Addis Ababa University',
+  })
+  highestEducation!: string | null;
 
   @ApiProperty({ type: [String], example: ['Amharic', 'English'] })
   languages!: string[];
