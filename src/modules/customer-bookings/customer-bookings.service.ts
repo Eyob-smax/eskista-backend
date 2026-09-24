@@ -7,6 +7,7 @@ import {
   FulfilmentDirection,
   PaymentStatus,
   Prisma,
+  ReviewKind,
   Role,
 } from '@prisma/client';
 import type { CursorPage } from '../../common/dto/pagination.dto';
@@ -16,8 +17,8 @@ import { SettingsService } from '../settings/settings.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
 import {
   DELIVERY_STEPS,
-  RETURN_STEPS,
   buildActions,
+  buildReturnTimeline,
   buildTimeline,
   statusBadge,
   statusesForTab,
@@ -34,6 +35,14 @@ import {
   CancelBookingDto,
   ListBookingsQuery,
 } from './dto/booking.dto';
+
+/** Plain-language labels for what staff recorded at the in-person inspection. */
+const INSPECTION_LABELS: Record<string, string> = {
+  OK: 'Returned in good condition',
+  DAMAGED: 'Damage found',
+  MISSING_ITEMS: 'Items missing',
+  LATE_RETURN: 'Returned late',
+};
 
 /** Statuses a customer may still walk away from. */
 const CANCELLABLE: BookingStatus[] = [
@@ -145,7 +154,10 @@ export class CustomerBookingsService {
         inspection: true,
         agreements: true,
         settlement: true,
-        reviews: { where: { authorId: userId } },
+        reviews: {
+          where: { authorId: userId, kind: { not: ReviewKind.PLATFORM_SERVICE } },
+        },
+        _count: { select: { attachments: true } },
       },
     });
 
@@ -178,6 +190,24 @@ export class CustomerBookingsService {
 
     return {
       ...card,
+      talent: booking.talentDetail
+        ? {
+            engagementModel: booking.talentDetail.engagementModel,
+            startTime: booking.talentDetail.startTime,
+            endTime: booking.talentDetail.endTime,
+            hoursPerDay: this.hoursBetween(
+              booking.talentDetail.startTime,
+              booking.talentDetail.endTime,
+            ),
+            city: booking.talentDetail.city,
+            venue: booking.talentDetail.venue,
+            locationNotes: booking.talentDetail.locationNotes,
+            budgetBand: booking.talentDetail.budgetBand,
+            budgetMinor: booking.talentDetail.budgetMinor,
+            headcount: booking.talentDetail.headcount,
+            attachmentCount: booking._count.attachments,
+          }
+        : null,
       projectType: booking.projectType,
       projectDescription: booking.projectDescription,
       quantity: booking.equipmentDetail?.quantity ?? 1,
@@ -190,7 +220,7 @@ export class CustomerBookingsService {
       totals: this.toTotals(booking),
       timeline: buildTimeline(booking.type, booking.status, occurredAt),
       delivery: delivery ? this.toFulfilment(delivery, 'OUTBOUND') : null,
-      return: ret ? this.toFulfilment(ret, 'RETURN') : null,
+      return: ret ? this.toFulfilment(ret, 'RETURN', booking.status) : null,
       payments: booking.payments.map((p) => ({
         id: p.id,
         status: p.status,
@@ -204,30 +234,23 @@ export class CustomerBookingsService {
       })),
       inspection: booking.inspection
         ? {
-            physicalCondition: booking.inspection.condition,
-            functionalTest: booking.inspection.outcome === 'OK' ? 'Passed' : 'See notes',
-            missingAccessories:
-              booking.inspection.outcome === 'MISSING_ITEMS'
-                ? (booking.inspection.damageNotes ?? 'Reported')
-                : 'None',
-            damage:
-              booking.inspection.outcome === 'DAMAGED'
-                ? (booking.inspection.damageNotes ?? 'Reported')
-                : 'None',
-            outcome: booking.inspection.outcome,
-            completedAt: booking.inspection.inspectedAt.toISOString(),
             isComplete: true,
+            outcome: booking.inspection.outcome,
+            outcomeLabel: INSPECTION_LABELS[booking.inspection.outcome],
+            notes: booking.inspection.damageNotes,
+            deductionMinor: booking.inspection.feeMinor,
+            depositReturnedMinor: booking.inspection.depositReturnedMinor,
+            completedAt: booking.inspection.inspectedAt.toISOString(),
           }
         : {
-            // The design renders every row as a dash until the equipment is back, rather
-            // than hiding the panel — so the customer knows an inspection is coming.
-            physicalCondition: null,
-            functionalTest: null,
-            missingAccessories: null,
-            damage: null,
-            outcome: null,
-            completedAt: null,
+            // Present but empty, so the customer knows an inspection is still coming.
             isComplete: false,
+            outcome: null,
+            outcomeLabel: null,
+            notes: null,
+            deductionMinor: null,
+            depositReturnedMinor: null,
+            completedAt: null,
           },
       documents: this.toDocuments(booking),
       activity: this.toActivity(booking.statusEvents),
@@ -289,6 +312,15 @@ export class CustomerBookingsService {
     await this.jobs.cancelBookingJobs(booking.id);
 
     return this.getDetail(userId, reference);
+  }
+
+  /** Whole hours between two HH:mm times, or null when either is missing or reversed. */
+  private hoursBetween(start: string | null, end: string | null): number | null {
+    if (!start || !end) return null;
+    const [sh = 0, sm = 0] = start.split(':').map(Number);
+    const [eh = 0, em = 0] = end.split(':').map(Number);
+    const minutes = eh * 60 + em - (sh * 60 + sm);
+    return minutes > 0 ? Math.ceil(minutes / 60) : null;
   }
 
   // ── mapping ────────────────────────────────────────────────────────────────
@@ -401,22 +433,29 @@ export class CustomerBookingsService {
       completedAt: Date | null;
     },
     direction: 'OUTBOUND' | 'RETURN',
+    bookingStatus?: BookingStatus,
   ): BookingFulfilmentResponse {
-    const steps = direction === 'OUTBOUND' ? DELIVERY_STEPS : RETURN_STEPS;
-    const stageOrder: DeliveryStage[] = [
-      DeliveryStage.PREPARED,
-      DeliveryStage.PICKED_UP,
-      DeliveryStage.OUT_FOR_DELIVERY,
-      DeliveryStage.DELIVERED,
-    ];
-    const current = stageOrder.indexOf(f.stage);
-
-    const timeline: TimelineStep[] = steps.map((step, index) => ({
-      key: step.key,
-      label: step.label,
-      state: index < current ? 'DONE' : index === current ? 'IN_PROGRESS' : 'PENDING',
-      occurredAt: null,
-    }));
+    // Outbound follows the courier's four stages. The return follows the booking itself,
+    // because its later steps — received, inspected, closed — happen after the courier is
+    // done. Mapping five steps onto four courier stages put every state one step out.
+    let timeline: TimelineStep[];
+    if (direction === 'RETURN' && bookingStatus) {
+      timeline = buildReturnTimeline(bookingStatus);
+    } else {
+      const stageOrder: DeliveryStage[] = [
+        DeliveryStage.PREPARED,
+        DeliveryStage.PICKED_UP,
+        DeliveryStage.OUT_FOR_DELIVERY,
+        DeliveryStage.DELIVERED,
+      ];
+      const current = stageOrder.indexOf(f.stage);
+      timeline = DELIVERY_STEPS.map((step, index) => ({
+        key: step.key,
+        label: step.label,
+        state: index < current ? 'DONE' : index === current ? 'IN_PROGRESS' : 'PENDING',
+        occurredAt: null,
+      }));
+    }
 
     return {
       method: f.method as BookingFulfilmentResponse['method'],
@@ -563,7 +602,7 @@ export class CustomerBookingsService {
         select: { bookingId: true },
       }),
       this.prisma.review.findMany({
-        where: { bookingId: { in: bookingIds } },
+        where: { bookingId: { in: bookingIds }, kind: { not: ReviewKind.PLATFORM_SERVICE } },
         select: { bookingId: true },
       }),
     ]);

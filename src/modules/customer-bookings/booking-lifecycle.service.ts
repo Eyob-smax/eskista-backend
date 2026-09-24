@@ -7,7 +7,9 @@ import {
 } from '@nestjs/common';
 import {
   AgreementStatus,
+  BookingAttachmentKind,
   BookingStatus,
+  BookingType,
   DeliveryStage,
   FulfilmentDirection,
   FulfilmentMethod,
@@ -20,6 +22,7 @@ import {
 import {
   DOCUMENT_MIME_TYPES,
   IMAGE_MIME_TYPES,
+  REFERENCE_MIME_TYPES,
   UPLOAD_LIMITS,
   assertValidFile,
 } from '../../common/upload';
@@ -34,6 +37,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
 import {
+  AttachmentResponse,
   CustomerAgreementBodyResponse,
   CustomerAgreementResponse,
   DeclineAgreementDto,
@@ -55,6 +59,18 @@ const RETURNABLE: BookingStatus[] = [
   BookingStatus.RENTAL_COMPLETED,
   BookingStatus.RETURN_SCHEDULED,
 ];
+
+/**
+ * While reference files may still be added or removed: up to Eskista starting to arrange
+ * the engagement. After confirmation the brief is what the talent agreed to work from.
+ */
+const ATTACHABLE: BookingStatus[] = [
+  BookingStatus.DRAFT,
+  BookingStatus.REQUEST_SUBMITTED,
+  BookingStatus.ESKISTA_REVIEW,
+];
+
+const MAX_ATTACHMENTS = 10;
 
 /** Statuses where something has actually happened that could go wrong. */
 const REPORTABLE: BookingStatus[] = [
@@ -258,6 +274,7 @@ export class BookingLifecycleService {
         listing: { select: { name: true } },
         talentProfile: { select: { displayName: true } },
         payments: true,
+        agreements: { where: { counterpartyId: userId }, select: { status: true } },
       },
     });
     if (!booking) throw new NotFoundException('Booking not found');
@@ -271,7 +288,7 @@ export class BookingLifecycleService {
       .reduce((sum, p) => sum + p.amountMinor, 0);
     const pending = booking.payments.some((p) => p.status === PaymentStatus.SUBMITTED);
 
-    const blockedReason = this.paymentBlocker(booking.status, pending);
+    const blockedReason = this.paymentBlocker(booking.status, pending, booking.agreements);
 
     return {
       bookingReference: booking.reference,
@@ -304,12 +321,15 @@ export class BookingLifecycleService {
   ): Promise<{ id: string; status: PaymentStatus; submittedAt: string }> {
     const booking = await this.prisma.booking.findFirst({
       where: { reference, customerId: userId },
-      include: { payments: true },
+      include: {
+        payments: true,
+        agreements: { where: { counterpartyId: userId }, select: { status: true } },
+      },
     });
     if (!booking) throw new NotFoundException('Booking not found');
 
     const pending = booking.payments.some((p) => p.status === PaymentStatus.SUBMITTED);
-    const blocker = this.paymentBlocker(booking.status, pending);
+    const blocker = this.paymentBlocker(booking.status, pending, booking.agreements);
     if (blocker) throw new ConflictException(blocker);
 
     const valid = assertValidFile(file, {
@@ -363,6 +383,167 @@ export class BookingLifecycleService {
       id: payment.id,
       status: payment.status,
       submittedAt: payment.submittedAt.toISOString(),
+    };
+  }
+
+  // ── Completing a talent engagement ─────────────────────────────────────────
+
+  /**
+   * The customer confirms the talent delivered — the **Complete Service** button.
+   *
+   * A talent engagement has nothing to return or inspect, so this stands in for the
+   * return-and-inspection half of the equipment path. It moves the booking to
+   * RENTAL_COMPLETED; Eskista then settles with the talent and closes it, which is what
+   * opens the review. Idempotent: confirming twice is not an error.
+   */
+  async completeService(userId: string, reference: string): Promise<{ status: BookingStatus }> {
+    const booking = await this.requireBooking(userId, reference);
+
+    if (booking.type !== BookingType.TALENT) {
+      throw new BadRequestException('Only a talent engagement is completed this way');
+    }
+    if (booking.status === BookingStatus.RENTAL_COMPLETED) {
+      return { status: booking.status };
+    }
+    if (
+      booking.status !== BookingStatus.IN_PROGRESS &&
+      booking.status !== BookingStatus.DELIVERY_PICKUP
+    ) {
+      throw new ConflictException('This engagement has not started yet.');
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.booking.update({
+        where: { id: booking.id },
+        data: { status: BookingStatus.RENTAL_COMPLETED },
+      }),
+      this.prisma.bookingStatusEvent.create({
+        data: {
+          bookingId: booking.id,
+          fromStatus: booking.status,
+          toStatus: BookingStatus.RENTAL_COMPLETED,
+          actorId: userId,
+          actorRole: Role.CUSTOMER,
+          reason: 'Customer confirmed the service was delivered',
+        },
+      }),
+    ]);
+
+    return { status: BookingStatus.RENTAL_COMPLETED };
+  }
+
+  // ── Reference files ────────────────────────────────────────────────────────
+
+  /**
+   * Adds reference files to a talent request — the References step.
+   *
+   * Talent requests only: an equipment rental has no brief. Stored under the booking, so
+   * the customer, the talent on it and Eskista can read them and nobody else can. They are
+   * shown to the talent as "N files (via Eskista)".
+   */
+  async addAttachments(
+    userId: string,
+    reference: string,
+    files: UploadedFile[],
+  ): Promise<AttachmentResponse[]> {
+    const booking = await this.requireBooking(userId, reference);
+
+    if (booking.type !== BookingType.TALENT) {
+      throw new BadRequestException('Reference files belong to talent requests only');
+    }
+    if (!ATTACHABLE.includes(booking.status)) {
+      throw new ConflictException(
+        'Reference files can no longer be changed once the engagement is confirmed.',
+      );
+    }
+    if (files.length === 0) {
+      throw new BadRequestException('Attach at least one file');
+    }
+
+    const existing = await this.prisma.bookingAttachment.count({
+      where: { bookingId: booking.id },
+    });
+    if (existing + files.length > MAX_ATTACHMENTS) {
+      throw new BadRequestException(
+        `At most ${MAX_ATTACHMENTS} reference files per request (${existing} already attached)`,
+      );
+    }
+
+    for (const file of files) {
+      assertValidFile(file, {
+        allowed: REFERENCE_MIME_TYPES,
+        maxBytes: UPLOAD_LIMITS.reference,
+        field: 'files',
+      });
+    }
+
+    const created: AttachmentResponse[] = [];
+    for (const file of files) {
+      const stored = await this.storage.put({
+        buffer: file.buffer,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        folder: `bookings/${booking.reference}/attachments`,
+      });
+      const row = await this.prisma.bookingAttachment.create({
+        data: {
+          bookingId: booking.id,
+          kind: BookingAttachmentKind.REFERENCE,
+          fileKey: stored.key,
+          fileName: file.originalname,
+          mimeType: file.mimetype,
+          sizeBytes: file.size,
+          uploadedById: userId,
+        },
+      });
+      created.push(this.toAttachment(row));
+    }
+
+    return created;
+  }
+
+  async listAttachments(userId: string, reference: string): Promise<AttachmentResponse[]> {
+    const booking = await this.requireBooking(userId, reference);
+    const rows = await this.prisma.bookingAttachment.findMany({
+      where: { bookingId: booking.id },
+      orderBy: { createdAt: 'asc' },
+    });
+    return rows.map((r) => this.toAttachment(r));
+  }
+
+  async removeAttachment(userId: string, reference: string, attachmentId: string): Promise<void> {
+    const booking = await this.requireBooking(userId, reference);
+    if (!ATTACHABLE.includes(booking.status)) {
+      throw new ConflictException(
+        'Reference files can no longer be changed once the engagement is confirmed.',
+      );
+    }
+
+    const row = await this.prisma.bookingAttachment.findFirst({
+      where: { id: attachmentId, bookingId: booking.id },
+    });
+    if (!row) throw new NotFoundException('Attachment not found');
+
+    await this.prisma.bookingAttachment.delete({ where: { id: row.id } });
+    // Best-effort: the row is gone, so an orphaned file is harmless and cannot be reached.
+    await this.storage.remove(row.fileKey).catch(() => undefined);
+  }
+
+  private toAttachment(row: {
+    id: string;
+    fileKey: string;
+    fileName: string;
+    mimeType: string | null;
+    sizeBytes: number | null;
+    createdAt: Date;
+  }): AttachmentResponse {
+    return {
+      id: row.id,
+      fileName: row.fileName,
+      url: this.storage.urlFor(row.fileKey),
+      mimeType: row.mimeType,
+      sizeBytes: row.sizeBytes,
+      createdAt: row.createdAt.toISOString(),
     };
   }
 
@@ -696,18 +877,20 @@ export class BookingLifecycleService {
   ): Promise<ReviewResponse> {
     const booking = await this.prisma.booking.findFirst({
       where: { reference, customerId: userId },
-      include: { reviews: { where: { authorId: userId } } },
+      include: { reviews: { where: { authorId: userId }, select: { kind: true } } },
     });
     if (!booking) throw new NotFoundException('Booking not found');
 
     if (booking.status !== BookingStatus.CLOSED) {
       throw new ConflictException('You can rate a booking once it is completed.');
     }
-    if (booking.reviews.length > 0) {
+
+    // Checked per kind: a separate rating of Eskista's own service must not stop the
+    // customer rating the equipment or the talent, which is the rating the catalogue shows.
+    const kind = booking.talentProfileId ? ReviewKind.TALENT : ReviewKind.EQUIPMENT;
+    if (booking.reviews.some((r) => r.kind === kind)) {
       throw new ConflictException('You have already rated this booking.');
     }
-
-    const kind = booking.talentProfileId ? ReviewKind.TALENT : ReviewKind.EQUIPMENT;
 
     const review = await this.prisma.$transaction(async (tx) => {
       const created = await tx.review.create({
@@ -754,8 +937,20 @@ export class BookingLifecycleService {
     return booking;
   }
 
-  /** Why payment cannot be submitted right now, or null when it can. */
-  private paymentBlocker(status: BookingStatus, hasPending: boolean): string | null {
+  /**
+   * Why payment cannot be submitted right now, or null when it can.
+   *
+   * The same rule the booking's `actions` render, enforced here too — a client that
+   * ignores a disabled button must get a 409, not a payment against an unsigned contract.
+   * Payment opens once the signed copy is **uploaded**; Eskista's review of the scan runs
+   * in parallel rather than holding the customer up. No agreement issued yet means nothing
+   * to wait for.
+   */
+  private paymentBlocker(
+    status: BookingStatus,
+    hasPending: boolean,
+    agreements: { status: AgreementStatus }[] = [],
+  ): string | null {
     if (status === BookingStatus.DRAFT) {
       return 'Submit your request before paying.';
     }
@@ -768,6 +963,15 @@ export class BookingLifecycleService {
       status === BookingStatus.EXPIRED
     ) {
       return 'This booking is closed.';
+    }
+    const unsigned = agreements.some(
+      (a) => a.status === AgreementStatus.AWAITING_UPLOAD || a.status === AgreementStatus.REJECTED,
+    );
+    if (unsigned) {
+      return 'Download, sign and upload the rental agreement first.';
+    }
+    if (agreements.some((a) => a.status === AgreementStatus.DECLINED)) {
+      return 'You declined the agreement for this booking. Contact Eskista to continue.';
     }
     if (hasPending) {
       return 'Eskista is verifying your previous payment.';

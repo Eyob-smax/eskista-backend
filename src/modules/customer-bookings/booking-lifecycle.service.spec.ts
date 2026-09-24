@@ -1,5 +1,11 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { BookingStatus, DeliveryStage, FulfilmentDirection, PaymentStatus } from '@prisma/client';
+import {
+  AgreementStatus,
+  BookingStatus,
+  DeliveryStage,
+  FulfilmentDirection,
+  PaymentStatus,
+} from '@prisma/client';
 import { BookingLifecycleService } from './booking-lifecycle.service';
 
 const USER = 'user-1';
@@ -182,6 +188,59 @@ describe('getPaymentInstructions', () => {
 
     expect(p.telebirr).toBeNull(); // accountName missing
     expect(p.bank).toBeNull();
+  });
+});
+
+describe('agreement before payment', () => {
+  // The booking's actions say "sign first"; the endpoint must enforce the same, or a client
+  // that ignores a disabled button can pay against an unsigned contract.
+  it('blocks payment while the agreement is awaiting the customer’s signed copy', async () => {
+    const { service } = build(
+      booking({
+        status: BookingStatus.AWAITING_PAYMENT,
+        agreements: [{ status: AgreementStatus.AWAITING_UPLOAD }],
+      }),
+    );
+    const p = await service.getPaymentInstructions(USER, 'ESK-10482');
+    expect(p.canSubmit).toBe(false);
+    expect(p.blockedReason).toContain('agreement');
+  });
+
+  it('blocks it again when the scan was rejected', async () => {
+    const { service } = build(
+      booking({
+        status: BookingStatus.AWAITING_PAYMENT,
+        agreements: [{ status: AgreementStatus.REJECTED }],
+      }),
+    );
+    expect((await service.getPaymentInstructions(USER, 'ESK-10482')).canSubmit).toBe(false);
+  });
+
+  it('opens payment once the scan is uploaded, without waiting for Eskista’s review', async () => {
+    const { service } = build(
+      booking({
+        status: BookingStatus.AWAITING_PAYMENT,
+        agreements: [{ status: AgreementStatus.UNDER_REVIEW }],
+      }),
+    );
+    expect((await service.getPaymentInstructions(USER, 'ESK-10482')).canSubmit).toBe(true);
+  });
+
+  it('enforces the gate on submission too, not just in the instructions', async () => {
+    const { service } = build(
+      booking({
+        status: BookingStatus.AWAITING_PAYMENT,
+        agreements: [{ status: AgreementStatus.AWAITING_UPLOAD }],
+      }),
+    );
+    await expect(
+      service.submitPayment(
+        USER,
+        'ESK-10482',
+        { method: 'TELEBIRR', transactionReference: 'TBR1', amountMinor: 1 },
+        undefined,
+      ),
+    ).rejects.toThrow(ConflictException);
   });
 });
 

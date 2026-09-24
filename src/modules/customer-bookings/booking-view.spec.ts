@@ -2,6 +2,7 @@ import { BookingStatus, BookingType } from '@prisma/client';
 import {
   type ActionContext,
   buildActions,
+  buildReturnTimeline,
   buildTimeline,
   statusBadge,
   statusesForTab,
@@ -169,7 +170,7 @@ describe('buildActions', () => {
 
     const pay = buildActions(c).find((a) => a.key === 'COMPLETE_PAYMENT');
     expect(pay?.enabled).toBe(false);
-    expect(pay?.disabledReason).toContain('Sign');
+    expect(pay?.disabledReason).toContain('upload the rental agreement');
   });
 
   it('stops a customer paying twice while verification is pending', () => {
@@ -270,5 +271,44 @@ describe('statusBadge', () => {
     expect(statusBadge(BookingStatus.IN_PROGRESS).label).toBe('Active');
     expect(statusBadge(BookingStatus.AWAITING_PAYMENT).label).toBe('Pending');
     expect(statusBadge(BookingStatus.CLOSED).label).toBe('Completed');
+  });
+});
+
+describe('buildReturnTimeline', () => {
+  const states = (status: BookingStatus) => buildReturnTimeline(status).map((s) => s.state);
+
+  it('uses the five steps the Equipment Return screen shows', () => {
+    expect(buildReturnTimeline(BookingStatus.IN_PROGRESS).map((s) => s.label)).toEqual([
+      'Rental Completed',
+      'Pickup Scheduled',
+      'Equipment Received',
+      'Inspection',
+      'Rental Closed',
+    ]);
+  });
+
+  it('follows the booking through received and inspected, which a courier cannot report', () => {
+    expect(states(BookingStatus.RETURN_SCHEDULED)).toEqual([
+      'DONE',
+      'IN_PROGRESS',
+      'PENDING',
+      'PENDING',
+      'PENDING',
+    ]);
+    expect(states(BookingStatus.INSPECTION)).toEqual([
+      'DONE',
+      'DONE',
+      'DONE',
+      'IN_PROGRESS',
+      'PENDING',
+    ]);
+  });
+
+  it('shows a closed rental as fully done', () => {
+    expect(states(BookingStatus.CLOSED).every((s) => s === 'DONE')).toBe(true);
+  });
+
+  it('has not started for a booking that is not yet out', () => {
+    expect(states(BookingStatus.BOOKING_CONFIRMED).every((s) => s === 'PENDING')).toBe(true);
   });
 });

@@ -533,3 +533,29 @@ export class TrackingResponse {
   })
   isLive!: boolean;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reference files (talent requests)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export class AttachmentResponse {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ example: 'moodboard.pdf' })
+  fileName!: string;
+
+  @ApiProperty({
+    description: 'Authorised URL — the customer, the talent on the booking, and Eskista only.',
+  })
+  url!: string;
+
+  @ApiPropertyOptional({ nullable: true, example: 'application/pdf' })
+  mimeType!: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: 482133 })
+  sizeBytes!: number | null;
+
+  @ApiProperty({ example: '2026-09-20T08:00:00.000Z' })
+  createdAt!: string;
+}

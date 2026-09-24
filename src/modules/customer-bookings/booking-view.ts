@@ -128,6 +128,34 @@ export const RETURN_STEPS = [
   { key: 'RENTAL_CLOSED', label: 'Rental Closed' },
 ] as const;
 
+/**
+ * The five-step return tracker on the Equipment Return screen.
+ *
+ * Driven by the **booking's** status, not the courier's stage: "Equipment Received" and
+ * "Inspection" are things Eskista does after the courier's job is over, so a courier-stage
+ * mapping cannot express them.
+ */
+export function buildReturnTimeline(status: BookingStatus): TimelineStep[] {
+  const reachedByStatus: Partial<Record<BookingStatus, number>> = {
+    [BookingStatus.IN_PROGRESS]: 0,
+    [BookingStatus.RENTAL_COMPLETED]: 0,
+    [BookingStatus.RETURN_SCHEDULED]: 1,
+    [BookingStatus.RETURN_RECEIVED]: 2,
+    [BookingStatus.INSPECTION]: 3,
+    [BookingStatus.SETTLEMENT]: 4,
+    [BookingStatus.CLOSED]: 5,
+  };
+  // Anything earlier than the rental ending has not entered the return at all.
+  const reached = reachedByStatus[status] ?? -1;
+
+  return RETURN_STEPS.map((step, index) => ({
+    key: step.key,
+    label: step.label,
+    state: index < reached ? 'DONE' : index === reached ? 'IN_PROGRESS' : 'PENDING',
+    occurredAt: null,
+  }));
+}
+
 /** Statuses that end a booking without completing it. */
 const TERMINAL_UNHAPPY: BookingStatus[] = [
   BookingStatus.REJECTED,
@@ -286,13 +314,13 @@ export function buildActions(ctx: ActionContext): BookingAction[] {
       if (ctx.agreementPending) {
         // The agreement gates payment: paying for terms you have not accepted is
         // exactly the ambiguity the contract exists to remove.
-        add('SIGN_AGREEMENT', 'Review & Sign Agreement', true);
+        add('SIGN_AGREEMENT', 'Download & Sign Agreement', true);
         add(
           'COMPLETE_PAYMENT',
           'Continue To Payment',
           false,
           false,
-          'Sign the rental agreement first.',
+          'Download, sign and upload the rental agreement first.',
         );
       } else if (ctx.paymentPending) {
         add('TRACK_BOOKING', 'Track Booking', true);
@@ -327,6 +355,12 @@ export function buildActions(ctx: ActionContext): BookingAction[] {
 
     case BookingStatus.IN_PROGRESS:
     case BookingStatus.RENTAL_COMPLETED:
+      if (isTalent && ctx.status === BookingStatus.RENTAL_COMPLETED) {
+        // Already confirmed; waiting on Eskista to settle and close.
+        add('VIEW_DETAILS', 'View Full Booking Details', true);
+        add('REPORT_ISSUE', 'Report an Issue');
+        break;
+      }
       if (isTalent) {
         add('COMPLETE_SERVICE', 'Complete Service', true);
       } else {

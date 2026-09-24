@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -22,6 +23,7 @@ import {
   ApiConflictResponse,
   ApiConsumes,
   ApiCreatedResponse,
+  ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -34,6 +36,7 @@ import type { UploadedFile } from '../../common/upload';
 import { CurrentUser } from '../auth/auth.decorators';
 import { BookingLifecycleService } from './booking-lifecycle.service';
 import {
+  AttachmentResponse,
   CustomerAgreementBodyResponse,
   CustomerAgreementResponse,
   DeclineAgreementDto,
@@ -161,8 +164,10 @@ Contracts are signed on paper: download, print, sign by hand, photograph or scan
 here. There is no signature pad — that flow was replaced in September 2026.
 
 The upload moves the agreement to \`UNDER_REVIEW\`. Eskista checks the scan is the right
-document, legible, and actually signed, then approves or rejects it. Only an **approved**
-agreement unlocks payment.
+document, legible, and actually signed, then approves or rejects it.
+
+**Uploading unlocks payment.** Eskista's review runs in parallel rather than holding the
+customer up; if the scan is rejected, payment closes again until a replacement is uploaded.
 
 Re-uploading over a \`REJECTED\` scan is expected and clears the previous rejection reason.
 Re-uploading over an \`APPROVED\` or \`UNDER_REVIEW\` one returns **409**.
@@ -312,6 +317,106 @@ PNG, JPEG, WebP or PDF, up to 10 MB.
     @UploadedFileParam() file: UploadedFile,
   ): Promise<{ id: string; status: string; submittedAt: string }> {
     return this.lifecycle.submitPayment(userId, reference, dto, file);
+  }
+
+  // ── Talent completion ──────────────────────────────────────────────────────
+
+  @Post('complete-service')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Confirm the talent delivered',
+    description: `
+Backs **Complete Service** on a talent booking.
+
+A talent engagement has nothing to return or inspect, so the customer's confirmation takes
+the place of the return-and-inspection steps. The booking moves to \`RENTAL_COMPLETED\`;
+Eskista then settles with the talent and closes it, which is what opens the review.
+
+Idempotent — confirming twice returns the same status. Talent bookings only, and only once
+the engagement has started.
+`.trim(),
+  })
+  @ApiOkResponse({ schema: { example: { status: 'RENTAL_COMPLETED' } } })
+  @ApiBadRequestResponse({ description: 'Not a talent booking.' })
+  @ApiConflictResponse({ description: 'The engagement has not started yet.' })
+  completeService(
+    @CurrentUser('id') userId: string,
+    @Param('reference') reference: string,
+  ): Promise<{ status: string }> {
+    return this.lifecycle.completeService(userId, reference);
+  }
+
+  // ── Reference files ────────────────────────────────────────────────────────
+
+  @Post('attachments')
+  @UseInterceptors(FilesInterceptor('files', 10))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({
+    summary: 'Attach reference files to a talent request',
+    description: `
+Backs the **References** step of the hire wizard — "Moodboards, briefs, scripts, reference
+images, project documents". The step is optional; a request can be submitted with none.
+
+Upload against the draft's \`reference\` as soon as the draft exists, so files survive
+the customer leaving the wizard.
+
+PNG, JPEG, WebP, PDF or Word (.docx), up to 10 MB each and 10 per request.
+
+Talent requests only, and only until the engagement is confirmed — after that the brief
+is what the talent agreed to work from. The talent sees these as "N files (via Eskista)".
+`.trim(),
+  })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['files'],
+      properties: {
+        files: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          description: 'Up to 10 files, 10 MB each.',
+        },
+      },
+    },
+  })
+  @ApiCreatedResponse({ type: [AttachmentResponse], description: 'The files just added.' })
+  @ApiBadRequestResponse({
+    description: 'Not a talent request, no files, too many, oversize, or wrong type.',
+  })
+  @ApiConflictResponse({ description: 'The engagement is already confirmed.' })
+  addAttachments(
+    @CurrentUser('id') userId: string,
+    @Param('reference') reference: string,
+    @UploadedFilesParam() files: UploadedFile[] | undefined,
+  ): Promise<AttachmentResponse[]> {
+    return this.lifecycle.addAttachments(userId, reference, files ?? []);
+  }
+
+  @Get('attachments')
+  @ApiOperation({ summary: 'List the reference files on a request', description: 'Oldest first.' })
+  @ApiOkResponse({ type: [AttachmentResponse] })
+  listAttachments(
+    @CurrentUser('id') userId: string,
+    @Param('reference') reference: string,
+  ): Promise<AttachmentResponse[]> {
+    return this.lifecycle.listAttachments(userId, reference);
+  }
+
+  @Delete('attachments/:attachmentId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Remove a reference file',
+    description: 'Only until the engagement is confirmed.',
+  })
+  @ApiParam({ name: 'attachmentId', format: 'uuid' })
+  @ApiNoContentResponse({ description: 'Removed.' })
+  @ApiConflictResponse({ description: 'The engagement is already confirmed.' })
+  removeAttachment(
+    @CurrentUser('id') userId: string,
+    @Param('reference') reference: string,
+    @Param('attachmentId', ParseUUIDPipe) attachmentId: string,
+  ): Promise<void> {
+    return this.lifecycle.removeAttachment(userId, reference, attachmentId);
   }
 
   // ── Tracking ───────────────────────────────────────────────────────────────

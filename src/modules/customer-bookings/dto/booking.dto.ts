@@ -2,8 +2,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   BookingStatus,
   BookingType,
+  BudgetBand,
   CollectionMethod,
   DeliveryStage,
+  EngagementModel,
   PaymentStatus,
   ProjectType,
 } from '@prisma/client';
@@ -337,31 +339,52 @@ export class BookingDocumentResponse {
 }
 
 export class BookingInspectionResponse {
-  @ApiPropertyOptional({ nullable: true, example: 'Good' })
-  physicalCondition!: string | null;
-
-  @ApiPropertyOptional({ nullable: true, example: 'Passed' })
-  functionalTest!: string | null;
-
-  @ApiPropertyOptional({ nullable: true, example: 'None' })
-  missingAccessories!: string | null;
-
-  @ApiPropertyOptional({ nullable: true, example: 'None' })
-  damage!: string | null;
-
-  @ApiPropertyOptional({ nullable: true, enum: ['OK', 'DAMAGED', 'MISSING_ITEMS', 'LATE_RETURN'] })
-  outcome!: string | null;
-
-  @ApiPropertyOptional({ nullable: true, example: '2026-08-22T09:00:00.000Z' })
-  completedAt!: string | null;
-
   @ApiProperty({
     description:
-      'False until the equipment is back with Eskista. Render every row as a dash while ' +
-      'this is false, as the design does.',
+      'False until Eskista staff have inspected the returned equipment in person. While ' +
+      'false every other field is null — render "Inspection will be completed after the ' +
+      'equipment is returned", as the design does.',
     example: false,
   })
   isComplete!: boolean;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    enum: ['OK', 'DAMAGED', 'MISSING_ITEMS', 'LATE_RETURN'],
+    description: 'What staff found. Inspection is in person; there is no in-app checklist.',
+  })
+  outcome!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Ready-made label for the outcome.',
+    example: 'Returned in good condition',
+  })
+  outcomeLabel!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Staff notes on any damage or missing items.',
+    example: 'Lens hood cracked.',
+  })
+  notes!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Withheld from the deposit for damage or a late return, in minor units.',
+    example: 0,
+  })
+  deductionMinor!: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Deposit handed back to the customer, in minor units.',
+    example: 400000,
+  })
+  depositReturnedMinor!: number | null;
+
+  @ApiPropertyOptional({ nullable: true, example: '2026-08-22T09:00:00.000Z' })
+  completedAt!: string | null;
 }
 
 export class ActivityEntryResponse {
@@ -379,7 +402,65 @@ export class ActivityEntryResponse {
   occurredAt!: string;
 }
 
+export class TalentRequestDetailResponse {
+  @ApiProperty({
+    enum: EngagementModel,
+    description: 'Per day or per project — the "Booking type" row on Track Request.',
+  })
+  engagementModel!: EngagementModel;
+
+  @ApiPropertyOptional({ nullable: true, example: '08:00' })
+  startTime!: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: '18:00' })
+  endTime!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Hours per day from the two clock times, for "08:00 – 18:00 (10 hours)".',
+    example: 10,
+  })
+  hoursPerDay!: number | null;
+
+  @ApiPropertyOptional({ nullable: true, example: 'Addis Ababa' })
+  city!: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: 'Shola Market + client’s showroom' })
+  venue!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Access notes. Shown back to the customer who wrote them.',
+  })
+  locationNotes!: string | null;
+
+  @ApiPropertyOptional({ nullable: true, enum: BudgetBand })
+  budgetBand!: BudgetBand | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'The customer’s stated budget. For Eskista’s information only — talent rates are ' +
+      'fixed, so the price is in `totals`, not here.',
+    example: 1500000,
+  })
+  budgetMinor!: number | null;
+
+  @ApiPropertyOptional({ nullable: true, example: 1 })
+  headcount!: number | null;
+
+  @ApiProperty({ description: 'For the "N files (via Eskista)" row.', example: 2 })
+  attachmentCount!: number;
+}
+
 export class BookingDetailResponse extends BookingCardResponse {
+  @ApiPropertyOptional({
+    type: TalentRequestDetailResponse,
+    nullable: true,
+    description: 'The talent-request details. Null for equipment rentals.',
+  })
+  talent!: TalentRequestDetailResponse | null;
+
   @ApiPropertyOptional({
     nullable: true,
     enum: ProjectType,

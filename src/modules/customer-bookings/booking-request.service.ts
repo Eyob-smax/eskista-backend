@@ -9,14 +9,16 @@ import {
   BookingType,
   CollectionMethod,
   ListingStatus,
+  PricingModel,
   Prisma,
   Role,
   VerificationStatus,
 } from '@prisma/client';
-import { billablePeriods, computePriceBreakdown } from '../../common/money';
+import { billablePeriods, computePriceBreakdown, workingDays } from '../../common/money';
 import { CustomerService } from '../customer/customer.service';
 import { NumberingService } from '../numbering/numbering.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PricingService } from '../settings/pricing.service';
 import { SettingsService } from '../settings/settings.service';
 import {
   DraftResponse,
@@ -46,6 +48,7 @@ export class BookingRequestService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
+    private readonly pricing: PricingService,
     private readonly numbering: NumberingService,
     private readonly customers: CustomerService,
   ) {}
@@ -159,7 +162,7 @@ export class BookingRequestService {
     const priced =
       draft.type === BookingType.EQUIPMENT
         ? await this.priceEquipment(draft)
-        : this.priceTalentPlaceholder();
+        : await this.priceTalent(draft);
 
     const [updated] = await this.prisma.$transaction([
       this.prisma.booking.update({
@@ -259,7 +262,7 @@ export class BookingRequestService {
         talentServiceId: dto.talentServiceId,
         startDate,
         endDate,
-        periods: billablePeriods(startDate, endDate),
+        periods: workingDays(startDate, endDate),
         projectType: dto.projectType,
         projectDescription: dto.projectDescription,
         contactPhone: dto.contactPhone ?? draft.contactPhone,
@@ -336,10 +339,7 @@ export class BookingRequestService {
     if (!booking.contactPhone.trim()) gaps.push('contactPhone');
     if (!booking.talentDetail?.city) gaps.push('city');
 
-    // The Budget step requires one or the other, never neither.
-    if (!booking.talentDetail?.budgetBand && booking.talentDetail?.budgetMinor == null) {
-      gaps.push('budget');
-    }
+    // No budget requirement: talent rates are fixed, so the budget only informs Eskista.
 
     const profile = await this.customers.getProfile(booking.customerId);
     for (const missing of profile.outstandingRequirements) {
@@ -381,10 +381,12 @@ export class BookingRequestService {
       booking.id,
     );
 
-    const [vatBps, defaultDelivery, commissionBps, serviceFeeBps] = await Promise.all([
-      this.settings.vatBps(),
+    const [{ commissionRateBps, taxRateBps }, defaultDelivery, serviceFeeBps] = await Promise.all([
+      this.pricing.rates({
+        listingBps: listing.commissionRateBps,
+        vendorBps: listing.vendor.commissionRateBps,
+      }),
       this.settings.deliveryFeeMinor(),
-      this.settings.commissionBps(),
       this.settings.serviceFeeBps(),
     ]);
 
@@ -393,18 +395,97 @@ export class BookingRequestService {
 
     const b = computePriceBreakdown(
       {
-        unitPriceMinor: listing.rentalPriceMinor,
+        supplierUnitPriceMinor: listing.rentalPriceMinor,
         periods,
         quantity,
         deliveryFeeMinor,
         securityDepositMinor: (listing.securityDepositMinor ?? 0) * quantity,
-        taxRateBps: vatBps,
+        taxRateBps,
         serviceFeeRateBps: serviceFeeBps,
-        commissionRateBps: listing.vendor.commissionRateBps ?? commissionBps,
+        commissionRateBps,
       },
       listing.currency,
     );
 
+    return this.snapshot(b, periods);
+  }
+
+  /**
+   * Prices a talent engagement from the talent's fixed rate.
+   *
+   * There is no negotiation (removed in the September 2026 review), so the rate is the
+   * talent's listed one — the chosen service's price if a service was picked, otherwise
+   * their base rate — marked up by commission and VAT exactly like equipment.
+   *
+   * The unit is the rate's own: a per-day rate is multiplied by the days booked, a
+   * per-project rate is charged once, a per-hour rate by the hours on each day. The
+   * customer's budget is recorded for Eskista's information but never prices anything.
+   */
+  private async priceTalent(booking: {
+    talentProfileId: string | null;
+    talentServiceId: string | null;
+    startDate: Date;
+    endDate: Date;
+    talentDetail: { startTime: string | null; endTime: string | null } | null;
+  }): Promise<Prisma.BookingUpdateInput> {
+    const talent = await this.findBookableTalent(booking.talentProfileId ?? '');
+    const service = booking.talentServiceId
+      ? await this.prisma.talentService.findFirst({
+          where: { id: booking.talentServiceId, talentProfileId: talent.id, isActive: true },
+        })
+      : null;
+
+    const rate = service?.priceMinor ?? talent.baseRateMinor;
+    const model = service?.pricingModel ?? talent.pricingModel;
+    if (rate === null || rate === undefined) {
+      throw new ConflictException(
+        'This talent has not set a rate yet, so the request cannot be priced. Contact Eskista.',
+      );
+    }
+
+    // Each booked date is a working day — not nights, as a rental is counted.
+    const days = workingDays(booking.startDate, booking.endDate);
+    let periods = days;
+    if (model === PricingModel.PER_PROJECT) {
+      periods = 1;
+    } else if (model === PricingModel.PER_HOUR) {
+      const hours = this.hoursPerDay(
+        booking.talentDetail?.startTime,
+        booking.talentDetail?.endTime,
+      );
+      periods = Math.max(hours, 1) * days;
+    }
+
+    const [{ commissionRateBps, taxRateBps }, serviceFeeBps] = await Promise.all([
+      this.pricing.rates({ talentBps: talent.commissionRateBps }),
+      this.settings.serviceFeeBps(),
+    ]);
+
+    const b = computePriceBreakdown(
+      {
+        supplierUnitPriceMinor: rate,
+        periods,
+        taxRateBps,
+        serviceFeeRateBps: serviceFeeBps,
+        commissionRateBps,
+      },
+      talent.currency,
+    );
+
+    return this.snapshot(b, periods);
+  }
+
+  /** Whole hours between two HH:mm clock times; 0 if either is missing or reversed. */
+  private hoursPerDay(start: string | null | undefined, end: string | null | undefined): number {
+    if (!start || !end) return 0;
+    const [sh = 0, sm = 0] = start.split(':').map(Number);
+    const [eh = 0, em = 0] = end.split(':').map(Number);
+    const minutes = eh * 60 + em - (sh * 60 + sm);
+    return minutes > 0 ? Math.ceil(minutes / 60) : 0;
+  }
+
+  /** The priced figures frozen onto the booking at submission. */
+  private snapshot(b: ReturnType<typeof computePriceBreakdown>, periods: number) {
     return {
       periods,
       currency: b.currency,
@@ -413,7 +494,7 @@ export class BookingRequestService {
       deliveryFeeMinor: b.deliveryFeeMinor,
       securityDepositMinor: b.securityDepositMinor,
       discountMinor: b.discountMinor,
-      taxRateBps: vatBps,
+      taxRateBps: b.taxRateBps,
       taxMinor: b.taxMinor,
       serviceFeeRateBps: b.serviceFeeRateBps,
       serviceFeeMinor: b.serviceFeeMinor,
@@ -422,17 +503,6 @@ export class BookingRequestService {
       commissionMinor: b.commissionMinor,
       supplierEarningsMinor: b.supplierEarningsMinor,
     };
-  }
-
-  /**
-   * A talent request carries no price at submission.
-   *
-   * The customer states a budget; the talent counter-proposes a specific amount; accepting
-   * it is what prices the booking (AD-13). Pricing from the budget here would invent a
-   * figure nobody agreed to.
-   */
-  private priceTalentPlaceholder(): Prisma.BookingUpdateInput {
-    return {};
   }
 
   // ── guards ─────────────────────────────────────────────────────────────────

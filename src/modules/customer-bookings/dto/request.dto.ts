@@ -240,8 +240,8 @@ export class UpsertTalentRequestDto {
   @ApiPropertyOptional({
     enum: BudgetBand,
     description:
-      'One of the five preset bands. Supply this **or** `budgetMinor`. A band never ' +
-      'prices anything — it opens the negotiation.',
+      'Optional. One of the five preset bands, recorded for Eskista’s information. ' +
+      'Talent rates are fixed, so a budget never prices anything.',
   })
   @IsOptional()
   @IsEnum(BudgetBand)

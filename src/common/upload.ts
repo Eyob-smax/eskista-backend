@@ -16,11 +16,22 @@ export interface UploadedFile {
 export const IMAGE_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const;
 export const DOCUMENT_MIME_TYPES = [...IMAGE_MIME_TYPES, 'application/pdf'] as const;
 
+/**
+ * Reference files on a talent request: "Moodboards, briefs, scripts, reference images,
+ * project documents". Adds Word documents, because a brief or script arrives as .docx far
+ * more often than as a PDF.
+ */
+export const REFERENCE_MIME_TYPES = [
+  ...DOCUMENT_MIME_TYPES,
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+] as const;
+
 /** Per-purpose limits, matching the designs: 5MB for profile/KYC, 10MB for receipts. */
 export const UPLOAD_LIMITS = {
   image: 5 * 1024 * 1024,
   document: 5 * 1024 * 1024,
   receipt: 10 * 1024 * 1024,
+  reference: 10 * 1024 * 1024,
 } as const;
 
 export interface AssertFileOptions {

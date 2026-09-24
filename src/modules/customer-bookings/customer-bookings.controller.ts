@@ -75,7 +75,8 @@ the customer is choosing dates.
 
 Use \`outstandingRequirements\` to drive the wizard: it names exactly what is still missing,
 including gaps in the customer's own profile, prefixed \`customer.\` (e.g.
-\`customer.idDocument\`).
+\`customer.phone\`). Verification documents are never among them — verification is a
+badge, not a gate.
 `.trim(),
   })
   @ApiCreatedResponse({ type: DraftResponse })
@@ -118,9 +119,10 @@ their content implies.)
 All five steps post to this one body. Reference files are uploaded separately through
 \`POST /customer/bookings/{reference}/attachments\`, so this stays JSON.
 
-**Budget is not a price.** Supply \`budgetBand\` or \`budgetMinor\`; either opens the
-negotiation. The agreed fee arrives when the talent proposes an amount and the customer
-accepts it — see the price-proposal endpoints. A talent booking carries no total until then.
+**Talent rates are fixed.** The request is priced at submission from the talent's rate —
+the chosen service's, or their base rate — plus Eskista's commission plus VAT, the same way
+equipment is. There is no negotiation. \`budgetBand\` / \`budgetMinor\` are optional and
+recorded for Eskista's information only; they never price anything.
 
 The reference is \`ESK-TLT-8847\` style, distinct from equipment's \`ESK-10482\`.
 `.trim(),
@@ -156,16 +158,17 @@ The reference is \`ESK-TLT-8847\` style, distinct from equipment's \`ESK-10482\`
     description: `
 Turns a draft into a real request. Works for both equipment and talent drafts.
 
-For **equipment** this is the moment pricing is frozen: totals, VAT, commission and the
-deposit are computed once, with the same function the quote endpoint uses, and snapshotted
-onto the booking. A later price change on the listing can never rewrite what the customer
+For **equipment** this is the moment pricing is frozen: the vendor's price plus commission
+plus VAT, and the deposit, are computed once with the same function the quote endpoint uses,
+and snapshotted onto the booking — including the commission rate, so an admin changing it
+later never reprices this booking. A later price change on the listing can never rewrite what the customer
 agreed to.
 
 Availability is re-checked here, not just at quote time. Between drafting and submitting,
 someone else may have taken the dates — that returns **409**, not a silent double-booking.
 
-For **talent** nothing is priced: the request goes to Eskista with the stated budget, and
-the fee is settled through the price-proposal exchange.
+For **talent** the same happens from the talent's fixed rate: per day × days, once for a
+per-project rate, or per hour × hours for an hourly one. No negotiation step follows.
 
 A **400** carries \`outstandingRequirements\` naming every remaining gap, so the client can
 send the customer back to the right step.
@@ -178,7 +181,7 @@ send the customer back to the right step.
     schema: {
       example: {
         message: 'This request is not ready to submit',
-        outstandingRequirements: ['deliveryAddress', 'customer.idDocument'],
+        outstandingRequirements: ['deliveryAddress', 'customer.phone'],
       },
     },
   })
