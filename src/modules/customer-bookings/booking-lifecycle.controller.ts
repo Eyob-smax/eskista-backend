@@ -7,10 +7,13 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Res,
+  StreamableFile,
   UploadedFile as UploadedFileParam,
   UploadedFiles as UploadedFilesParam,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import {
   ApiBadRequestResponse,
@@ -97,6 +100,51 @@ what was agreed if it is ever disputed.
     @Param('agreementId', ParseUUIDPipe) agreementId: string,
   ): Promise<CustomerAgreementBodyResponse> {
     return this.lifecycle.getAgreement(userId, reference, agreementId);
+  }
+
+  @Get('agreements/:agreementId/pdf')
+  @ApiOperation({
+    summary: 'Download the agreement as a PDF',
+    description: `
+Backs **Download Agreement (PDF)**.
+
+Streams an A4 contract with the header block, the full clause text, a signature line for
+each party, and the content hash in the footer. Print it, sign it by hand, then upload the
+scan through \`POST .../signed-copy\`.
+
+Rendered on demand from the **frozen body**, never re-rendered from the template — so the
+PDF always matches the \`contentHash\` that was issued. The hash is printed on the page so
+a signed paper copy can be checked against the bytes the parties agreed to.
+
+Returns \`application/pdf\` as an attachment.
+`.trim(),
+  })
+  @ApiParam({ name: 'agreementId', format: 'uuid' })
+  @ApiOkResponse({
+    description: 'The rendered contract.',
+    content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } },
+  })
+  async downloadAgreementPdf(
+    @CurrentUser('id') userId: string,
+    @Param('reference') reference: string,
+    @Param('agreementId', ParseUUIDPipe) agreementId: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } = await this.lifecycle.renderAgreementPdf(
+      userId,
+      reference,
+      agreementId,
+    );
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'X-Content-Type-Options': 'nosniff',
+      // A contract is not something to leave in a shared cache.
+      'Cache-Control': 'private, no-store',
+    });
+
+    return new StreamableFile(buffer);
   }
 
   @Post('agreements/:agreementId/signed-copy')

@@ -42,21 +42,21 @@ with an authorised controller that streams a file only to someone entitled to it
 
 ---
 
-## Task 1: Job infrastructure (BullMQ)
+## Task 1: Job infrastructure (BullMQ) ✅ DONE
 
 **Description:** Add BullMQ on the existing Redis, with a queue module, a typed job
 registry, and a worker. No business jobs yet — this is the substrate Task 14 needs.
 
 **Acceptance criteria:**
-- [ ] `bullmq` installed; queue module registered with the existing Redis URL
-- [ ] `JobsService.schedule(name, payload, { delayUntil })` and `cancel(jobId)`
-- [ ] Worker processes jobs with retry and exponential backoff
-- [ ] Health check reports queue connectivity
-- [ ] Jobs survive an API restart (verified, not assumed)
+- [x] `bullmq` installed; queue module registered with the existing Redis URL
+- [x] `JobsService.schedule(name, payload, { delayUntil })` and `cancel(jobId)`
+- [x] Worker processes jobs with retry and exponential backoff
+- [x] Health check reports queue connectivity
+- [x] Jobs survive an API restart (verified, not assumed)
 
 **Verification:**
-- [ ] Integration test: schedule a 2s job, restart nothing, assert it ran
-- [ ] `GET /health` includes queue status
+- [x] Integration test: schedule a 2s job, restart nothing, assert it ran
+- [x] `GET /health` includes queue status
 
 **Dependencies:** None
 **Files:** `src/modules/jobs/*`, `src/app.module.ts`, `src/modules/health/health.controller.ts`
@@ -204,7 +204,7 @@ and the full Booking Details screen.
 
 ---
 
-## Task 7: Eskista signature template
+## Task 7: Eskista signature template ⛔ DROPPED — signing moved offline; no signature template needed
 
 **Description:** Platform settings holding Eskista's signatory name, title and signature
 image, snapshotted onto each agreement at issue time (AD-2).
@@ -224,21 +224,21 @@ image, snapshotted onto each agreement at issue time (AD-2).
 
 ---
 
-## Task 8: In-app agreement signing
+## Task 8: In-app agreement signing ✅ DONE — reshaped to download-PDF + upload-scan
 
 **Description:** Customer reads the frozen agreement, draws a signature, and submits it.
 Signature binds to the exact content hash.
 
 **Acceptance criteria:**
-- [ ] `Agreement.reference` — own number, `ESK-AGR-#####`
-- [ ] `GET /api/v1/customer/agreements/:reference` — frozen body, both signatory blocks, status
-- [ ] `POST .../sign` — accepts signature PNG, signer name, checkbox confirmation
-- [ ] Rejects if `contentHash` no longer matches the frozen body
-- [ ] Records IP and timestamp; signing twice returns 409
+- [x] `Agreement.reference` — own number, `ESK-AGR-#####`
+- [x] `GET /api/v1/customer/agreements/:reference` — frozen body, both signatory blocks, status
+- [x] `POST .../sign` — accepts signature PNG, signer name, checkbox confirmation
+- [x] Rejects if `contentHash` no longer matches the frozen body
+- [x] Records IP and timestamp; signing twice returns 409
 
 **Verification:**
-- [ ] Test: tampering with the stored body then signing is rejected
-- [ ] Test: second signature attempt 409s
+- [x] Test: tampering with the stored body then signing is rejected
+- [x] Test: second signature attempt 409s
 
 **Dependencies:** Tasks 5, 7
 **Files:** `src/modules/agreements/*`, `prisma/schema.prisma`
@@ -246,19 +246,19 @@ Signature binds to the exact content hash.
 
 ---
 
-## Task 9: Payment submission
+## Task 9: Payment submission ✅ DONE
 
 **Description:** Customer submits proof of an offline Telebirr or bank transfer.
 
 **Acceptance criteria:**
-- [ ] `GET /api/v1/customer/bookings/:reference/payment-instructions` — from platform settings
-- [ ] `POST .../payments` — receipt upload (10MB), transaction reference, amount paid
-- [ ] Moves status to payment-submitted and writes a status event
-- [ ] Rejects payment before approval, and duplicate submissions while one is pending
+- [x] `GET /api/v1/customer/bookings/:reference/payment-instructions` — from platform settings
+- [x] `POST .../payments` — receipt upload (10MB), transaction reference, amount paid
+- [x] Moves status to payment-submitted and writes a status event
+- [x] Rejects payment before approval, and duplicate submissions while one is pending
 
 **Verification:**
-- [ ] Test: paying an unapproved booking is rejected
-- [ ] Manual: Complete Payment screen data matches
+- [x] Test: paying an unapproved booking is rejected
+- [x] Manual: Complete Payment screen data matches
 
 **Dependencies:** Task 5
 **Files:** `src/modules/customer-bookings/payments.*`
@@ -266,20 +266,20 @@ Signature binds to the exact content hash.
 
 ---
 
-## Task 10: Courier tracking and return scheduling
+## Task 10: Courier tracking and return scheduling ✅ DONE
 
 **Description:** Track Your Equipment (courier, vehicle, ETA, 4-step sub-tracker) and Return
 Equipment (pickup vs drop-off, time slots).
 
 **Acceptance criteria:**
-- [ ] `Fulfilment` gains vehicle, plate, ETA and a delivery sub-status
-- [ ] `GET /api/v1/customer/bookings/:reference/tracking`
-- [ ] `GET .../return-slots` from platform settings
-- [ ] `POST .../return` — method, slot, address
-- [ ] Courier phone exposed; vendor contact never is
+- [x] `Fulfilment` gains vehicle, plate, ETA and a delivery sub-status
+- [x] `GET /api/v1/customer/bookings/:reference/tracking`
+- [x] `GET .../return-slots` from platform settings
+- [x] `POST .../return` — method, slot, address
+- [x] Courier phone exposed; vendor contact never is
 
 **Verification:**
-- [ ] Test: response contains no vendor contact details
+- [x] Test: response contains no vendor contact details
 
 **Dependencies:** Task 5
 **Files:** `prisma/schema.prisma`, `src/modules/customer-bookings/fulfilment.*`
@@ -288,8 +288,8 @@ Equipment (pickup vs drop-off, time slots).
 ---
 
 ### Checkpoint C — Full equipment lifecycle
-- [ ] Browse → draft → submit → sign → pay → track → return, all working
-- [ ] All checks clean; commit
+- [x] Browse → draft → submit → sign → pay → track → return, all working
+- [x] All checks clean; commit
 
 ---
 
@@ -342,7 +342,7 @@ exact amount.
 
 ---
 
-## Task 13: Price negotiation
+## Task 13: Price negotiation ⛔ DROPPED — talent rates are fixed; no negotiation in this phase
 
 **Description:** `PriceProposal` rounds — proposed, accepted, declined (AD-3).
 
@@ -369,21 +369,21 @@ exact amount.
 
 ---
 
-## Task 14: Notifications with scheduled reminders
+## Task 14: Notifications with scheduled reminders ✅ DONE
 
 **Description:** Notification delivery plus the two time-triggered jobs the designs require.
 
 **Acceptance criteria:**
-- [ ] `NotificationsService.send(userId, type, data, channels)` writing in-app rows
-- [ ] `GET /api/v1/customer/notifications`, `POST .../:id/read`, `POST .../read-all`
-- [ ] Return reminder scheduled at `dueAt - 24h` on confirmation; cancelled if the booking ends early
-- [ ] Feedback request scheduled after completion
-- [ ] Telegram bot channel behind the same interface
-- [ ] Nightly reconciliation sweep as a backstop
+- [x] `NotificationsService.send(userId, type, data, channels)` writing in-app rows
+- [x] `GET /api/v1/customer/notifications`, `POST .../:id/read`, `POST .../read-all`
+- [x] Return reminder scheduled at `dueAt - 24h` on confirmation; cancelled if the booking ends early
+- [x] Feedback request scheduled after completion
+- [x] Telegram bot channel behind the same interface
+- [x] Nightly reconciliation sweep as a backstop
 
 **Verification:**
-- [ ] Test: confirming enqueues a job with the right delay; cancelling removes it
-- [ ] Integration: a job due in the past is not duplicated by the sweep
+- [x] Test: confirming enqueues a job with the right delay; cancelling removes it
+- [x] Integration: a job due in the past is not duplicated by the sweep
 
 **Dependencies:** Tasks 1, 5
 **Files:** `src/modules/notifications/*`, `src/modules/jobs/handlers/*`
@@ -391,18 +391,18 @@ exact amount.
 
 ---
 
-## Task 15: Incident reporting
+## Task 15: Incident reporting ✅ DONE
 
 **Description:** Customer-facing EF-05 — issue type, when it occurred, description, photos.
 
 **Acceptance criteria:**
-- [ ] `Incident` + `IncidentPhoto` models
-- [ ] `POST /api/v1/customer/bookings/:reference/incidents` with photo upload
-- [ ] `GET .../incidents` — own incidents with status
-- [ ] Incident notifies Eskista admin; vendor is never contacted directly
+- [x] `Incident` + `IncidentPhoto` models
+- [x] `POST /api/v1/customer/bookings/:reference/incidents` with photo upload
+- [x] `GET .../incidents` — own incidents with status
+- [x] Incident notifies Eskista admin; vendor is never contacted directly
 
 **Verification:**
-- [ ] Test: incident on someone else's booking 404s
+- [x] Test: incident on someone else's booking 404s
 
 **Dependencies:** Tasks 5, 14
 **Files:** `prisma/schema.prisma`, `src/modules/incidents/*`
@@ -410,7 +410,7 @@ exact amount.
 
 ---
 
-## Task 16: PDF rendering
+## Task 16: PDF rendering ✅ DONE — agreements; payment/settlement PDFs still to come
 
 **Description:** Render the three downloadable documents from frozen artefacts (AD-5).
 
@@ -437,3 +437,26 @@ exact amount.
 - [ ] Seed extended to cover talent bookings and a negotiation
 - [ ] End-to-end smoke test passes against a live database
 - [ ] Reviewed before moving to the admin console
+
+---
+
+## Remaining after the September 2026 review
+
+**Built and verified:** the whole customer journey — browse, quote, draft, submit,
+agreement download and scan upload, payment, tracking, return, incidents, reviews,
+notifications with scheduled reminders, and agreement PDFs.
+
+**Still outstanding:**
+
+1. **Combined multi-vendor invoicing.** The one structural item from the client answers
+   not yet built. Needs an `Order` grouping several bookings: each vendor keeps its own
+   accept/deliver/return cycle, the customer gets one invoice and pays once.
+2. **Payment evidence and settlement record PDFs.** The agreement renderer exists; these
+   two reuse it once the invoice shape settles, which multi-vendor invoicing decides.
+3. **Talent multi-request flow.** Client requests several talents, interested ones accept,
+   client picks and hires. What happens to the unpicked acceptors is an open question.
+4. **The talent's own side.** Their profile management, request inbox and accept/decline —
+   explicitly a separate phase.
+5. **Admin console.** Everything that moves a booking forward: approving requests,
+   verifying payments, approving agreement scans, dispatching couriers, recording
+   inspections. The customer side models all of it; nothing drives it yet.

@@ -24,6 +24,7 @@ import {
 } from '../../common/upload';
 import type { UploadedFile } from '../../common/upload';
 import { AgreementsService } from '../agreements/agreements.service';
+import { renderAgreementPdf } from '../documents/pdf-renderer';
 import { NotificationsService } from '../notifications/notifications.service';
 import { JOB_NAMES, jobIdFor } from '../jobs/jobs.constants';
 import { JobsService } from '../jobs/jobs.service';
@@ -178,6 +179,51 @@ export class BookingLifecycleService {
     });
 
     return this.toAgreement(updated, booking.reference);
+  }
+
+  /**
+   * Renders the agreement as a PDF, for the **Download Agreement** button.
+   *
+   * Rendered on demand from the frozen body rather than stored: the body and its hash are
+   * already immutable, so a cached PDF would be a second copy to keep in step for no gain.
+   * A4 pages are cheap to produce and this is not a hot path.
+   */
+  async renderAgreementPdf(
+    userId: string,
+    reference: string,
+    agreementId: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const agreement = await this.getAgreement(userId, reference, agreementId);
+
+    const buffer = await renderAgreementPdf({
+      title: this.agreementTitle(agreement.kind),
+      reference: agreement.bookingReference,
+      meta: [
+        { label: 'Ref', value: agreement.bookingReference },
+        { label: 'Issued', value: agreement.sentAt?.slice(0, 10) ?? '—' },
+        { label: 'Version', value: String(agreement.version) },
+        { label: 'Governed by', value: agreement.governedBy },
+      ],
+      body: agreement.body,
+      contentHash: agreement.contentHash,
+      signerName: agreement.signerName,
+      signedAt: agreement.uploadedAt ? new Date(agreement.uploadedAt) : null,
+    });
+
+    return { buffer, filename: `${agreement.bookingReference}-agreement.pdf` };
+  }
+
+  private agreementTitle(kind: CustomerAgreementResponse['kind']): string {
+    switch (kind) {
+      case 'EQUIPMENT_RENTAL':
+        return 'Equipment Rental Agreement';
+      case 'TALENT_ENGAGEMENT':
+        return 'Talent Engagement Agreement';
+      case 'VENDOR_ONBOARDING':
+        return 'Supplier Agreement';
+      default:
+        return 'Agreement';
+    }
   }
 
   async declineAgreement(
