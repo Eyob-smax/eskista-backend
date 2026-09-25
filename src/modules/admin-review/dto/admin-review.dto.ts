@@ -80,7 +80,7 @@ export class DossierDocumentResponse {
 
 export class DossierReferenceResponse {
   @ApiProperty({ example: 'Hana Girma' }) name!: string;
-  @ApiProperty({ example: '+251911556677' }) contact!: string;
+  @ApiPropertyOptional({ nullable: true, example: '+251911556677' }) contact!: string | null;
   @ApiPropertyOptional({ nullable: true }) relationship!: string | null;
 }
 

@@ -8,10 +8,13 @@ import {
 const complete: CompletionInput = {
   displayName: 'Dawit Bekele',
   phone: '+251911223344',
+  email: 'hello@dawitmedia.et',
   location: 'Addis Ababa',
+  yearsExperience: 8,
   bio: 'Cinematographer with eight years in commercials.',
   baseRateMinor: 300_000,
   activeServiceCount: 0,
+  languages: ['Amharic', 'English'],
   hasAvatar: true,
   termsAccepted: true,
   professions: ['Cinematographer'],
@@ -19,7 +22,6 @@ const complete: CompletionInput = {
   dayType: 'FULL_DAY',
   experienceCount: 2,
   educationCount: 1,
-  highestEducation: null,
   skills: ['DaVinci Resolve'],
   portfolioCount: 3,
   hasIdDocument: true,
@@ -34,8 +36,9 @@ describe('computeCompletion', () => {
     expect(c.submitBlockers).toEqual([]);
   });
 
-  it('has the eight steps the wizard shows, in order', () => {
-    expect(computeCompletion(complete).steps.map((s) => s.key)).toEqual([
+  it('has the eight steps the wizard shows, in order, all required', () => {
+    const { steps } = computeCompletion(complete);
+    expect(steps.map((s) => s.key)).toEqual([
       'BASIC_INFO',
       'PROFESSION',
       'AVAILABILITY',
@@ -45,10 +48,10 @@ describe('computeCompletion', () => {
       'PORTFOLIO',
       'PUBLISH',
     ]);
+    expect(steps.every((s) => s.required)).toBe(true);
   });
 
-  it('never blocks submission on the sections the client may remove', () => {
-    // The Sept 23 notes removed availability, experience, education and skills.
+  it('requires the steps the designs show, not only the ones the meeting kept', () => {
     const c = computeCompletion({
       ...complete,
       workingDays: [],
@@ -57,13 +60,32 @@ describe('computeCompletion', () => {
       educationCount: 0,
       skills: [],
     });
-    expect(c.submitBlockers).toEqual([]);
-    expect(c.percent).toBeLessThan(100);
+    expect(c.submitBlockers).toEqual([
+      'Choose your working days',
+      'Choose full day, half day or flexible',
+      'Add at least one work experience',
+      'Add your education',
+      'Add at least one skill',
+    ]);
+    expect(c.percent).toBe(50); // 4 of 8 steps done
   });
 
-  it('accepts the single highest-education line in place of education entries', () => {
-    const c = computeCompletion({ ...complete, educationCount: 0, highestEducation: 'BA Film' });
-    expect(c.steps.find((s) => s.key === 'EDUCATION')?.complete).toBe(true);
+  it('requires every step-1 field the design does not mark optional', () => {
+    const c = computeCompletion({
+      ...complete,
+      email: null,
+      yearsExperience: null,
+      languages: [],
+    });
+    expect(c.submitBlockers).toEqual([
+      'Add an email address',
+      'Add your years of experience',
+      'Add the languages you work in',
+    ]);
+  });
+
+  it('counts zero years of experience as answered', () => {
+    expect(computeCompletion({ ...complete, yearsExperience: 0 }).submitBlockers).toEqual([]);
   });
 
   it('requires what the Publish screen says Eskista verifies', () => {
@@ -91,12 +113,15 @@ describe('computeCompletion', () => {
     expect(c.submitBlockers).not.toContain('Set your minimum day rate');
   });
 
-  it('starts near zero for a brand new profile', () => {
+  it('starts at zero for a brand new profile', () => {
     const c = computeCompletion({
       ...complete,
       phone: null,
+      email: null,
+      yearsExperience: null,
       bio: null,
       baseRateMinor: null,
+      languages: [],
       hasAvatar: false,
       termsAccepted: false,
       professions: [],
@@ -111,7 +136,7 @@ describe('computeCompletion', () => {
       slug: null,
     });
     expect(c.percent).toBe(0);
-    expect(c.submitBlockers.length).toBeGreaterThan(5);
+    expect(c.submitBlockers.length).toBeGreaterThan(10);
   });
 });
 

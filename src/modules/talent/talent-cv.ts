@@ -81,7 +81,7 @@ export function buildCv(
     period: yearRange(e.startYear, e.endYear),
     description: null,
   }));
-  // The one-line alternative from the September 23 notes, when no structured entries exist.
+  // Legacy single-line education, for profiles saved before the Education step existed.
   if (education.length === 0 && source.highestEducation) {
     education.push({
       title: source.highestEducation,

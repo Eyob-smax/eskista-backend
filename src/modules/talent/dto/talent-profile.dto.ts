@@ -150,8 +150,8 @@ export class UpdateTalentProfileDto {
   @ApiPropertyOptional({
     type: [String],
     description:
-      'The first is the **primary** profession shown on cards; more may follow. The ' +
-      'designs pick one, the Sept 23 notes allow several — both work.',
+      '"Select your primary profession. You can add more later." The wizard sends one; ' +
+      'the Profile tab may add more. The first is the primary one shown on cards.',
     example: ['Cinematographer', 'Colorist'],
   })
   @IsOptional()
@@ -181,8 +181,13 @@ export class UpdateTalentProfileDto {
   @IsEnum(TalentDayType)
   dayType?: TalentDayType;
 
-  // ── Step 5 (alternative): one education line ──
-  @ApiPropertyOptional({ example: 'BA Film Production, Addis Ababa University' })
+  // ── Legacy: a single education line. The Education step (`PUT /talent/me/education`)
+  //    is what completes the profile; this is kept only so existing data still shows. ──
+  @ApiPropertyOptional({
+    deprecated: true,
+    description: 'Use `PUT /talent/me/education`. Shown on the CV only when there are no entries.',
+    example: 'BA Film Production, Addis Ababa University',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(200)
@@ -242,36 +247,38 @@ export class CreateTalentProfileDto extends UpdateTalentProfileDto {
 // ── Repeatable sections ──────────────────────────────────────────────────────
 
 export class ExperienceItemDto {
-  @ApiProperty({ example: 'Senior Cinematographer' })
+  @ApiProperty({ description: 'Job title / Role.', example: 'Senior Cinematographer' })
   @IsString()
   @MinLength(2)
   @MaxLength(120)
   @Transform(trim)
   title!: string;
 
-  @ApiPropertyOptional({ example: 'Tigist Media House' })
-  @IsOptional()
+  @ApiProperty({ description: 'Company / Client.', example: 'Tigist Media House' })
   @IsString()
+  @MinLength(1)
   @MaxLength(120)
   @Transform(trim)
-  company?: string;
+  company!: string;
 
-  @ApiPropertyOptional({ example: '2020-01-01' })
-  @IsOptional()
+  @ApiProperty({ example: '2020-01-01' })
   @Matches(ISO_DATE)
-  startDate?: string;
+  startDate!: string;
 
-  @ApiPropertyOptional({ example: '2023-12-31' })
+  @ApiPropertyOptional({
+    example: '2023-12-31',
+    description: 'Required unless `isCurrent` ("Currently working here").',
+  })
   @IsOptional()
   @Matches(ISO_DATE)
   endDate?: string;
 
-  @ApiPropertyOptional({ description: '"Currently working here" — clears the end date.' })
+  @ApiPropertyOptional({ description: '"Currently working here" — no end date.' })
   @IsOptional()
   @IsBoolean()
   isCurrent?: boolean;
 
-  @ApiPropertyOptional({ maxLength: 1000 })
+  @ApiPropertyOptional({ description: 'Description (optional).', maxLength: 1000 })
   @IsOptional()
   @IsString()
   @MaxLength(1000)
@@ -296,35 +303,33 @@ export class EducationItemDto {
   @Transform(trim)
   institution!: string;
 
-  @ApiPropertyOptional({ example: 'Film & Television' })
-  @IsOptional()
+  @ApiProperty({ example: 'Film & Television' })
   @IsString()
+  @MinLength(2)
   @MaxLength(120)
   @Transform(trim)
-  fieldOfStudy?: string;
+  fieldOfStudy!: string;
 
-  @ApiPropertyOptional({ example: 'BSc' })
-  @IsOptional()
+  @ApiProperty({ description: 'Qualification / Degree.', example: 'BSc' })
   @IsString()
+  @MinLength(2)
   @MaxLength(80)
   @Transform(trim)
-  qualification?: string;
+  qualification!: string;
 
-  @ApiPropertyOptional({ example: 2016 })
-  @IsOptional()
+  @ApiProperty({ example: 2016 })
   @Type(() => Number)
   @IsInt()
   @Min(1950)
   @Max(2100)
-  startYear?: number;
+  startYear!: number;
 
-  @ApiPropertyOptional({ example: 2020 })
-  @IsOptional()
+  @ApiProperty({ description: 'Expected year, if still studying.', example: 2020 })
   @Type(() => Number)
   @IsInt()
   @Min(1950)
   @Max(2100)
-  endYear?: number;
+  endYear!: number;
 }
 
 export class ReplaceEducationDto {
@@ -337,19 +342,24 @@ export class ReplaceEducationDto {
 }
 
 export class ReferenceItemDto {
-  @ApiProperty({ example: 'Hana Girma' })
+  @ApiProperty({
+    description:
+      'The design has one "Reference 1 — name and contact" box; send its text here. Split ' +
+      'out `contact` only if the client collects it separately.',
+    example: 'Hana Girma, +251911556677',
+  })
   @IsString()
   @MinLength(2)
-  @MaxLength(120)
+  @MaxLength(200)
   @Transform(trim)
   name!: string;
 
-  @ApiProperty({ description: 'Phone or email.', example: '+251911556677' })
+  @ApiPropertyOptional({ description: 'Phone or email, if collected apart from the name.' })
+  @IsOptional()
   @IsString()
-  @MinLength(5)
   @MaxLength(160)
   @Transform(trim)
-  contact!: string;
+  contact?: string;
 
   @ApiPropertyOptional({ example: 'Producer, Ethio Telecom campaign' })
   @IsOptional()
@@ -498,7 +508,7 @@ export class CompletionStepResponse {
   complete!: boolean;
 
   @ApiProperty({
-    description: 'False for the sections the client may remove; they never block submission.',
+    description: 'Always true: the designs make every step part of the profile.',
     example: true,
   })
   required!: boolean;
@@ -547,7 +557,7 @@ export class EducationResponse {
 export class ReferenceResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty() name!: string;
-  @ApiProperty() contact!: string;
+  @ApiPropertyOptional({ nullable: true }) contact!: string | null;
   @ApiPropertyOptional({ nullable: true }) relationship!: string | null;
 }
 
@@ -660,6 +670,10 @@ export class SlugAvailabilityResponse {
   suggestions!: string[];
 }
 
+/**
+ * Add Project. Everything the design does not mark "(optional)" is required: cover image
+ * (sent as the `cover` file), title, client, role, start and end date.
+ */
 export class CreatePortfolioDto extends PortfolioFieldsDto {
   @ApiProperty({ example: 'Abay Fashion Brand Campaign' })
   @IsString()
@@ -667,6 +681,28 @@ export class CreatePortfolioDto extends PortfolioFieldsDto {
   @MaxLength(160)
   @Transform(trim)
   declare title: string;
+
+  @ApiProperty({ example: 'Abay Trading' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(160)
+  @Transform(trim)
+  declare client: string;
+
+  @ApiProperty({ example: 'Director of Photography' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(120)
+  @Transform(trim)
+  declare role: string;
+
+  @ApiProperty({ example: '2026-08-16' })
+  @Matches(ISO_DATE)
+  declare startDate: string;
+
+  @ApiProperty({ example: '2026-08-30' })
+  @Matches(ISO_DATE)
+  declare endDate: string;
 }
 
 export class ReorderPortfolioDto {

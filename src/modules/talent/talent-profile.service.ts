@@ -230,7 +230,12 @@ export class TalentProfileService {
   ): Promise<TalentProfileResponse> {
     const talent = await this.requireTalent(userId);
     for (const item of dto.items) {
-      if (item.startDate && item.endDate && item.endDate < item.startDate) {
+      if (!item.isCurrent && !item.endDate) {
+        throw new BadRequestException(
+          `"${item.title}": add an end date, or mark it "Currently working here"`,
+        );
+      }
+      if (item.endDate && item.endDate < item.startDate) {
         throw new BadRequestException(`"${item.title}": end date is before the start date`);
       }
     }
@@ -242,7 +247,7 @@ export class TalentProfileService {
           talentProfileId: talent.id,
           title: item.title,
           company: item.company,
-          startDate: item.startDate ? toDate(item.startDate) : null,
+          startDate: toDate(item.startDate),
           // "Currently working here" means there is no end yet.
           endDate: item.isCurrent ? null : item.endDate ? toDate(item.endDate) : null,
           isCurrent: item.isCurrent ?? false,
@@ -257,7 +262,7 @@ export class TalentProfileService {
   async replaceEducation(userId: string, dto: ReplaceEducationDto): Promise<TalentProfileResponse> {
     const talent = await this.requireTalent(userId);
     for (const item of dto.items) {
-      if (item.startYear && item.endYear && item.endYear < item.startYear) {
+      if (item.endYear < item.startYear) {
         throw new BadRequestException(`"${item.institution}": end year is before the start year`);
       }
     }
@@ -332,8 +337,10 @@ export class TalentProfileService {
       );
     }
     this.assertDateOrder(dto);
+    // "Add cover image" is not marked optional on the design.
+    if (!cover) throw new BadRequestException('cover is required');
 
-    const fileKey = cover ? await this.storeCover(talent.id, cover) : null;
+    const fileKey = await this.storeCover(talent.id, cover);
     const created = await this.prisma.portfolioItem.create({
       data: {
         talentProfileId: talent.id,
@@ -672,10 +679,13 @@ export class TalentProfileService {
     return {
       displayName: talent.displayName,
       phone: talent.phone,
+      email: talent.email,
       location: talent.location,
+      yearsExperience: talent.yearsExperience,
       bio: talent.bio,
       baseRateMinor: talent.baseRateMinor,
       activeServiceCount: talent.services.filter((s) => s.isActive).length,
+      languages: talent.languages,
       hasAvatar: !!talent.avatarKey,
       termsAccepted: !!talent.termsAcceptedAt,
       professions: talent.professions,
@@ -683,7 +693,6 @@ export class TalentProfileService {
       dayType: talent.dayType,
       experienceCount: talent.experiences.length,
       educationCount: talent.educations.length,
-      highestEducation: talent.highestEducation,
       skills: talent.skills,
       portfolioCount: talent.portfolio.length,
       hasIdDocument: talent.documents.some(

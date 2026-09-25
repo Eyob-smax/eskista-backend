@@ -134,9 +134,9 @@ form is returned. When taken or reserved, \`suggestions\` offers free alternativ
 Everything the wizard, the Profile tab and the Pending Verification screen need, in one
 payload.
 
-- \`steps\` / \`completionPercent\` — the progress bar ("Profile 78% complete"). Eight steps.
-  Availability, experience, education and skills are \`required: false\`: they count towards
-  the percentage but never block submission.
+- \`steps\` / \`completionPercent\` — the progress bar ("Profile 78% complete"). Eight steps,
+  all required, as the designs show them. A field is required unless the design labels it
+  "(optional)" — specializations, unavailable dates, descriptions and work links.
 - \`submitBlockers\` — what still stops **Submit Profile**, in words to show. Empty when
   \`canSubmit\`.
 - \`reviewChecklist\` — the four rows on Pending Verification.
@@ -209,7 +209,8 @@ Other edits apply immediately.
     summary: 'Save work experience',
     description:
       'Replaces the whole list, in display order. `isCurrent: true` is "Currently working ' +
-      'here" and clears the end date. Optional — never blocks submission.',
+      'here" and needs no end date. Title, company and start date are required; at least ' +
+      'one entry is needed to submit.',
   })
   @ApiOkResponse({ type: TalentProfileResponse })
   replaceExperience(
@@ -224,8 +225,8 @@ Other edits apply immediately.
   @ApiOperation({
     summary: 'Save education',
     description:
-      'Replaces the whole list. The single `highestEducation` line on `PATCH /talent/me` is ' +
-      'the alternative the September 23 notes asked for; either completes the step.',
+      'Replaces the whole list. Institution, field of study, qualification and both years ' +
+      'are required, as on the design; at least one entry is needed to submit.',
   })
   @ApiOkResponse({ type: TalentProfileResponse })
   replaceEducation(

@@ -4,12 +4,11 @@
  * Pure, so the wizard's progress bar, the dashboard's "78%" and the submit gate all come
  * from one function and cannot disagree.
  *
- * Eight steps, matching "Profile N of 8" in the designs. The CV preview is not a step of
- * its own — it renders what the other steps collected.
- *
- * Availability, experience, education and skills count towards the percentage but never
- * block submission: the September 23 meeting removed them, the September 25 designs still
- * show them, and a talent should not be held back by a section the client may drop.
+ * Follows the September 25 designs, which are newer than the September 23 meeting notes:
+ * every wizard step is part of the profile, and a field is required unless the design labels
+ * it "(optional)" — specializations, unavailable dates, descriptions and work links are the
+ * optional ones. Eight steps, matching "Profile N of 8"; the CV preview is not a step of its
+ * own, it renders what the other steps collected.
  */
 
 export type StepKey =
@@ -22,19 +21,23 @@ export type StepKey =
   | 'PORTFOLIO'
   | 'PUBLISH';
 
-/** What Eskista verifies, from the Publish screen. */
+/** What Eskista verifies, from the Publish screen: "Professional portfolio (3+ pieces)". */
 export const MIN_PORTFOLIO = 3;
-/** "A curated showcase of 3 to 5 best works" — the September 23 meeting. */
+/** "A curated showcase of 3 to 5 best works" — the September 23 meeting; no design conflicts. */
 export const MAX_PORTFOLIO = 5;
+/** "At least 2 professional references". */
 export const MIN_REFERENCES = 2;
 
 export interface CompletionInput {
   displayName: string;
   phone: string | null;
+  email: string | null;
   location: string;
+  yearsExperience: number | null;
   bio: string | null;
   baseRateMinor: number | null;
   activeServiceCount: number;
+  languages: string[];
   hasAvatar: boolean;
   termsAccepted: boolean;
   professions: string[];
@@ -42,7 +45,6 @@ export interface CompletionInput {
   dayType: string | null;
   experienceCount: number;
   educationCount: number;
-  highestEducation: string | null;
   skills: string[];
   portfolioCount: number;
   hasIdDocument: boolean;
@@ -54,7 +56,7 @@ export interface StepState {
   key: StepKey;
   label: string;
   complete: boolean;
-  /** False for the steps the client may remove; they never block submission. */
+  /** Every step is required by the designs; kept so a client can render it generically. */
   required: boolean;
 }
 
@@ -68,82 +70,81 @@ export interface Completion {
 export function computeCompletion(p: CompletionInput): Completion {
   const hasPrice = (p.baseRateMinor ?? 0) > 0 || p.activeServiceCount > 0;
 
-  const basic =
-    p.displayName.trim().length > 0 &&
-    !!p.phone &&
-    p.location.trim().length > 0 &&
-    !!p.bio?.trim() &&
-    hasPrice &&
-    p.hasAvatar &&
-    p.termsAccepted;
+  // Step 1, in the order the screen asks for it.
+  const basicBlockers: string[] = [];
+  if (!p.displayName.trim()) basicBlockers.push('Add your professional name');
+  if (!p.phone) basicBlockers.push('Add a phone number');
+  if (!p.email) basicBlockers.push('Add an email address');
+  if (!p.location.trim()) basicBlockers.push('Add your location');
+  if (p.yearsExperience === null) basicBlockers.push('Add your years of experience');
+  if (!p.bio?.trim()) basicBlockers.push('Write a short professional bio');
+  if (!hasPrice) basicBlockers.push('Set your minimum day rate');
+  if (p.languages.length === 0) basicBlockers.push('Add the languages you work in');
+  if (!p.hasAvatar) basicBlockers.push('Upload a profile picture');
+  if (!p.termsAccepted) basicBlockers.push('Accept the terms and conditions');
 
-  const steps: StepState[] = [
-    { key: 'BASIC_INFO', label: 'Basic information', complete: basic, required: true },
+  const steps: { key: StepKey; label: string; blockers: string[] }[] = [
+    { key: 'BASIC_INFO', label: 'Basic information', blockers: basicBlockers },
     {
       key: 'PROFESSION',
       label: 'Profession',
-      complete: p.professions.length > 0,
-      required: true,
+      blockers: p.professions.length === 0 ? ['Choose your primary profession'] : [],
     },
     {
       key: 'AVAILABILITY',
       label: 'Availability',
-      complete: p.workingDays.length > 0 && !!p.dayType,
-      required: false,
+      blockers: [
+        ...(p.workingDays.length === 0 ? ['Choose your working days'] : []),
+        ...(!p.dayType ? ['Choose full day, half day or flexible'] : []),
+      ],
     },
     {
       key: 'EXPERIENCE',
       label: 'Work experience',
-      complete: p.experienceCount > 0,
-      required: false,
+      blockers: p.experienceCount === 0 ? ['Add at least one work experience'] : [],
     },
     {
       key: 'EDUCATION',
       label: 'Education',
-      complete: p.educationCount > 0 || !!p.highestEducation?.trim(),
-      required: false,
+      blockers: p.educationCount === 0 ? ['Add your education'] : [],
     },
-    { key: 'SKILLS', label: 'Skills', complete: p.skills.length > 0, required: false },
+    {
+      key: 'SKILLS',
+      label: 'Skills',
+      blockers: p.skills.length === 0 ? ['Add at least one skill'] : [],
+    },
     {
       key: 'PORTFOLIO',
       label: 'Portfolio',
-      complete: p.portfolioCount >= MIN_PORTFOLIO,
-      required: true,
+      blockers:
+        p.portfolioCount < MIN_PORTFOLIO
+          ? [`Add at least ${MIN_PORTFOLIO} portfolio projects (you have ${p.portfolioCount})`]
+          : [],
     },
     {
       key: 'PUBLISH',
       label: 'Verification',
-      complete: p.hasIdDocument && p.referenceCount >= MIN_REFERENCES && !!p.slug,
-      required: true,
+      blockers: [
+        ...(!p.hasIdDocument ? ['Upload your national ID or passport'] : []),
+        ...(p.referenceCount < MIN_REFERENCES
+          ? [`Add ${MIN_REFERENCES} professional references (you have ${p.referenceCount})`]
+          : []),
+        ...(!p.slug ? ['Choose your profile URL'] : []),
+      ],
     },
   ];
 
-  const blockers: string[] = [];
-  if (!p.displayName.trim()) blockers.push('Add your professional name');
-  if (!p.phone) blockers.push('Add a phone number');
-  if (!p.location.trim()) blockers.push('Add your location');
-  if (!p.bio?.trim()) blockers.push('Write a short professional bio');
-  if (!hasPrice) blockers.push('Set your minimum day rate');
-  if (!p.hasAvatar) blockers.push('Upload a profile picture');
-  if (!p.termsAccepted) blockers.push('Accept the terms and conditions');
-  if (p.professions.length === 0) blockers.push('Choose your profession');
-  if (p.portfolioCount < MIN_PORTFOLIO) {
-    blockers.push(
-      `Add at least ${MIN_PORTFOLIO} portfolio projects (you have ${p.portfolioCount})`,
-    );
-  }
-  if (!p.hasIdDocument) blockers.push('Upload your national ID or passport');
-  if (p.referenceCount < MIN_REFERENCES) {
-    blockers.push(`Add ${MIN_REFERENCES} professional references (you have ${p.referenceCount})`);
-  }
-  if (!p.slug) blockers.push('Choose your profile URL');
-
-  const done = steps.filter((s) => s.complete).length;
+  const done = steps.filter((s) => s.blockers.length === 0).length;
 
   return {
-    steps,
+    steps: steps.map((s) => ({
+      key: s.key,
+      label: s.label,
+      complete: s.blockers.length === 0,
+      required: true,
+    })),
     percent: Math.round((done / steps.length) * 100),
-    submitBlockers: blockers,
+    submitBlockers: steps.flatMap((s) => s.blockers),
   };
 }
 
