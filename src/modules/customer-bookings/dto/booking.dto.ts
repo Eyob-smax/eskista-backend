@@ -196,6 +196,29 @@ export class BookingSubjectResponse {
   unitPriceMinor!: number;
 }
 
+export class HiringSummaryResponse {
+  @ApiProperty({ description: 'Talents invited to the request.', example: 3 })
+  invited!: number;
+  @ApiProperty({ description: 'Accepted and waiting to be chosen.', example: 1 })
+  accepted!: number;
+  @ApiProperty({ description: 'Still to reply.', example: 1 })
+  awaitingReply!: number;
+  @ApiProperty({ example: 0 }) hired!: number;
+  @ApiProperty({ description: 'How many people the request is for.', example: 1 })
+  headcount!: number;
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'When the customer must choose by, once someone has accepted.',
+  })
+  selectionDeadlineAt!: string | null;
+  @ApiProperty({
+    type: [String],
+    description: 'Names of the invited talents, for the card subtitle.',
+    example: ['Dawit Bekele', 'Selam Tesfaye'],
+  })
+  invitedNames!: string[];
+}
+
 export class BookingCardResponse {
   @ApiProperty({ example: 'ESK-10482', description: 'Use this in every URL. Never the uuid.' })
   reference!: string;
@@ -238,6 +261,17 @@ export class BookingCardResponse {
     description: 'Render the one with `primary: true` as the filled button.',
   })
   actions!: BookingActionResponse[];
+
+  @ApiPropertyOptional({
+    type: HiringSummaryResponse,
+    nullable: true,
+    description:
+      'Talent requests only: where the invitations stand. Before anyone is hired the ' +
+      '`subject` is the first invited talent and prices are 0 - each talent has their own ' +
+      'rate, so the request is priced from whoever is hired. See ' +
+      "`GET /customer/bookings/{reference}/invitations` for each talent's price.",
+  })
+  hiring!: HiringSummaryResponse | null;
 
   @ApiProperty({ example: '2026-08-14T09:05:00.000Z' })
   createdAt!: string;

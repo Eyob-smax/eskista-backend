@@ -28,11 +28,13 @@ import {
 } from './dto/notification.dto';
 import { NotificationsService } from './notifications.service';
 
-@ApiTags('customer · notifications')
+@ApiTags('customer · notifications', 'talent · notifications')
 @ApiBearerAuth()
 @ApiUnauthorizedResponse({ description: 'No valid session.' })
 @ApiExtraModels(NotificationResponse)
-@Controller({ path: 'customer/notifications', version: '1' })
+// One inbox per user, reachable from either app: a talent who also books equipment sees
+// the same list on both paths.
+@Controller({ path: ['customer/notifications', 'talent/notifications'], version: '1' })
 export class NotificationsController {
   constructor(private readonly notifications: NotificationsService) {}
 

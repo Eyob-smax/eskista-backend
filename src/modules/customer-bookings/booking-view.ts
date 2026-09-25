@@ -230,6 +230,7 @@ function highestReached(
 
 export type ActionKey =
   | 'EDIT_DRAFT'
+  | 'CHOOSE_TALENT'
   | 'SUBMIT_REQUEST'
   | 'DELETE_DRAFT'
   | 'TRACK_BOOKING'
@@ -264,6 +265,8 @@ export interface ActionContext {
   /** True while a submitted payment is waiting for Eskista to verify it. */
   paymentPending: boolean;
   hasReview: boolean;
+  /** Talent requests: invited talents who have accepted and can be hired now. */
+  acceptedInvitations?: number;
 }
 
 /**
@@ -295,7 +298,13 @@ export function buildActions(ctx: ActionContext): BookingAction[] {
 
     case BookingStatus.REQUEST_SUBMITTED:
     case BookingStatus.ESKISTA_REVIEW:
-      add('TRACK_BOOKING', 'Track Booking', true);
+      if (isTalent && (ctx.acceptedInvitations ?? 0) > 0) {
+        // Someone said yes: the next move is the customer's, so it leads.
+        add('CHOOSE_TALENT', 'Choose Talent', true);
+        add('TRACK_BOOKING', 'Track Booking');
+      } else {
+        add('TRACK_BOOKING', 'Track Booking', true);
+      }
       // The design greys out "Continue To Payment" while under review rather than hiding
       // it, so the customer can see what comes next.
       add(
@@ -304,7 +313,9 @@ export function buildActions(ctx: ActionContext): BookingAction[] {
         false,
         false,
         isTalent
-          ? 'Eskista is confirming availability with the talent.'
+          ? (ctx.acceptedInvitations ?? 0) > 0
+            ? 'Choose who to hire first.'
+            : 'Waiting for the invited talents to reply.'
           : 'Eskista is confirming availability with the vendor.',
       );
       add('CANCEL_REQUEST', 'Cancel Request');

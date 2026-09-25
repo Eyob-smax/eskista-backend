@@ -4,6 +4,7 @@ import { BookingStatus } from '@prisma/client';
 import { Job } from 'bullmq';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { JobsService } from './jobs.service';
 import {
   ESKISTA_QUEUE,
   JOB_NAMES,
@@ -33,6 +34,7 @@ export class JobsProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly jobs: JobsService,
   ) {
     super();
   }
@@ -45,11 +47,14 @@ export class JobsProcessor extends WorkerHost {
         return this.feedbackRequest(job.data as FeedbackRequestPayload);
       case JOB_NAMES.reminderSweep:
         return this.reminderSweep();
-      default:
+      default: {
+        const handler = this.jobs.handlerFor(job.name);
+        if (handler) return handler(job.data as never);
         // An unknown name means a deploy removed a handler while jobs were still queued.
         // Log and succeed: retrying cannot help, and failing forever fills the dead set.
         this.logger.warn(`No handler for job "${job.name}" (${job.id}); discarding`);
         return;
+      }
     }
   }
 

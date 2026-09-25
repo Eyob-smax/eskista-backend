@@ -18,7 +18,26 @@ export const SETTING_KEYS = {
   supportPhone: 'support.phone',
   returnInstructions: 'return.instructions',
   serviceFeeBps: 'fees.service_bps',
+  maxInvitations: 'hiring.max_invitations',
+  invitationTtlHours: 'hiring.invitation_ttl_hours',
+  selectionTtlHours: 'hiring.selection_ttl_hours',
 } as const;
+
+/** The three limits on a multi-talent hire request, all admin-editable. */
+export interface HiringSettings {
+  /** How many talents one request may invite. */
+  maxInvitations: number;
+  /** How long an invited talent has to answer. */
+  invitationTtlHours: number;
+  /** How long the customer has to choose, counted from the first acceptance. */
+  selectionTtlHours: number;
+}
+
+export const HIRING_DEFAULTS: HiringSettings = {
+  maxInvitations: 5,
+  invitationTtlHours: 48,
+  selectionTtlHours: 72,
+};
 
 const CACHE_TTL_MS = 60_000;
 
@@ -102,6 +121,19 @@ export class SettingsService {
    */
   async serviceFeeBps(): Promise<number> {
     return this.getNumber(SETTING_KEYS.serviceFeeBps, 0, 0, 10_000);
+  }
+
+  /**
+   * The multi-talent hire limits: up to 5 invitations per request, 48 hours for a talent
+   * to answer, 72 hours for the customer to choose. Approved September 24, 2026.
+   */
+  async hiring(): Promise<HiringSettings> {
+    const [maxInvitations, invitationTtlHours, selectionTtlHours] = await Promise.all([
+      this.getNumber(SETTING_KEYS.maxInvitations, HIRING_DEFAULTS.maxInvitations, 1, 20),
+      this.getNumber(SETTING_KEYS.invitationTtlHours, HIRING_DEFAULTS.invitationTtlHours, 1, 720),
+      this.getNumber(SETTING_KEYS.selectionTtlHours, HIRING_DEFAULTS.selectionTtlHours, 1, 720),
+    ]);
+    return { maxInvitations, invitationTtlHours, selectionTtlHours };
   }
 
   /** Invalidates the cache — call after an admin edits a setting. */

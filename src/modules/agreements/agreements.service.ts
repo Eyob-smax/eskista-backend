@@ -161,6 +161,66 @@ export class AgreementsService {
   }
 
   /**
+   * Issues the Eskista ↔ Talent agreement for one engagement.
+   *
+   * The talent contracts with Eskista, never with the client, so the text names the project
+   * and what the talent is paid — not who the client is. Issued when the talent is hired,
+   * alongside the customer's own agreement for the same booking. Idempotent.
+   */
+  async issueTalentService(bookingId: string): Promise<Agreement> {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: {
+        talentProfile: { select: { displayName: true, userId: true } },
+        talentDetail: true,
+      },
+    });
+    if (!booking?.talentProfile) throw new NotFoundException('Engagement not found');
+
+    const kind = AgreementType.TALENT_SERVICE;
+    const existing = await this.prisma.agreement.findFirst({ where: { bookingId, kind } });
+    if (existing) return existing;
+
+    const template = await this.resolveTemplate(kind, null);
+
+    const body = this.interpolate(template.bodyMarkdown, {
+      reference: booking.reference,
+      talentName: booking.talentProfile.displayName,
+      projectType: booking.projectType?.replace(/_/g, ' ').toLowerCase() ?? 'project',
+      projectDescription: booking.projectDescription ?? '—',
+      eventLocation: booking.talentDetail?.eventLocation || booking.talentDetail?.city || '—',
+      startDate: booking.startDate.toISOString().slice(0, 10),
+      endDate: booking.endDate.toISOString().slice(0, 10),
+      startTime: booking.talentDetail?.startTime ?? '—',
+      endTime: booking.talentDetail?.endTime ?? '—',
+      earnings: formatMoney(booking.supplierEarningsMinor, booking.currency),
+      signerName: booking.talentProfile.displayName,
+      issuedAt: new Date().toISOString().slice(0, 10),
+    });
+
+    const { documentKey, contentHash } = await this.freeze(
+      body,
+      `bookings/${booking.reference}/agreements`,
+    );
+
+    return this.prisma.agreement.create({
+      data: {
+        kind,
+        templateId: template.id,
+        version: template.version,
+        // Tied to the booking, not the profile: a talent signs one per engagement, and the
+        // profile-level unique constraint allows only one of each kind.
+        bookingId,
+        counterpartyId: booking.talentProfile.userId,
+        status: AgreementStatus.AWAITING_UPLOAD,
+        sentAt: new Date(),
+        documentKey,
+        contentHash,
+      },
+    });
+  }
+
+  /**
    * Accepts the counterparty's scan of the hand-signed contract.
    *
    * Moves the agreement to UNDER_REVIEW rather than straight to APPROVED: a scan is a

@@ -30,9 +30,11 @@ import {
   PayeeKind,
   PaymentMethod,
   PaymentStatus,
+  Prisma,
   PrismaClient,
   PricingModel,
   RentalPeriodUnit,
+  ReviewCheckState,
   ReviewKind,
   Role,
   SettlementStatus,
@@ -167,6 +169,16 @@ const USERS: SeedUser[] = [
     email: 'dawit@eskista-talent.et',
     phone: '+251911000006',
     telegramUserId: '900000006',
+    roles: [Role.CUSTOMER, Role.TALENT],
+    activeRole: Role.TALENT,
+  },
+  {
+    // A second approved talent, so a request can invite more than one.
+    key: 'talentHanna',
+    name: 'Hanna Tesfaye',
+    email: 'hanna@eskista-talent.et',
+    phone: '+251911000007',
+    telegramUserId: '900000007',
     roles: [Role.CUSTOMER, Role.TALENT],
     activeRole: Role.TALENT,
   },
@@ -433,6 +445,46 @@ async function seedAgreementTemplates(): Promise<string> {
     },
   });
 
+  // Eskista <-> Talent, per engagement. Names no client: the talent contracts with Eskista.
+  await prisma.agreementTemplate.upsert({
+    where: { key_version: { key: 'talent-service', version: 1 } },
+    update: { isActive: true },
+    create: {
+      key: 'talent-service',
+      kind: AgreementType.TALENT_SERVICE,
+      version: 1,
+      title: 'Eskista Talent Service Agreement',
+      isActive: true,
+      bodyMarkdown: [
+        '# Talent Service Agreement',
+        '',
+        'Between **Eskista Marketplace PLC** ("Eskista") and **{{talentName}}** ("the',
+        'Talent"), for engagement {{reference}}, dated {{issuedAt}}.',
+        '',
+        '## 1. The engagement',
+        'A {{projectType}} at {{eventLocation}}, from {{startDate}} to {{endDate}},',
+        '{{startTime}} – {{endTime}} each day.',
+        '',
+        '{{projectDescription}}',
+        '',
+        '## 2. Fee',
+        'Eskista pays the Talent **{{earnings}}** for the engagement, after the client has',
+        'paid and the work is complete. Eskista collects from the client and keeps its own',
+        'commission separately; the Talent is paid their stated rate in full.',
+        '',
+        '## 3. Conduct',
+        'The Talent attends on time, delivers the agreed work and deals with the client',
+        'through Eskista. The client’s contact details are shared only for the engagement.',
+        '',
+        '## 4. Cancellation',
+        'A Talent who withdraws within 48 hours of the start date may be suspended from',
+        'receiving new requests. Eskista refunds the client and no fee is payable.',
+        '',
+        'Signed by {{signerName}}.',
+      ].join('\n'),
+    },
+  });
+
   return template.id;
 }
 
@@ -538,89 +590,247 @@ async function seedVendors(userIds: Map<string, string>): Promise<Map<string, st
   return ids;
 }
 
-async function seedTalent(
-  userIds: Map<string, string>,
-  categoryIds: Map<string, string>,
-): Promise<string> {
-  const userId = userIds.get('talentDawit')!;
+interface SeedTalent {
+  userKey: string;
+  categorySlug: string;
+  profile: Omit<Prisma.TalentProfileUncheckedCreateInput, 'userId'>;
+  services: { title: string; description: string; priceMinor: number }[];
+  portfolio: { title: string; clientOrAgency: string; role: string; externalUrl: string }[];
+  experiences: { title: string; company: string; startYear: number; isCurrent: boolean }[];
+  references: { name: string; contact: string; relationship: string }[];
+}
 
-  const talent = await prisma.talentProfile.upsert({
-    where: { userId },
-    // Approved at the default commission; the rate is recorded, as a real review would.
-    update: { status: VerificationStatus.VERIFIED, commissionRateBps: DEFAULT_COMMISSION_BPS },
-    create: {
-      userId,
+const TALENTS: SeedTalent[] = [
+  {
+    userKey: 'talentDawit',
+    categorySlug: 'cinematographers',
+    profile: {
       displayName: 'Dawit Haile',
       headline: 'Cinematographer · commercials & documentary',
       bio: 'Ten years shooting commercials, music videos and long-form documentary across Ethiopia and East Africa. Owner-operator on FX9 and Alexa Mini.',
       location: 'Addis Ababa',
+      phone: '+251911000006',
+      email: 'dawit@eskista-talent.et',
+      slug: 'dawit-haile',
       experienceLevel: ExperienceLevel.SENIOR,
       yearsExperience: 10,
       professions: ['Cinematographer', 'Documentary Director', 'Drone Operator'],
+      specializations: ['Commercial', 'Documentary', 'Music Video'],
+      skills: ['DaVinci Resolve', 'Drone Operation', 'Lighting Design'],
       languages: ['Amharic', 'English'],
+      workingDays: ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'],
+      dayType: 'FULL_DAY',
+      highestEducation: 'BA Film Production, Addis Ababa University',
       pricingModel: PricingModel.PER_DAY,
       baseRateMinor: etb(12_000),
-      currency: CURRENCY,
-      isAvailableForHire: true,
-      status: VerificationStatus.VERIFIED,
-      verifiedAt: daysFromNow(-25),
-      verifiedByAdminId: userIds.get('admin')!,
-      commissionRateBps: DEFAULT_COMMISSION_BPS,
       ratingAvg: 4.8,
       ratingCount: 12,
       completedBookings: 12,
+      profileViewCount: 148,
     },
-  });
+    services: [
+      {
+        title: 'Commercial DOP — full day',
+        description: 'Director of photography for a full 10-hour commercial shoot day.',
+        priceMinor: etb(12_000),
+      },
+      {
+        title: 'Documentary shooter — day rate',
+        description: 'Owner-operator documentary shooting, including basic sound.',
+        priceMinor: etb(9_000),
+      },
+    ],
+    portfolio: [
+      {
+        title: 'Dashen Beer — "Yene Ethiopia"',
+        clientOrAgency: 'Dashen Brewery',
+        role: 'Director of Photography',
+        externalUrl: 'https://example.com/dashen',
+      },
+      {
+        title: 'Lalibela documentary (2025)',
+        clientOrAgency: 'Zeleman Productions',
+        role: 'Cinematographer',
+        externalUrl: 'https://example.com/lalibela',
+      },
+      {
+        title: 'Abay Fashion Brand Campaign',
+        clientOrAgency: 'Abay Trading',
+        role: 'Director of Photography',
+        externalUrl: 'https://example.com/abay',
+      },
+    ],
+    experiences: [
+      {
+        title: 'Freelance Cinematographer',
+        company: 'Self-employed',
+        startYear: 2019,
+        isCurrent: true,
+      },
+      {
+        title: 'Camera Operator',
+        company: 'Zeleman Productions',
+        startYear: 2015,
+        isCurrent: false,
+      },
+    ],
+    references: [
+      { name: 'Hana Girma', contact: '+251911556677', relationship: 'Producer, Dashen campaign' },
+      { name: 'Samuel Bekele', contact: 'samuel@zeleman.et', relationship: 'Director, Zeleman' },
+    ],
+  },
+  {
+    userKey: 'talentHanna',
+    categorySlug: 'photographers',
+    profile: {
+      displayName: 'Hanna Tesfaye',
+      headline: 'Photographer · fashion & events',
+      bio: 'Fashion, portrait and event photographer. Studio and location, with same-week delivery of edited selects.',
+      location: 'Addis Ababa',
+      phone: '+251911000007',
+      email: 'hanna@eskista-talent.et',
+      slug: 'hanna-tesfaye',
+      experienceLevel: ExperienceLevel.INTERMEDIATE,
+      yearsExperience: 5,
+      professions: ['Photographer'],
+      specializations: ['Fashion', 'Events', 'Portrait'],
+      skills: ['Lightroom', 'Studio Lighting', 'Retouching'],
+      languages: ['Amharic', 'English', 'Tigrinya'],
+      workingDays: ['TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'],
+      dayType: 'FLEXIBLE',
+      highestEducation: 'Diploma in Photography, Entoto Polytechnic',
+      pricingModel: PricingModel.PER_DAY,
+      baseRateMinor: etb(8_000),
+      ratingAvg: 4.9,
+      ratingCount: 7,
+      completedBookings: 7,
+      profileViewCount: 64,
+    },
+    services: [
+      {
+        title: 'Event coverage — full day',
+        description: 'Up to 10 hours of coverage, 150+ edited images.',
+        priceMinor: etb(8_000),
+      },
+    ],
+    portfolio: [
+      {
+        title: 'Hub of Africa Fashion Week',
+        clientOrAgency: 'HAFW',
+        role: 'Lead Photographer',
+        externalUrl: 'https://example.com/hafw',
+      },
+      {
+        title: 'Ethio Telecom 25th anniversary',
+        clientOrAgency: 'Ethio Telecom',
+        role: 'Event Photographer',
+        externalUrl: 'https://example.com/ethiotel',
+      },
+      {
+        title: 'Kuriftu Resort lookbook',
+        clientOrAgency: 'Kuriftu',
+        role: 'Photographer',
+        externalUrl: 'https://example.com/kuriftu',
+      },
+    ],
+    experiences: [
+      { title: 'Photographer', company: 'Self-employed', startYear: 2021, isCurrent: true },
+    ],
+    references: [
+      { name: 'Meron Alemu', contact: '+251911778899', relationship: 'Organiser, HAFW' },
+      { name: 'Yared Tadesse', contact: 'yared@kuriftu.et', relationship: 'Marketing, Kuriftu' },
+    ],
+  },
+];
 
-  const services = [
-    {
-      title: 'Commercial DOP — full day',
-      description: 'Director of photography for a full 10-hour commercial shoot day.',
-      priceMinor: etb(12_000),
-    },
-    {
-      title: 'Documentary shooter — day rate',
-      description: 'Owner-operator documentary shooting, including basic sound.',
-      priceMinor: etb(9_000),
-    },
-  ];
+/**
+ * Approved talent with complete profiles, as a finished onboarding and review leave them.
+ * Idempotent: the profile is upserted and each section is filled only when empty.
+ */
+async function seedTalent(
+  userIds: Map<string, string>,
+  categoryIds: Map<string, string>,
+): Promise<string[]> {
+  const ids: string[] = [];
 
-  for (const [i, s] of services.entries()) {
-    const existing = await prisma.talentService.findFirst({
-      where: { talentProfileId: talent.id, title: s.title },
+  for (const t of TALENTS) {
+    const userId = userIds.get(t.userKey)!;
+    const reviewed = {
+      status: VerificationStatus.VERIFIED,
+      // Approved at the default commission; the rate is recorded, as a real review would.
+      commissionRateBps: DEFAULT_COMMISSION_BPS,
+      verifiedAt: daysFromNow(-25),
+      verifiedByAdminId: userIds.get('admin')!,
+      termsAcceptedAt: daysFromNow(-30),
+      submittedAt: daysFromNow(-28),
+      identityCheck: ReviewCheckState.PASSED,
+      portfolioCheck: ReviewCheckState.PASSED,
+      referenceCheck: ReviewCheckState.PASSED,
+    };
+
+    const talent = await prisma.talentProfile.upsert({
+      where: { userId },
+      update: { ...t.profile, ...reviewed },
+      create: { userId, currency: CURRENCY, isAvailableForHire: true, ...t.profile, ...reviewed },
     });
-    if (!existing) {
-      await prisma.talentService.create({
-        data: {
+    ids.push(talent.id);
+
+    for (const [i, s] of t.services.entries()) {
+      const existing = await prisma.talentService.findFirst({
+        where: { talentProfileId: talent.id, title: s.title },
+      });
+      if (!existing) {
+        await prisma.talentService.create({
+          data: {
+            talentProfileId: talent.id,
+            categoryId: categoryIds.get(t.categorySlug) ?? null,
+            title: s.title,
+            description: s.description,
+            pricingModel: PricingModel.PER_DAY,
+            priceMinor: s.priceMinor,
+            currency: CURRENCY,
+            sortOrder: i,
+          },
+        });
+      }
+    }
+
+    for (const [i, p] of t.portfolio.entries()) {
+      const existing = await prisma.portfolioItem.findFirst({
+        where: { talentProfileId: talent.id, title: p.title },
+      });
+      if (existing) {
+        await prisma.portfolioItem.update({
+          where: { id: existing.id },
+          data: { ...p, sortOrder: i },
+        });
+      } else {
+        await prisma.portfolioItem.create({
+          data: { talentProfileId: talent.id, ...p, sortOrder: i },
+        });
+      }
+    }
+
+    if ((await prisma.talentExperience.count({ where: { talentProfileId: talent.id } })) === 0) {
+      await prisma.talentExperience.createMany({
+        data: t.experiences.map((e, i) => ({
           talentProfileId: talent.id,
-          categoryId: categoryIds.get('cinematographers')!,
-          title: s.title,
-          description: s.description,
-          pricingModel: PricingModel.PER_DAY,
-          priceMinor: s.priceMinor,
-          currency: CURRENCY,
+          title: e.title,
+          company: e.company,
+          startDate: new Date(Date.UTC(e.startYear, 0, 1)),
+          isCurrent: e.isCurrent,
           sortOrder: i,
-        },
+        })),
+      });
+    }
+    if ((await prisma.talentReference.count({ where: { talentProfileId: talent.id } })) === 0) {
+      await prisma.talentReference.createMany({
+        data: t.references.map((r, i) => ({ talentProfileId: talent.id, ...r, sortOrder: i })),
       });
     }
   }
 
-  const portfolio = [
-    { title: 'Dashen Beer — "Yene Ethiopia"', externalUrl: 'https://example.com/dashen' },
-    { title: 'Lalibela documentary (2025)', externalUrl: 'https://example.com/lalibela' },
-  ];
-  for (const [i, p] of portfolio.entries()) {
-    const existing = await prisma.portfolioItem.findFirst({
-      where: { talentProfileId: talent.id, title: p.title },
-    });
-    if (!existing) {
-      await prisma.portfolioItem.create({
-        data: { talentProfileId: talent.id, ...p, sortOrder: i },
-      });
-    }
-  }
-
-  return talent.id;
+  return ids;
 }
 
 // ── Equipment ────────────────────────────────────────────────────────────────
@@ -1458,8 +1668,9 @@ async function main(): Promise<void> {
   const vendorIds = await seedVendors(userIds);
   console.log(`  vendors:          ${vendorIds.size} (verified)`);
 
-  const talentId = await seedTalent(userIds, categoryIds);
-  console.log(`  talent:           1 (${talentId.slice(0, 8)}…)`);
+  const talentIds = await seedTalent(userIds, categoryIds);
+  const talentId = talentIds[0];
+  console.log(`  talent:           ${talentIds.length} (${talentId.slice(0, 8)}…)`);
 
   await seedVendorAgreements(vendorIds);
   console.log('  vendor agreements: signed');

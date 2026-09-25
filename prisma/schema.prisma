@@ -298,6 +298,34 @@ model TalentProfile {
   highestEducation String?
   languages        String[]
 
+  /// Contact details Eskista uses. Kept here rather than on User, whose email and phone
+  /// are unique sign-in identities that a talent's work contact must not collide with.
+  phone String?
+  email String?
+
+  /// Public profile URL: eskista.com/talent/<slug>.
+  slug            String?        @unique
+  /// Uploaded profile picture. Preferred over the Telegram photo on `User.image`.
+  avatarKey       String?
+  /// Optional chips on the profession step.
+  specializations String[]
+  /// Optional; the September 23 notes merge skills into profession, the September 25
+  /// designs still have the step. Both are supported.
+  skills          String[]
+  workingDays     Weekday[]
+  dayType         TalentDayType?
+  cvTemplate      CvTemplate     @default(CLASSIC)
+  termsAcceptedAt DateTime?
+  submittedAt     DateTime?
+
+  /// The review checklist on the Pending Verification screen.
+  identityCheck  ReviewCheckState @default(NOT_STARTED)
+  portfolioCheck ReviewCheckState @default(NOT_STARTED)
+  referenceCheck ReviewCheckState @default(NOT_STARTED)
+
+  /// Customer views of the public profile, for the dashboard.
+  profileViewCount Int @default(0)
+
   /// Indicative rate shown before coordination; the booked price is negotiated.
   pricingModel  PricingModel @default(PER_DAY)
   baseRateMinor Int?
@@ -325,6 +353,10 @@ model TalentProfile {
   services        TalentService[]
   portfolio       PortfolioItem[]
   blockedDates    TalentBlockedDateRange[]
+  experiences     TalentExperience[]
+  educations      TalentEducation[]
+  references      TalentReference[]
+  invitations     TalentInvitation[]
   bookings        Booking[]
   settlements     Settlement[]
   batches         SettlementBatch[]
@@ -361,16 +393,23 @@ model TalentService {
 /// Portfolio entries backing the client's "Evaluate: review profiles and portfolios".
 /// A curated showcase of 3-5 pieces, editable by the talent at any time.
 model PortfolioItem {
-  id              String   @id @default(uuid()) @db.Uuid
-  talentProfileId String   @db.Uuid
+  id              String    @id @default(uuid()) @db.Uuid
+  talentProfileId String    @db.Uuid
   title           String
   description     String?
   /// Who the work was produced for — "Zeleman", "Spotlight". Shown under each piece.
   clientOrAgency  String?
+  /// "Your role" — Director of Photography.
+  role            String?
+  startDate       DateTime? @db.Date
+  endDate         DateTime? @db.Date
+  /// Cover image.
   fileKey         String?
+  /// "Work link" — a hosted video or case study.
   externalUrl     String?
-  sortOrder       Int      @default(0)
-  createdAt       DateTime @default(now())
+  sortOrder       Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @default(now()) @updatedAt
 
   talentProfile TalentProfile @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
 
@@ -398,6 +437,8 @@ enum SupplierDocumentType {
   FAYDA_ID
   BUSINESS_REGISTRATION
   TIN_CERTIFICATE
+  /// A talent may verify with a passport instead of a Fayda ID.
+  PASSPORT
   OTHER
 }
 
@@ -794,6 +835,12 @@ model Booking {
   /// Return deadline carries a time: "no later than 5:00 PM".
   dueAt DateTime?
 
+  /// Talent requests: hire the first talent(s) to accept instead of waiting for the
+  /// customer to choose.
+  autoHireFirstAccept Boolean   @default(false)
+  /// Talent requests: when the customer must have chosen, set on the first acceptance.
+  selectionDeadlineAt DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -807,6 +854,16 @@ model Booking {
 
   equipmentDetail EquipmentBookingDetail?
   talentDetail    TalentBookingDetail?
+
+  /// Talent requests: the talents invited, and what each said.
+  invitations TalentInvitation[] @relation("RequestInvitations")
+  /// The invitation this booking was created from, when it was a second or later hire.
+  hiredFrom   TalentInvitation?  @relation("HiredBooking")
+
+  /// A second or later hire on a multi-headcount request points at the original request.
+  parentBookingId String?   @db.Uuid
+  parent          Booking?  @relation("RequestSiblings", fields: [parentBookingId], references: [id], onDelete: SetNull)
+  siblings        Booking[] @relation("RequestSiblings")
 
   assignedUnits BookingUnit[]
   statusEvents  BookingStatusEvent[]
@@ -922,7 +979,11 @@ enum AgreementType {
   VENDOR_ONBOARDING
   TALENT_ONBOARDING
   EQUIPMENT_RENTAL
+  /// Customer <-> Eskista, for a talent engagement.
   TALENT_ENGAGEMENT
+  /// Eskista <-> Talent, for the same engagement. Talents and clients never contract
+  /// directly; each signs with Eskista.
+  TALENT_SERVICE
 }
 
 /// Contracts are generated as a PDF, printed, signed by hand, and the scan uploaded.
@@ -1693,4 +1754,130 @@ model IncidentPhoto {
   incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
 
   @@index([incidentId, sortOrder])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Talent side
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum Weekday {
+  MON
+  TUE
+  WED
+  THU
+  FRI
+  SAT
+  SUN
+}
+
+/// "Full day (8+ hours)", "Half day (4–8 hours)", "Flexible / Project-based".
+enum TalentDayType {
+  FULL_DAY
+  HALF_DAY
+  FLEXIBLE
+}
+
+enum CvTemplate {
+  CLASSIC
+  MINIMAL
+  SIDEBAR
+}
+
+enum ReviewCheckState {
+  NOT_STARTED
+  QUEUED
+  IN_PROGRESS
+  PASSED
+  FAILED
+}
+
+/// One talent's answer to one hire request.
+///
+/// INVITED → ACCEPTED | DECLINED | EXPIRED, then, once the customer decides,
+/// ACCEPTED → HIRED | REJECTED. WITHDRAWN is the talent pulling out after accepting;
+/// CANCELLED is the customer cancelling the whole request.
+enum InvitationStatus {
+  INVITED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  WITHDRAWN
+  HIRED
+  REJECTED
+  CANCELLED
+}
+
+model TalentExperience {
+  id              String    @id @default(uuid()) @db.Uuid
+  talentProfileId String    @db.Uuid
+  title           String
+  company         String?
+  startDate       DateTime? @db.Date
+  endDate         DateTime? @db.Date
+  isCurrent       Boolean   @default(false)
+  description     String?
+  sortOrder       Int       @default(0)
+
+  talentProfile TalentProfile @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
+
+  @@index([talentProfileId, sortOrder])
+}
+
+model TalentEducation {
+  id              String  @id @default(uuid()) @db.Uuid
+  talentProfileId String  @db.Uuid
+  institution     String
+  fieldOfStudy    String?
+  qualification   String?
+  startYear       Int?
+  endYear         Int?
+  sortOrder       Int     @default(0)
+
+  talentProfile TalentProfile @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
+
+  @@index([talentProfileId, sortOrder])
+}
+
+/// "At least 2 professional references" — checked by Eskista, never shown publicly.
+model TalentReference {
+  id              String  @id @default(uuid()) @db.Uuid
+  talentProfileId String  @db.Uuid
+  name            String
+  contact         String
+  relationship    String?
+  sortOrder       Int     @default(0)
+
+  talentProfile TalentProfile @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
+
+  @@index([talentProfileId])
+}
+
+model TalentInvitation {
+  id              String           @id @default(uuid()) @db.Uuid
+  /// The customer's request.
+  bookingId       String           @db.Uuid
+  talentProfileId String           @db.Uuid
+  status          InvitationStatus @default(INVITED)
+
+  invitedAt     DateTime  @default(now())
+  /// When an unanswered invitation lapses.
+  expiresAt     DateTime
+  /// First opened by the talent — separates "new opportunities" from pending ones.
+  viewedAt      DateTime?
+  respondedAt   DateTime?
+  declineReason String?
+  /// When the customer's hire decision reached this invitation.
+  decidedAt     DateTime?
+
+  /// The booking this hire became — the request itself for the first hire, a sibling for
+  /// later ones.
+  hiredBookingId String? @unique @db.Uuid
+
+  booking       Booking       @relation("RequestInvitations", fields: [bookingId], references: [id], onDelete: Cascade)
+  hiredBooking  Booking?      @relation("HiredBooking", fields: [hiredBookingId], references: [id], onDelete: SetNull)
+  talentProfile TalentProfile @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([bookingId, talentProfileId])
+  @@index([talentProfileId, status])
+  @@index([status, expiresAt])
 }

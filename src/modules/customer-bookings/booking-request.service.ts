@@ -9,13 +9,13 @@ import {
   BookingType,
   CollectionMethod,
   ListingStatus,
-  PricingModel,
   Prisma,
   Role,
   VerificationStatus,
 } from '@prisma/client';
 import { billablePeriods, computePriceBreakdown, workingDays } from '../../common/money';
 import { CustomerService } from '../customer/customer.service';
+import { HiringService } from '../hiring/hiring.service';
 import { NumberingService } from '../numbering/numbering.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PricingService } from '../settings/pricing.service';
@@ -51,6 +51,7 @@ export class BookingRequestService {
     private readonly pricing: PricingService,
     private readonly numbering: NumberingService,
     private readonly customers: CustomerService,
+    private readonly hiring: HiringService,
   ) {}
 
   // ── Equipment ──────────────────────────────────────────────────────────────
@@ -159,10 +160,15 @@ export class BookingRequestService {
       });
     }
 
-    const priced =
-      draft.type === BookingType.EQUIPMENT
-        ? await this.priceEquipment(draft)
-        : await this.priceTalent(draft);
+    if (draft.type === BookingType.TALENT) {
+      // Nothing to price yet: each invited talent has their own rate, and the booking is
+      // priced from whoever is hired. Submitting sends the invitations.
+      await this.hiring.submitRequest(userId, bookingId);
+      const sent = await this.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } });
+      return this.toDraftResponse(sent, []);
+    }
+
+    const priced = await this.priceEquipment(draft);
 
     const [updated] = await this.prisma.$transaction([
       this.prisma.booking.update({
@@ -235,14 +241,24 @@ export class BookingRequestService {
   ): Promise<DraftResponse> {
     const draft = await this.requireDraft(userId, bookingId, BookingType.TALENT);
 
-    const talentProfileId = dto.talentProfileId ?? draft.talentProfileId ?? undefined;
-    const talent = talentProfileId ? await this.findBookableTalent(talentProfileId) : null;
+    const invitees = dto.talentProfileIds ?? (dto.talentProfileId ? [dto.talentProfileId] : null);
+    if (invitees) await this.hiring.setDraftInvitations(bookingId, invitees);
 
-    if (dto.talentServiceId && talent) {
-      const service = await this.prisma.talentService.findFirst({
-        where: { id: dto.talentServiceId, talentProfileId: talent.id, isActive: true },
+    if (dto.talentServiceId) {
+      const invited = await this.prisma.talentInvitation.findMany({
+        where: { bookingId },
+        select: { talentProfileId: true },
       });
-      if (!service) throw new BadRequestException('That service does not belong to this talent');
+      const service = await this.prisma.talentService.findFirst({
+        where: {
+          id: dto.talentServiceId,
+          isActive: true,
+          talentProfileId: { in: invited.map((i) => i.talentProfileId) },
+        },
+      });
+      if (!service) {
+        throw new BadRequestException('That service does not belong to any invited talent');
+      }
     }
 
     const startDate = dto.startDate ? this.parseDate(dto.startDate, 'startDate') : draft.startDate;
@@ -258,8 +274,9 @@ export class BookingRequestService {
     const updated = await this.prisma.booking.update({
       where: { id: bookingId },
       data: {
-        talentProfileId: talent?.id,
+        // The hired talent is set at hire time; until then the request has invitees only.
         talentServiceId: dto.talentServiceId,
+        autoHireFirstAccept: dto.autoHireFirstAccept,
         startDate,
         endDate,
         periods: workingDays(startDate, endDate),
@@ -324,8 +341,8 @@ export class BookingRequestService {
   }
 
   private async talentGaps(booking: {
+    id: string;
     customerId: string;
-    talentProfileId: string | null;
     contactPhone: string;
     talentDetail: {
       city: string | null;
@@ -335,7 +352,8 @@ export class BookingRequestService {
   }): Promise<string[]> {
     const gaps: string[] = [];
 
-    if (!booking.talentProfileId) gaps.push('talentProfileId');
+    const invited = await this.prisma.talentInvitation.count({ where: { bookingId: booking.id } });
+    if (invited === 0) gaps.push('talentProfileIds');
     if (!booking.contactPhone.trim()) gaps.push('contactPhone');
     if (!booking.talentDetail?.city) gaps.push('city');
 
@@ -408,80 +426,6 @@ export class BookingRequestService {
     );
 
     return this.snapshot(b, periods);
-  }
-
-  /**
-   * Prices a talent engagement from the talent's fixed rate.
-   *
-   * There is no negotiation (removed in the September 2026 review), so the rate is the
-   * talent's listed one — the chosen service's price if a service was picked, otherwise
-   * their base rate — marked up by commission and VAT exactly like equipment.
-   *
-   * The unit is the rate's own: a per-day rate is multiplied by the days booked, a
-   * per-project rate is charged once, a per-hour rate by the hours on each day. The
-   * customer's budget is recorded for Eskista's information but never prices anything.
-   */
-  private async priceTalent(booking: {
-    talentProfileId: string | null;
-    talentServiceId: string | null;
-    startDate: Date;
-    endDate: Date;
-    talentDetail: { startTime: string | null; endTime: string | null } | null;
-  }): Promise<Prisma.BookingUpdateInput> {
-    const talent = await this.findBookableTalent(booking.talentProfileId ?? '');
-    const service = booking.talentServiceId
-      ? await this.prisma.talentService.findFirst({
-          where: { id: booking.talentServiceId, talentProfileId: talent.id, isActive: true },
-        })
-      : null;
-
-    const rate = service?.priceMinor ?? talent.baseRateMinor;
-    const model = service?.pricingModel ?? talent.pricingModel;
-    if (rate === null || rate === undefined) {
-      throw new ConflictException(
-        'This talent has not set a rate yet, so the request cannot be priced. Contact Eskista.',
-      );
-    }
-
-    // Each booked date is a working day — not nights, as a rental is counted.
-    const days = workingDays(booking.startDate, booking.endDate);
-    let periods = days;
-    if (model === PricingModel.PER_PROJECT) {
-      periods = 1;
-    } else if (model === PricingModel.PER_HOUR) {
-      const hours = this.hoursPerDay(
-        booking.talentDetail?.startTime,
-        booking.talentDetail?.endTime,
-      );
-      periods = Math.max(hours, 1) * days;
-    }
-
-    const [{ commissionRateBps, taxRateBps }, serviceFeeBps] = await Promise.all([
-      this.pricing.rates({ talentBps: talent.commissionRateBps }),
-      this.settings.serviceFeeBps(),
-    ]);
-
-    const b = computePriceBreakdown(
-      {
-        supplierUnitPriceMinor: rate,
-        periods,
-        taxRateBps,
-        serviceFeeRateBps: serviceFeeBps,
-        commissionRateBps,
-      },
-      talent.currency,
-    );
-
-    return this.snapshot(b, periods);
-  }
-
-  /** Whole hours between two HH:mm clock times; 0 if either is missing or reversed. */
-  private hoursPerDay(start: string | null | undefined, end: string | null | undefined): number {
-    if (!start || !end) return 0;
-    const [sh = 0, sm = 0] = start.split(':').map(Number);
-    const [eh = 0, em = 0] = end.split(':').map(Number);
-    const minutes = eh * 60 + em - (sh * 60 + sm);
-    return minutes > 0 ? Math.ceil(minutes / 60) : 0;
   }
 
   /** The priced figures frozen onto the booking at submission. */
@@ -573,18 +517,6 @@ export class BookingRequestService {
     });
     if (!listing) throw new NotFoundException('Equipment not found');
     return listing;
-  }
-
-  private async findBookableTalent(talentProfileId: string) {
-    const talent = await this.prisma.talentProfile.findFirst({
-      where: {
-        id: talentProfileId,
-        status: VerificationStatus.VERIFIED,
-        isAvailableForHire: true,
-      },
-    });
-    if (!talent) throw new NotFoundException('Talent not found');
-    return talent;
   }
 
   private toDraftResponse(

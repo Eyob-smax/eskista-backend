@@ -24,6 +24,8 @@ import { VendorBookingsModule } from './modules/vendor-bookings/vendor-bookings.
 import { VendorModule } from './modules/vendor/vendor.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { StorageModule } from './modules/storage/storage.module';
+import { HiringModule } from './modules/hiring/hiring.module';
+import { TalentModule } from './modules/talent/talent.module';
 
 @Module({
   imports: [
@@ -103,6 +105,10 @@ import { StorageModule } from './modules/storage/storage.module';
     CatalogueModule,
     CustomerModule,
     CustomerBookingsModule,
+
+    // Talent-side feature modules
+    HiringModule,
+    TalentModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

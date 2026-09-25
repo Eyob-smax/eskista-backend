@@ -644,6 +644,15 @@ export class PortfolioItemResponse {
 
   @ApiPropertyOptional({ nullable: true, description: 'External link, e.g. YouTube or Vimeo.' })
   externalUrl!: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: 'Director of Photography' })
+  role!: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: '2026-08-16' })
+  startDate!: string | null;
+
+  @ApiPropertyOptional({ nullable: true, example: '2026-08-30' })
+  endDate!: string | null;
 }
 
 export class TalentCardResponse {
@@ -729,6 +738,19 @@ export class TalentDetailResponse extends TalentCardResponse {
 
   @ApiProperty({ type: [String], example: ['Amharic', 'English'] })
   languages!: string[];
+
+  @ApiProperty({ type: [String], example: ['Commercial', 'Music Video'] })
+  specializations!: string[];
+
+  @ApiProperty({ type: [String], example: ['DaVinci Resolve', 'Drone Operation'] })
+  skills!: string[];
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'The public profile link, for Share.',
+    example: 'https://eskista.com/talent/dawit-media',
+  })
+  profileUrl!: string | null;
 
   @ApiProperty({ type: [TalentServiceResponse], description: 'The "Services" price list.' })
   services!: TalentServiceResponse[];

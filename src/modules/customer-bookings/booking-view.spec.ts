@@ -159,6 +159,23 @@ describe('buildActions', () => {
     expect(actions.find((a) => a.key === 'COMPLETE_PAYMENT')?.disabledReason).toContain('talent');
   });
 
+  it('leads with Choose Talent once an invited talent has accepted', () => {
+    const c = ctx({
+      status: BookingStatus.ESKISTA_REVIEW,
+      type: BookingType.TALENT,
+      acceptedInvitations: 2,
+    });
+    expect(primary(c)).toBe('CHOOSE_TALENT');
+    expect(buildActions(c).find((a) => a.key === 'COMPLETE_PAYMENT')?.disabledReason).toBe(
+      'Choose who to hire first.',
+    );
+  });
+
+  it('never offers Choose Talent on an equipment booking', () => {
+    const c = ctx({ status: BookingStatus.ESKISTA_REVIEW, acceptedInvitations: 2 });
+    expect(keys(c)).not.toContain('CHOOSE_TALENT');
+  });
+
   it('makes payment the primary action once approved', () => {
     expect(primary(ctx({ status: BookingStatus.AWAITING_PAYMENT }))).toBe('COMPLETE_PAYMENT');
   });

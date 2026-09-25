@@ -4,6 +4,7 @@ import { Queue } from 'bullmq';
 import {
   ESKISTA_QUEUE,
   JOB_NAMES,
+  type JobHandler,
   type JobName,
   type JobPayloads,
   jobIdFor,
@@ -25,8 +26,18 @@ import {
 @Injectable()
 export class JobsService {
   private readonly logger = new Logger(JobsService.name);
+  private readonly handlers = new Map<JobName, JobHandler>();
 
   constructor(@InjectQueue(ESKISTA_QUEUE) private readonly queue: Queue) {}
+
+  /** Registers the handler for a job name owned by another module. See `JobHandler`. */
+  registerHandler<N extends JobName>(name: N, handler: JobHandler<N>): void {
+    this.handlers.set(name, handler as JobHandler);
+  }
+
+  handlerFor(name: string): JobHandler | undefined {
+    return this.handlers.get(name as JobName);
+  }
 
   /**
    * Enqueues a job to run at a specific moment.

@@ -120,6 +120,32 @@ describe('FileAccessService', () => {
     });
   });
 
+  describe('public supplier media', () => {
+    it('lets anyone signed in see a vendor logo, shown on every listing', async () => {
+      await expect(
+        service.assertCanRead(STRANGER, 'vendors/vendor-1/logo/logo.png'),
+      ).resolves.toBeUndefined();
+    });
+
+    it('lets anyone signed in see a talent’s public photo and portfolio', async () => {
+      await expect(
+        service.assertCanRead(STRANGER, 'talent/talent-1/public/portfolio/cover.jpg'),
+      ).resolves.toBeUndefined();
+    });
+
+    it('still hides a talent’s ID document from other users', async () => {
+      await expect(
+        service.assertCanRead(STRANGER, 'talent/talent-1/documents/fayda.jpg'),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('does not let `logo` smuggle in a traversal', async () => {
+      await expect(
+        service.assertCanRead(STRANGER, 'vendors/vendor-1/logo/../documents/fayda.pdf'),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
   describe('customer documents', () => {
     it('are readable by that customer', async () => {
       await expect(

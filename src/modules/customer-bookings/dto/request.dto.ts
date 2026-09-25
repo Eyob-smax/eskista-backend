@@ -2,6 +2,10 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { BudgetBand, CollectionMethod, EngagementModel, ProjectType } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayUnique,
+  IsArray,
+  IsBoolean,
   IsEnum,
   IsInt,
   IsOptional,
@@ -139,14 +143,48 @@ export class UpsertEquipmentRequestDto {
  * files are uploaded separately, so this body stays JSON rather than multipart.
  */
 export class UpsertTalentRequestDto {
-  @ApiPropertyOptional({ format: 'uuid', description: 'The talent being hired.' })
+  @ApiPropertyOptional({
+    type: [String],
+    format: 'uuid',
+    description:
+      'The talents to invite — **1 to 5** (the limit is an admin setting). Replaces the ' +
+      'list on every save. Each gets 48 hours to accept once the request is submitted; the ' +
+      'customer then chooses among those who accepted. Send `[]` to clear.',
+    example: ['6f1c9f5e-2c1a-4d8e-9a0b-3b1f7c2d9e11'],
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ArrayUnique()
+  @IsUUID('all', { each: true })
+  talentProfileIds?: string[];
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    deprecated: true,
+    description:
+      'A single talent — the pre-multi-invite form. Treated as `talentProfileIds: [id]`. ' +
+      'Ignored when `talentProfileIds` is also sent.',
+  })
   @IsOptional()
   @IsUUID()
   talentProfileId?: string;
 
   @ApiPropertyOptional({
+    default: false,
+    description:
+      'Hire the first talent(s) to accept, up to the headcount, instead of choosing. Off by ' +
+      'default: the customer compares everyone who accepted and picks.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  autoHireFirstAccept?: boolean;
+
+  @ApiPropertyOptional({
     format: 'uuid',
-    description: 'Optionally, which of their listed services this is for.',
+    description:
+      'Optionally, one of a talent’s listed services. It prices the hire only if that ' +
+      'talent is the one hired; anyone else is priced at their own base rate.',
   })
   @IsOptional()
   @IsUUID()

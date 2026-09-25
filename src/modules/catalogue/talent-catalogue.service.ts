@@ -4,6 +4,10 @@ import type { CursorPage } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { PricingService } from '../settings/pricing.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
+import { renderCvPdf } from '../documents/cv-renderer';
+import { buildCv } from '../talent/talent-cv';
+import { normaliseSlug } from '../talent/talent-completion';
+import { profileUrlFor, talentAvatarUrl } from '../talent/talent-media';
 import {
   AvailabilityDayResponse,
   AvailabilityRangeQuery,
@@ -128,8 +132,43 @@ export class TalentCatalogueService {
   }
 
   async getTalent(talentProfileId: string): Promise<TalentDetailResponse> {
+    return this.detail({ id: talentProfileId });
+  }
+
+  /** The shared profile link: eskista.com/talent/<slug>. */
+  async getTalentBySlug(slug: string): Promise<TalentDetailResponse> {
+    const normalised = normaliseSlug(slug);
+    if (!normalised) throw new NotFoundException('Talent not found');
+    return this.detail({ slug: normalised });
+  }
+
+  /**
+   * The talent's CV as a client sees it — the same document the talent previews, without
+   * their phone or email. Clients reach talent through Eskista.
+   */
+  async cvPdf(talentProfileId: string): Promise<{ buffer: Buffer; filename: string }> {
     const talent = await this.prisma.talentProfile.findFirst({
       where: { id: talentProfileId, ...VISIBLE },
+      include: {
+        user: { select: { image: true } },
+        experiences: { orderBy: { sortOrder: 'asc' } },
+        educations: { orderBy: { sortOrder: 'asc' } },
+        portfolio: { orderBy: { sortOrder: 'asc' } },
+      },
+    });
+    if (!talent) throw new NotFoundException('Talent not found');
+
+    const cv = buildCv(talent, {
+      includeContact: false,
+      avatarUrl: talentAvatarUrl(talent, this.storage),
+      profileUrl: profileUrlFor(talent.slug),
+    });
+    return { buffer: await renderCvPdf(cv), filename: `${talent.slug ?? 'talent'}-cv.pdf` };
+  }
+
+  private async detail(where: Prisma.TalentProfileWhereInput): Promise<TalentDetailResponse> {
+    const talent = await this.prisma.talentProfile.findFirst({
+      where: { ...where, ...VISIBLE },
       include: {
         user: { select: { image: true } },
         services: { where: { isActive: true }, orderBy: { sortOrder: 'asc' } },
@@ -149,6 +188,12 @@ export class TalentCatalogueService {
     // 404 rather than 403 — an unverified or hidden profile is not public knowledge.
     if (!talent) throw new NotFoundException('Talent not found');
 
+    // "Profile views" on the talent's dashboard. Fire and forget: a failed counter must
+    // never fail the page, and the increment runs in the database so views never race.
+    void this.prisma.talentProfile
+      .update({ where: { id: talent.id }, data: { profileViewCount: { increment: 1 } } })
+      .catch(() => undefined);
+
     const price = await this.pricing.pricer();
     const overrides = { talentBps: talent.commissionRateBps };
 
@@ -158,6 +203,9 @@ export class TalentCatalogueService {
       yearsExperience: talent.yearsExperience,
       highestEducation: talent.highestEducation,
       languages: talent.languages,
+      specializations: talent.specializations,
+      skills: talent.skills,
+      profileUrl: profileUrlFor(talent.slug),
       services: talent.services.map((s) => ({
         id: s.id,
         title: s.title,
@@ -173,6 +221,9 @@ export class TalentCatalogueService {
         description: p.description,
         imageUrl: p.fileKey ? this.storage.urlFor(p.fileKey) : null,
         externalUrl: p.externalUrl,
+        role: p.role,
+        startDate: p.startDate?.toISOString().slice(0, 10) ?? null,
+        endDate: p.endDate?.toISOString().slice(0, 10) ?? null,
       })),
       reviews: talent.reviews.map((r) =>
         this.toReview(r.id, r.author.name, r.rating, r.comment, r.booking.projectType, r.createdAt),
@@ -272,7 +323,7 @@ export class TalentCatalogueService {
       id: row.id,
       displayName: row.displayName,
       headline: row.headline,
-      avatarUrl: row.user.image,
+      avatarUrl: talentAvatarUrl(row, this.storage),
       location: row.location,
       ratingAvg: Number(row.ratingAvg),
       ratingCount: row.ratingCount,

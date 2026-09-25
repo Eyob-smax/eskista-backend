@@ -9,7 +9,7 @@ import {
 } from './dto/notification.dto';
 
 /**
- * Every notification the customer app can raise.
+ * Every notification the customer and talent apps can raise.
  *
  * Titles and bodies live here rather than at each call site so the wording stays
  * consistent, and so a copy change is one edit rather than a search. `{{token}}`
@@ -71,6 +71,66 @@ export const NOTIFICATION_TEMPLATES = {
   INCIDENT_RESOLVED: {
     title: 'Issue Resolved',
     body: 'Your report {{reference}} has been resolved. {{resolution}}',
+  },
+
+  // ── Customer: talent hire ──
+  TALENT_ACCEPTED: {
+    title: 'Talent Accepted',
+    body: '{{talent}} is available for {{reference}}. Choose your talent within {{hours}} hours.',
+  },
+  TALENT_DECLINED: {
+    title: 'Talent Unavailable',
+    body: '{{talent}} is not available for {{reference}}.',
+  },
+  SELECTION_REMINDER: {
+    title: 'Choose Your Talent',
+    body: 'You have 24 hours left to choose who to hire for {{reference}}.',
+  },
+  REQUEST_EXPIRED: {
+    title: 'Request Expired',
+    body: '{{reason}} Your request {{reference}} has been closed. You can send a new one any time.',
+  },
+  TALENT_HIRED_CONFIRMATION: {
+    title: 'Talent Hired',
+    body: 'You hired {{talent}} for {{reference}}. Sign the agreement and pay to confirm.',
+  },
+
+  // ── Talent ──
+  HIRE_REQUEST_RECEIVED: {
+    title: 'New Hire Request',
+    body: 'You have a new {{project}} request for {{dates}}. Reply within {{hours}} hours.',
+  },
+  HIRE_REQUEST_EXPIRED: {
+    title: 'Request Expired',
+    body: 'A hire request for {{dates}} expired before you replied.',
+  },
+  HIRE_REQUEST_CANCELLED: {
+    title: 'Request Cancelled',
+    body: 'The client cancelled the {{project}} request for {{dates}}.',
+  },
+  YOU_WERE_HIRED: {
+    title: 'You Were Hired',
+    body: 'You have been hired for {{reference}} on {{dates}}. Sign your agreement to confirm.',
+  },
+  NOT_SELECTED: {
+    title: 'Not Selected',
+    body: 'The client chose another talent for the {{project}} request on {{dates}}.',
+  },
+  TALENT_PROFILE_SUBMITTED: {
+    title: 'Profile Submitted',
+    body: 'Eskista is reviewing your profile. Typical review takes 2–3 business days.',
+  },
+  TALENT_PROFILE_APPROVED: {
+    title: 'Profile Approved',
+    body: 'Your profile is live. Clients can now find and hire you.',
+  },
+  TALENT_PROFILE_REJECTED: {
+    title: 'Profile Needs Changes',
+    body: 'Your profile could not be approved yet. {{reason}}',
+  },
+  TALENT_BOOKING_CONFIRMED: {
+    title: 'Booking Confirmed',
+    body: 'Payment for {{reference}} is confirmed. See the venue details in the app.',
   },
 } as const;
 

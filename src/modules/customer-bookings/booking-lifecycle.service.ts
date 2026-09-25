@@ -237,6 +237,8 @@ export class BookingLifecycleService {
         return 'Equipment Rental Agreement';
       case 'TALENT_ENGAGEMENT':
         return 'Talent Engagement Agreement';
+      case 'TALENT_SERVICE':
+        return 'Talent Service Agreement';
       case 'VENDOR_ONBOARDING':
         return 'Supplier Agreement';
       default:
@@ -504,8 +506,10 @@ export class BookingLifecycleService {
 
   async listAttachments(userId: string, reference: string): Promise<AttachmentResponse[]> {
     const booking = await this.requireBooking(userId, reference);
+    // A second hire on a request shares the request's files rather than copying them.
+    const owners = booking.parentBookingId ? [booking.id, booking.parentBookingId] : [booking.id];
     const rows = await this.prisma.bookingAttachment.findMany({
-      where: { bookingId: booking.id },
+      where: { bookingId: { in: owners } },
       orderBy: { createdAt: 'asc' },
     });
     return rows.map((r) => this.toAttachment(r));

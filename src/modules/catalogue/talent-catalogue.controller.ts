@@ -1,4 +1,5 @@
-import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
+import { Controller, Get, Param, ParseUUIDPipe, Query, Res, StreamableFile } from '@nestjs/common';
+import type { Response } from 'express';
 import {
   ApiBadRequestResponse,
   ApiExtraModels,
@@ -72,6 +73,46 @@ Show it with the "Inc. 15% VAT" subtext; \`priceIncludesVat\` is always true.
     return this.talent.browse(query);
   }
 
+  @Get('by-slug/:slug')
+  @Public()
+  @ApiOperation({
+    summary: 'Open a profile from its shared link',
+    description:
+      'Resolves `eskista.com/talent/<slug>` — the link a talent copies from Publish or ' +
+      'Share Profile — to the same payload as `GET /catalogue/talent/{id}`. **404** for an ' +
+      'unknown, unverified or hidden profile.',
+  })
+  @ApiOkResponse({ type: TalentDetailResponse })
+  @ApiNotFoundResponse({ description: 'No verified, available talent at that URL.' })
+  getBySlug(@Param('slug') slug: string): Promise<TalentDetailResponse> {
+    return this.talent.getTalentBySlug(slug);
+  }
+
+  @Get(':id/cv.pdf')
+  @Public()
+  @ApiOperation({
+    summary: 'Download a talent’s CV',
+    description:
+      'The talent’s auto-generated CV in the template they chose, **without** their phone ' +
+      'or email — clients hire through Eskista.',
+  })
+  @ApiOkResponse({
+    content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } },
+  })
+  @ApiNotFoundResponse({ description: 'No verified, available talent with that id.' })
+  async cvPdf(
+    @Param('id', ParseUUIDPipe) talentProfileId: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } = await this.talent.cvPdf(talentProfileId);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'X-Content-Type-Options': 'nosniff',
+    });
+    return new StreamableFile(buffer);
+  }
+
   @Get(':id')
   @Public()
   @ApiOperation({
@@ -85,6 +126,8 @@ specialization and language chips, and the five most recent reviews.
 video; expect one or the other, and handle both.
 
 Reviewer names are shortened to "Selam T.".
+
+Each open counts towards the talent's **Profile views**.
 
 Returns **404** for a profile that is unverified or hidden, rather than 403.
 `.trim(),

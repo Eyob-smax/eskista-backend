@@ -36,7 +36,7 @@ export class FileAccessService {
 
     if (user.roles.includes(Role.ADMIN)) return;
 
-    const [scope, id] = key.split('/');
+    const [scope, id, area] = key.split('/');
 
     switch (scope) {
       case 'listings':
@@ -47,9 +47,15 @@ export class FileAccessService {
         return;
 
       case 'vendors':
+        // The logo is shown on every listing's vendor card, so customers must be able to
+        // read it. Everything else under a vendor — KYC, agreements — stays the owner's.
+        if (area === 'logo') return;
         return this.assertOwnsVendor(user, id);
 
       case 'talent':
+        // A talent's photo and portfolio covers are their public profile. ID scans and
+        // signed agreements live outside `public/` and stay the owner's.
+        if (area === 'public') return;
         return this.assertOwnsTalent(user, id);
 
       case 'customers':
@@ -119,6 +125,13 @@ export class FileAccessService {
         customerId: true,
         vendor: { select: { userId: true } },
         talentProfile: { select: { userId: true } },
+        // A talent hired on this request can read its brief. Merely invited is not
+        // enough: reference files often identify the client, who stays anonymous until
+        // a hire is made.
+        invitations: {
+          where: { status: 'HIRED' },
+          select: { talentProfile: { select: { userId: true } } },
+        },
       },
     });
 
@@ -128,6 +141,7 @@ export class FileAccessService {
       booking.customerId,
       booking.vendor?.userId,
       booking.talentProfile?.userId,
+      ...(booking.invitations ?? []).map((i) => i.talentProfile.userId),
     ].filter((v): v is string => typeof v === 'string');
 
     if (!parties.includes(user.id)) {

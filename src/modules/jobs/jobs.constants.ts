@@ -14,6 +14,12 @@ export const JOB_NAMES = {
   feedbackRequest: 'notification.feedback-request',
   /** Safety net: catches reminders whose delayed job was lost. */
   reminderSweep: 'maintenance.reminder-sweep',
+  /** An invited talent's 48 hours are up. */
+  invitationExpiry: 'hiring.invitation-expiry',
+  /** "Choose your talent — 24 hours left." */
+  selectionReminder: 'hiring.selection-reminder',
+  /** The customer's 72 hours to choose are up. */
+  selectionDeadline: 'hiring.selection-deadline',
 } as const;
 
 export type JobName = (typeof JOB_NAMES)[keyof typeof JOB_NAMES];
@@ -28,11 +34,29 @@ export interface FeedbackRequestPayload {
 
 export type ReminderSweepPayload = Record<string, never>;
 
+/** Every hiring job acts on one talent request and re-reads it. */
+export interface HiringJobPayload {
+  bookingId: string;
+}
+
 export interface JobPayloads {
   [JOB_NAMES.returnReminder]: ReturnReminderPayload;
   [JOB_NAMES.feedbackRequest]: FeedbackRequestPayload;
   [JOB_NAMES.reminderSweep]: ReminderSweepPayload;
+  [JOB_NAMES.invitationExpiry]: HiringJobPayload;
+  [JOB_NAMES.selectionReminder]: HiringJobPayload;
+  [JOB_NAMES.selectionDeadline]: HiringJobPayload;
 }
+
+/**
+ * A handler another module contributes for one job name.
+ *
+ * The queue has one worker, so every job name is processed by `JobsProcessor`. Modules
+ * that sit above the jobs module (hiring needs `JobsService` to schedule, and the
+ * processor would need hiring to act) register their handlers at start-up instead of
+ * being imported by it, which would be a cycle.
+ */
+export type JobHandler<N extends JobName = JobName> = (payload: JobPayloads[N]) => Promise<void>;
 
 /**
  * A stable job id per booking and job type.

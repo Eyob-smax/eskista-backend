@@ -28,6 +28,12 @@ import {
 } from '@nestjs/swagger';
 import type { CursorPage } from '../../common/dto/pagination.dto';
 import { CurrentUser } from '../auth/auth.decorators';
+import {
+  CustomerInvitationsResponse,
+  HireTalentDto,
+  InviteMoreDto,
+} from '../hiring/dto/hiring.dto';
+import { HiringService } from '../hiring/hiring.service';
 import { BookingRequestService } from './booking-request.service';
 import { CustomerBookingsService } from './customer-bookings.service';
 import {
@@ -51,6 +57,7 @@ export class CustomerBookingsController {
   constructor(
     private readonly bookings: CustomerBookingsService,
     private readonly requests: BookingRequestService,
+    private readonly hiring: HiringService,
   ) {}
 
   // ── Drafts ─────────────────────────────────────────────────────────────────
@@ -119,10 +126,21 @@ their content implies.)
 All five steps post to this one body. Reference files are uploaded separately through
 \`POST /customer/bookings/{reference}/attachments\`, so this stays JSON.
 
-**Talent rates are fixed.** The request is priced at submission from the talent's rate —
-the chosen service's, or their base rate — plus Eskista's commission plus VAT, the same way
-equipment is. There is no negotiation. \`budgetBand\` / \`budgetMinor\` are optional and
-recorded for Eskista's information only; they never price anything.
+**Invite 1–5 talents** with \`talentProfileIds\` (the limit is an admin setting). On
+submission each gets **48 hours** to accept or decline. From the first acceptance the
+customer has **72 hours** to choose in \`POST /customer/bookings/{reference}/hire\` — or sets
+\`autoHireFirstAccept: true\` to hire whoever accepts first. Those hired see **HIRED**,
+everyone else still in the running sees **REJECTED**.
+
+**Talent rates are fixed.** Nothing is priced until the hire: each talent has their own rate,
+so the booking is priced from whoever is chosen — the chosen service's price if it is theirs,
+otherwise their base rate — plus Eskista's commission plus VAT, the same way equipment is.
+\`GET …/invitations\` shows each talent's price for this request beside their answer. There is
+no negotiation. \`budgetBand\` / \`budgetMinor\` are optional, shown to the invited talents,
+and never price anything.
+
+\`headcount\` > 1 lets the customer hire that many; each hire becomes its own booking with its
+own agreement and payment (siblings of this one).
 
 The reference is \`ESK-TLT-8847\` style, distinct from equipment's \`ESK-10482\`.
 `.trim(),
@@ -167,8 +185,10 @@ agreed to.
 Availability is re-checked here, not just at quote time. Between drafting and submitting,
 someone else may have taken the dates — that returns **409**, not a silent double-booking.
 
-For **talent** the same happens from the talent's fixed rate: per day × days, once for a
-per-project rate, or per hour × hours for an hourly one. No negotiation step follows.
+For **talent** nothing is priced here. Submission sends the request to every invited talent,
+starts their 48-hour clocks and moves the request to \`ESKISTA_REVIEW\` ("Talent
+Confirmation"). A talent who stopped taking work since the draft was saved returns **409**
+naming them. The booking is priced when a talent is hired.
 
 A **400** carries \`outstandingRequirements\` naming every remaining gap, so the client can
 send the customer back to the right step.
@@ -293,6 +313,94 @@ Another customer's reference returns **404**, not 403.
     @Param('reference') reference: string,
   ): Promise<BookingDetailResponse> {
     return this.bookings.getDetail(userId, reference);
+  }
+
+  // ── Talent hire ────────────────────────────────────────────────────────────
+
+  @Get(':reference/invitations')
+  @ApiOperation({
+    summary: 'See who has answered a talent request',
+    description: `
+Backs **Choose Talent**: every invited talent, their answer, and what hiring them for this
+request would cost.
+
+\`phase\` tells the screen what to show:
+
+| phase | Meaning |
+|---|---|
+| \`WAITING_FOR_REPLIES\` | Nobody has accepted yet |
+| \`READY_TO_CHOOSE\` | At least one accepted — enable **Hire** on those with \`canHire\` |
+| \`HIRED\` | Decided. \`hiredBookingReference\` on each hire is the booking to pay |
+| \`CLOSED\` | Expired or cancelled |
+
+\`price.totalMinor\` is each talent's own rate for these dates, with commission and VAT —
+exactly what the booking will be priced at if they are hired.
+
+Reading this settles anything whose time is up, so an invitation past its 48 hours reads
+\`EXPIRED\` even if the background job has not run.
+`.trim(),
+  })
+  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
+  @ApiOkResponse({ type: CustomerInvitationsResponse })
+  @ApiNotFoundResponse({ description: 'No talent request with that reference belongs to you.' })
+  listInvitations(
+    @CurrentUser('id') userId: string,
+    @Param('reference') reference: string,
+  ): Promise<CustomerInvitationsResponse> {
+    return this.hiring.listForCustomer(userId, reference);
+  }
+
+  @Post(':reference/invitations')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Invite more talents to an open request',
+    description: `
+For when some of the invited talents declined. Allowed while the request is in
+\`ESKISTA_REVIEW\` and nobody has been hired, up to the admin limit in total (5 by default).
+Each new talent gets their own 48 hours.
+`.trim(),
+  })
+  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
+  @ApiOkResponse({ type: CustomerInvitationsResponse })
+  @ApiBadRequestResponse({ description: 'Over the invitation limit.' })
+  @ApiConflictResponse({ description: 'Already hired, closed, or those talents are invited.' })
+  inviteMore(
+    @CurrentUser('id') userId: string,
+    @Param('reference') reference: string,
+    @Body() dto: InviteMoreDto,
+  ): Promise<CustomerInvitationsResponse> {
+    return this.hiring.inviteMore(userId, reference, dto.talentProfileIds);
+  }
+
+  @Post(':reference/hire')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Hire from the talents who accepted',
+    description: `
+The customer's choice. Send one talent, or up to the request's \`headcount\`.
+
+- Each chosen talent becomes **HIRED**. Everyone else who was still in the running —
+  accepted, or not yet answered — becomes **REJECTED** and is told.
+- The first hire takes over this booking, priced from that talent's rate, and moves it to
+  \`AWAITING_PAYMENT\`. Each further hire gets a **sibling booking** (its own reference,
+  agreement, payment and payout) — see \`hiredBookingReference\`.
+- Two agreements are issued per hire: the customer's (Customer ↔ Eskista) and the
+  talent's (Eskista ↔ Talent). The customer then signs and pays as for any booking.
+
+**409** when a picked talent has not accepted, the request is closed, or a talent has since
+been booked elsewhere on those dates.
+`.trim(),
+  })
+  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
+  @ApiOkResponse({ type: CustomerInvitationsResponse })
+  @ApiBadRequestResponse({ description: 'More talents than the headcount.' })
+  @ApiConflictResponse({ description: 'Not accepted, already hired, or closed.' })
+  hire(
+    @CurrentUser('id') userId: string,
+    @Param('reference') reference: string,
+    @Body() dto: HireTalentDto,
+  ): Promise<CustomerInvitationsResponse> {
+    return this.hiring.hire(userId, reference, dto.talentProfileIds);
   }
 
   @Post(':reference/cancel')

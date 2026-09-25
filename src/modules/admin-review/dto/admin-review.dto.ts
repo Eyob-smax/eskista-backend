@@ -70,6 +70,45 @@ export class PricingPreviewResponse {
   customerPriceMinor!: number;
 }
 
+export class DossierDocumentResponse {
+  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({ example: 'FAYDA_ID' }) type!: string;
+  @ApiProperty({ example: 'PENDING' }) status!: string;
+  @ApiProperty() fileName!: string;
+  @ApiProperty() url!: string;
+}
+
+export class DossierReferenceResponse {
+  @ApiProperty({ example: 'Hana Girma' }) name!: string;
+  @ApiProperty({ example: '+251911556677' }) contact!: string;
+  @ApiPropertyOptional({ nullable: true }) relationship!: string | null;
+}
+
+export class DossierPortfolioResponse {
+  @ApiProperty() title!: string;
+  @ApiPropertyOptional({ nullable: true }) client!: string | null;
+  @ApiPropertyOptional({ nullable: true }) role!: string | null;
+  @ApiPropertyOptional({ nullable: true }) coverUrl!: string | null;
+  @ApiPropertyOptional({ nullable: true }) workLink!: string | null;
+}
+
+export class TalentDossierResponse {
+  @ApiPropertyOptional({ nullable: true }) avatarUrl!: string | null;
+  @ApiProperty({ type: [String] }) professions!: string[];
+  @ApiPropertyOptional({ nullable: true }) bio!: string | null;
+  @ApiProperty() location!: string;
+  @ApiPropertyOptional({ nullable: true }) phone!: string | null;
+  @ApiPropertyOptional({ nullable: true }) email!: string | null;
+  @ApiPropertyOptional({ nullable: true }) profileUrl!: string | null;
+  @ApiProperty({
+    example: { identity: 'IN_PROGRESS', portfolio: 'QUEUED', references: 'QUEUED' },
+  })
+  checklist!: { identity: string; portfolio: string; references: string };
+  @ApiProperty({ type: [DossierDocumentResponse] }) documents!: DossierDocumentResponse[];
+  @ApiProperty({ type: [DossierReferenceResponse] }) references!: DossierReferenceResponse[];
+  @ApiProperty({ type: [DossierPortfolioResponse] }) portfolio!: DossierPortfolioResponse[];
+}
+
 export class ReviewItemResponse {
   @ApiProperty({ format: 'uuid' })
   id!: string;
@@ -114,6 +153,14 @@ export class ReviewItemResponse {
     description: 'Talent only: every service they offer, previewed at the same commission.',
   })
   services?: ServicePricingResponse[];
+
+  @ApiPropertyOptional({
+    type: () => TalentDossierResponse,
+    description:
+      'Talent only: what Eskista verifies — the ID, the portfolio and the two references — ' +
+      'plus the checklist the talent sees on Pending Verification.',
+  })
+  dossier?: TalentDossierResponse;
 }
 
 export class ServicePricingResponse {

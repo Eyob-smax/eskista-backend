@@ -5,13 +5,16 @@ import {
   BookingType,
   DeliveryStage,
   FulfilmentDirection,
+  InvitationStatus,
   PaymentStatus,
   Prisma,
   ReviewKind,
   Role,
 } from '@prisma/client';
 import type { CursorPage } from '../../common/dto/pagination.dto';
+import { HiringService } from '../hiring/hiring.service';
 import { JobsService } from '../jobs/jobs.service';
+import { talentAvatarUrl } from '../talent/talent-media';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
@@ -33,6 +36,7 @@ import {
   BookingFulfilmentResponse,
   BookingTotalsResponse,
   CancelBookingDto,
+  HiringSummaryResponse,
   ListBookingsQuery,
 } from './dto/booking.dto';
 
@@ -88,10 +92,37 @@ const cardInclude = {
     },
   },
   talentProfile: {
-    select: { id: true, displayName: true, user: { select: { image: true } } },
+    select: {
+      id: true,
+      displayName: true,
+      avatarKey: true,
+      user: { select: { image: true } },
+    },
   },
   equipmentDetail: true,
+  talentDetail: { select: { headcount: true } },
+  invitations: {
+    select: {
+      status: true,
+      expiresAt: true,
+      talentProfile: {
+        select: {
+          id: true,
+          displayName: true,
+          avatarKey: true,
+          user: { select: { image: true } },
+        },
+      },
+    },
+    orderBy: { invitedAt: 'asc' },
+  },
 } satisfies Prisma.BookingInclude;
+
+/** Talent-request wording where the equipment wording would be wrong. */
+const TALENT_ACTIVITY: Partial<Record<BookingStatus, string>> = {
+  [BookingStatus.ESKISTA_REVIEW]: 'Request sent to the invited talents',
+  [BookingStatus.AWAITING_PAYMENT]: 'Talent hired. Agreement and payment details sent.',
+};
 
 type BookingCard = Prisma.BookingGetPayload<{ include: typeof cardInclude }>;
 
@@ -101,12 +132,15 @@ export class CustomerBookingsService {
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
     private readonly jobs: JobsService,
+    private readonly hiring: HiringService,
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
   // ── List ───────────────────────────────────────────────────────────────────
 
   async list(userId: string, query: ListBookingsQuery): Promise<CursorPage<BookingCardResponse>> {
+    await this.settleOpenRequests(userId);
+
     const where: Prisma.BookingWhereInput = {
       customerId: userId,
       status: { in: statusesForTab(query.tab) },
@@ -127,7 +161,10 @@ export class CustomerBookingsService {
 
     const hasNext = rows.length > query.limit;
     const page = hasNext ? rows.slice(0, query.limit) : rows;
-    const flags = await this.actionFlagsFor(page.map((r) => r.id));
+    const flags = await this.actionFlagsFor(
+      userId,
+      page.map((r) => r.id),
+    );
 
     return {
       data: page.map((row) => this.toCard(row, flags.get(row.id))),
@@ -142,11 +179,13 @@ export class CustomerBookingsService {
   // ── Detail ─────────────────────────────────────────────────────────────────
 
   async getDetail(userId: string, reference: string): Promise<BookingDetailResponse> {
+    await this.settleOpenRequests(userId, reference);
+
     const booking = await this.prisma.booking.findFirst({
       where: { reference, customerId: userId },
       include: {
         ...cardInclude,
-        talentDetail: true,
+        talentDetail: true as const,
         assignedUnits: { include: { unit: { select: { serialNumber: true, label: true } } } },
         statusEvents: { orderBy: { createdAt: 'desc' } },
         payments: { orderBy: { submittedAt: 'desc' } },
@@ -252,8 +291,11 @@ export class CustomerBookingsService {
             depositReturnedMinor: null,
             completedAt: null,
           },
-      documents: this.toDocuments(booking),
-      activity: this.toActivity(booking.statusEvents),
+      documents: this.toDocuments(
+        booking.agreements.filter((a) => a.counterpartyId === userId),
+        booking.payments,
+      ),
+      activity: this.toActivity(booking.type, booking.statusEvents),
       pendingAgreementReference: pendingAgreement?.id ?? null,
       supportPhone,
     };
@@ -275,7 +317,7 @@ export class CustomerBookingsService {
   ): Promise<BookingDetailResponse> {
     const booking = await this.prisma.booking.findFirst({
       where: { reference, customerId: userId },
-      select: { id: true, status: true },
+      select: { id: true, status: true, type: true },
     });
     if (!booking) throw new NotFoundException('Booking not found');
 
@@ -310,6 +352,8 @@ export class CustomerBookingsService {
     // return equipment that was never collected is the clearest possible sign the app is
     // not paying attention.
     await this.jobs.cancelBookingJobs(booking.id);
+    // Every talent still waiting on this request hears it is off.
+    if (booking.type === BookingType.TALENT) await this.hiring.cancelRequest(booking.id);
 
     return this.getDetail(userId, reference);
   }
@@ -338,6 +382,9 @@ export class CustomerBookingsService {
   ): BookingCardResponse {
     const isTalent = row.type === BookingType.TALENT;
     const image = row.listing?.images[0];
+    // Before a hire the request has invitees but no talent; show the first invited.
+    const subjectTalent = row.talentProfile ?? row.invitations[0]?.talentProfile ?? null;
+    const hiring = isTalent && !row.parentBookingId ? this.hiringSummary(row) : null;
 
     return {
       reference: row.reference,
@@ -346,11 +393,13 @@ export class CustomerBookingsService {
       badge: statusBadge(row.status),
       subject: {
         type: row.type,
-        id: (isTalent ? row.talentProfile?.id : row.listing?.id) ?? '',
-        name: (isTalent ? row.talentProfile?.displayName : row.listing?.name) ?? 'Unknown',
+        id: (isTalent ? subjectTalent?.id : row.listing?.id) ?? '',
+        name: (isTalent ? subjectTalent?.displayName : row.listing?.name) ?? 'Unknown',
         supplierName: isTalent ? null : (row.listing?.vendor.businessName ?? null),
         imageUrl: isTalent
-          ? (row.talentProfile?.user.image ?? null)
+          ? subjectTalent
+            ? talentAvatarUrl(subjectTalent, this.storage)
+            : null
           : image
             ? this.storage.urlFor(image.fileKey)
             : null,
@@ -369,9 +418,49 @@ export class CustomerBookingsService {
         agreementPending: flags?.agreementPending ?? false,
         paymentPending: flags?.paymentPending ?? false,
         hasReview: flags?.hasReview ?? false,
+        acceptedInvitations: hiring?.accepted ?? 0,
       }),
+      hiring,
       createdAt: row.createdAt.toISOString(),
     };
+  }
+
+  private hiringSummary(row: BookingCard): HiringSummaryResponse | null {
+    if (row.invitations.length === 0) return null;
+    const now = Date.now();
+    const count = (s: InvitationStatus) =>
+      row.invitations.filter((i) =>
+        s === InvitationStatus.INVITED
+          ? i.status === s && i.expiresAt.getTime() > now
+          : i.status === s,
+      ).length;
+    return {
+      invited: row.invitations.length,
+      accepted: count(InvitationStatus.ACCEPTED),
+      awaitingReply: count(InvitationStatus.INVITED),
+      hired: count(InvitationStatus.HIRED),
+      headcount: row.talentDetail?.headcount ?? 1,
+      selectionDeadlineAt: row.selectionDeadlineAt?.toISOString() ?? null,
+      invitedNames: row.invitations.map((i) => i.talentProfile.displayName),
+    };
+  }
+
+  /**
+   * Brings the customer's open talent requests up to date before they are read, so a
+   * request whose clock ran out reads as expired even if its job never fired.
+   */
+  private async settleOpenRequests(userId: string, reference?: string): Promise<void> {
+    const open = await this.prisma.booking.findMany({
+      where: {
+        customerId: userId,
+        type: BookingType.TALENT,
+        status: BookingStatus.ESKISTA_REVIEW,
+        ...(reference ? { reference } : {}),
+      },
+      select: { id: true },
+      take: 20,
+    });
+    for (const request of open) await this.hiring.reconcile(request.id);
   }
 
   private toTotals(row: {
@@ -479,14 +568,13 @@ export class CustomerBookingsService {
    * row at all — the customer assumes the app is broken rather than that the document is
    * not ready.
    */
-  private toDocuments(booking: {
-    agreements: { documentKey: string | null; status: AgreementStatus }[];
-    payments: { receiptFileKey: string }[];
-    settlement: { id: string } | null;
-  }): BookingDocumentResponse[] {
+  private toDocuments(
+    agreements: { documentKey: string | null; status: AgreementStatus }[],
+    payments: { receiptFileKey: string }[],
+  ): BookingDocumentResponse[] {
     const documents: BookingDocumentResponse[] = [];
 
-    const agreement = booking.agreements.find((a) => a.documentKey);
+    const agreement = agreements.find((a) => a.documentKey);
     if (agreement?.documentKey) {
       documents.push({
         kind: 'RENTAL_AGREEMENT',
@@ -496,7 +584,7 @@ export class CustomerBookingsService {
       });
     }
 
-    const receipt = booking.payments[0];
+    const receipt = payments[0];
     if (receipt) {
       documents.push({
         kind: 'PAYMENT_EVIDENCE',
@@ -516,11 +604,14 @@ export class CustomerBookingsService {
    * notes that are internal to Eskista.
    */
   private toActivity(
+    type: BookingType,
     events: { toStatus: BookingStatus; actorRole: Role | null; createdAt: Date }[],
   ): ActivityEntryResponse[] {
     return events
       .map((event) => {
-        const message = ACTIVITY_LABELS[event.toStatus];
+        const message =
+          (type === BookingType.TALENT ? TALENT_ACTIVITY[event.toStatus] : undefined) ??
+          ACTIVITY_LABELS[event.toStatus];
         if (!message) return null;
         return {
           message,
@@ -561,7 +652,10 @@ export class CustomerBookingsService {
   }
 
   /** Agreement, payment and review flags for a page of bookings, in three queries. */
-  private async actionFlagsFor(bookingIds: string[]): Promise<
+  private async actionFlagsFor(
+    userId: string,
+    bookingIds: string[],
+  ): Promise<
     Map<
       string,
       {
@@ -594,7 +688,9 @@ export class CustomerBookingsService {
 
     const [agreements, payments, reviews] = await Promise.all([
       this.prisma.agreement.findMany({
-        where: { bookingId: { in: bookingIds } },
+        // The customer's own agreements only: a talent booking also carries the talent's,
+        // and that one awaiting upload is not the customer's move.
+        where: { bookingId: { in: bookingIds }, counterpartyId: userId },
         select: { bookingId: true, status: true },
       }),
       this.prisma.payment.findMany({

@@ -1,8 +1,18 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { ListingStatus, PricingModel, Prisma, VerificationStatus } from '@prisma/client';
+import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  DocumentStatus,
+  ListingStatus,
+  PricingModel,
+  Prisma,
+  ReviewCheckState,
+  VerificationStatus,
+} from '@prisma/client';
 import { applyBps, customerUnitPrice } from '../../common/money';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
+import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
+import { profileUrlFor, talentAvatarUrl } from '../talent/talent-media';
 import {
   ApproveDto,
   PricingPreviewResponse,
@@ -25,6 +35,10 @@ const listingInclude = {
 
 const talentInclude = {
   services: { where: { isActive: true }, orderBy: { sortOrder: 'asc' } },
+  user: { select: { image: true } },
+  documents: { orderBy: { createdAt: 'desc' } },
+  references: { orderBy: { sortOrder: 'asc' } },
+  portfolio: { orderBy: { sortOrder: 'asc' } },
 } satisfies Prisma.TalentProfileInclude;
 
 type ReviewListing = Prisma.ListingGetPayload<{ include: typeof listingInclude }>;
@@ -89,6 +103,8 @@ export class AdminReviewService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
+    private readonly notifications: NotificationsService,
+    @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
   // ── Listings ───────────────────────────────────────────────────────────────
@@ -210,9 +226,24 @@ export class AdminReviewService {
         verifiedByAdminId: adminId,
         rejectionReason: null,
         commissionRateBps,
+        // Approval is the admin vouching for all three checks on Pending Verification.
+        identityCheck: ReviewCheckState.PASSED,
+        portfolioCheck: ReviewCheckState.PASSED,
+        referenceCheck: ReviewCheckState.PASSED,
+        documents: {
+          updateMany: {
+            where: { status: DocumentStatus.PENDING },
+            data: {
+              status: DocumentStatus.VERIFIED,
+              reviewedAt: new Date(),
+              reviewedById: adminId,
+            },
+          },
+        },
       },
       include: talentInclude,
     });
+    await this.notifications.send(updated.userId, 'TALENT_PROFILE_APPROVED');
 
     await this.audit(
       adminId,
@@ -241,6 +272,9 @@ export class AdminReviewService {
         verifiedByAdminId: adminId,
       },
       include: talentInclude,
+    });
+    await this.notifications.send(updated.userId, 'TALENT_PROFILE_REJECTED', {
+      reason: dto.reason,
     });
 
     await this.audit(
@@ -306,7 +340,7 @@ export class AdminReviewService {
       name: t.displayName,
       supplierName: t.displayName,
       status: t.status,
-      submittedAt: t.updatedAt.toISOString(),
+      submittedAt: (t.submittedAt ?? t.updatedAt).toISOString(),
       canApprove: blockers.length === 0,
       blockers,
       pricing:
@@ -318,6 +352,39 @@ export class AdminReviewService {
         title: s.title,
         pricing: previewPricing(s.priceMinor, UNIT_FOR_MODEL[s.pricingModel], rates, levels),
       })),
+      dossier: {
+        avatarUrl: talentAvatarUrl(t, this.storage),
+        professions: t.professions,
+        bio: t.bio,
+        location: t.location,
+        phone: t.phone,
+        email: t.email,
+        profileUrl: profileUrlFor(t.slug),
+        checklist: {
+          identity: t.identityCheck,
+          portfolio: t.portfolioCheck,
+          references: t.referenceCheck,
+        },
+        documents: t.documents.map((d) => ({
+          id: d.id,
+          type: d.type,
+          status: d.status,
+          fileName: d.fileName,
+          url: this.storage.urlFor(d.fileKey),
+        })),
+        references: t.references.map((r) => ({
+          name: r.name,
+          contact: r.contact,
+          relationship: r.relationship,
+        })),
+        portfolio: t.portfolio.map((p) => ({
+          title: p.title,
+          client: p.clientOrAgency,
+          role: p.role,
+          coverUrl: p.fileKey ? this.storage.urlFor(p.fileKey) : null,
+          workLink: p.externalUrl,
+        })),
+      },
     };
   }
 
