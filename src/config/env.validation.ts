@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const envSchema = z.object({
+const baseSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
   API_PREFIX: z.string().default('api'),
@@ -30,13 +30,56 @@ export const envSchema = z.object({
   THROTTLE_TTL_MS: z.coerce.number().int().positive().default(60_000),
   THROTTLE_LIMIT: z.coerce.number().int().positive().default(120),
 
-  STORAGE_DRIVER: z.enum(['local']).default('local'),
+  /// Where photos and documents live. Defaults to `cloudinary` once its credentials are
+  /// set, `local` otherwise (development only — production refuses local disk).
+  STORAGE_DRIVER: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.enum(['local', 'cloudinary']).optional(),
+  ),
   STORAGE_LOCAL_ROOT: z.string().default('./storage'),
+
+  // ── Cloudinary (Console → Settings → API Keys). The secret stays server-side. ──
+  CLOUDINARY_CLOUD_NAME: z.string().optional(),
+  CLOUDINARY_API_KEY: z.string().optional(),
+  CLOUDINARY_API_SECRET: z.string().optional(),
+  /// Everything is stored under this top-level folder, so one Cloudinary account can
+  /// hold several environments side by side (eskista-dev, eskista-prod).
+  CLOUDINARY_FOLDER: z.string().default('eskista'),
   /// Base for file URLs. Points at the authorised FilesController route, not at a
   /// static directory — uploads are never served without an entitlement check.
   STORAGE_PUBLIC_BASE_URL: z.string().default('http://localhost:3000/api/v1/files'),
   STORAGE_MAX_FILE_SIZE_BYTES: z.coerce.number().int().positive().default(10_485_760),
 });
+
+export const envSchema = baseSchema
+  .transform((env) => ({
+    ...env,
+    STORAGE_DRIVER:
+      env.STORAGE_DRIVER ??
+      (env.CLOUDINARY_CLOUD_NAME && env.CLOUDINARY_API_KEY && env.CLOUDINARY_API_SECRET
+        ? ('cloudinary' as const)
+        : ('local' as const)),
+  }))
+  .superRefine((env, ctx) => {
+    if (env.STORAGE_DRIVER === 'cloudinary') {
+      for (const key of [
+        'CLOUDINARY_CLOUD_NAME',
+        'CLOUDINARY_API_KEY',
+        'CLOUDINARY_API_SECRET',
+      ] as const) {
+        if (!env[key]) {
+          ctx.addIssue({ code: 'custom', path: [key], message: 'required for Cloudinary storage' });
+        }
+      }
+    }
+    if (env.NODE_ENV === 'production' && env.STORAGE_DRIVER !== 'cloudinary') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['STORAGE_DRIVER'],
+        message: 'production stores files on Cloudinary; set the CLOUDINARY_* variables',
+      });
+    }
+  });
 
 export type Env = z.infer<typeof envSchema>;
 

@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { SessionUser } from '../auth/auth.types';
+import { isPublicMediaKey, isUnsafeKey } from './storage-keys';
 
 /**
  * Decides who may read a stored file.
@@ -30,11 +31,15 @@ export class FileAccessService {
    * reading both sides' evidence.
    */
   async assertCanRead(user: SessionUser, key: string): Promise<void> {
-    if (this.isUnsafeKey(key)) {
+    if (isUnsafeKey(key)) {
       throw new NotFoundException('File not found');
     }
 
     if (user.roles.includes(Role.ADMIN)) return;
+
+    // Catalogue photos, category art, vendor logos and talent profile media — the same rule
+    // that lets the Cloudinary driver put them on the public CDN.
+    if (isPublicMediaKey(key)) return;
 
     const [scope, id, area] = key.split('/');
 
@@ -69,21 +74,6 @@ export class FileAccessService {
         // Deny by default: an unknown prefix is a bug or an attack, never a grant.
         throw new NotFoundException('File not found');
     }
-  }
-
-  /**
-   * Rejects traversal and absolute paths before the key reaches the filesystem.
-   * The driver guards this too; doing it here keeps the failure a clean 404 rather than
-   * an unhandled error.
-   */
-  private isUnsafeKey(key: string): boolean {
-    return (
-      !key ||
-      key.includes('..') ||
-      key.startsWith('/') ||
-      key.startsWith('\\') ||
-      /^[a-zA-Z]:/.test(key)
-    );
   }
 
   private async assertOwnsVendor(user: SessionUser, vendorId: string): Promise<void> {

@@ -61,3 +61,43 @@ describe('validateEnv', () => {
     expect(env.GOOGLE_CLIENT_SECRET).toBeUndefined();
   });
 });
+
+const cloudinary = {
+  CLOUDINARY_CLOUD_NAME: 'demo',
+  CLOUDINARY_API_KEY: 'key',
+  CLOUDINARY_API_SECRET: 'secret',
+};
+
+describe('storage configuration', () => {
+  it('uses Cloudinary by default once its credentials are set', () => {
+    expect(validateEnv({ ...valid, ...cloudinary }).STORAGE_DRIVER).toBe('cloudinary');
+  });
+
+  it('falls back to local disk in development without credentials', () => {
+    expect(validateEnv(valid).STORAGE_DRIVER).toBe('local');
+  });
+
+  it('refuses Cloudinary with a credential missing', () => {
+    expect(() =>
+      validateEnv({ ...valid, STORAGE_DRIVER: 'cloudinary', CLOUDINARY_CLOUD_NAME: 'demo' }),
+    ).toThrow('CLOUDINARY_API_SECRET');
+  });
+
+  it('refuses to run production on local disk', () => {
+    expect(() => validateEnv({ ...valid, NODE_ENV: 'production' })).toThrow(
+      'production stores files on Cloudinary',
+    );
+  });
+
+  it('allows local disk when asked for explicitly in development', () => {
+    expect(validateEnv({ ...valid, ...cloudinary, STORAGE_DRIVER: 'local' }).STORAGE_DRIVER).toBe(
+      'local',
+    );
+  });
+
+  it('treats a blank STORAGE_DRIVER line as unset', () => {
+    expect(validateEnv({ ...valid, ...cloudinary, STORAGE_DRIVER: '' }).STORAGE_DRIVER).toBe(
+      'cloudinary',
+    );
+  });
+});

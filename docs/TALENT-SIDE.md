@@ -59,22 +59,29 @@ and Talent portals", so the talent uses the same scan-upload flow the customer a
 
 ---
 
-## 2. Conflicts with the September 23 meeting notes
+## 2. Conflicts with the September 23 meeting notes — decided: the designs win
 
-These screens re-introduce sections the meeting said to remove. **Every one is supported
-by the API as optional**, so the frontend can follow either and nothing breaks:
+The September 25 designs are newer than the September 23 meeting, so where they disagree the
+API follows the designs. The rule used for "required": **a field is required unless the
+design labels it "(optional)"** — specializations, unavailable dates, experience and
+portfolio descriptions, work links and the suggested-skill chips are the optional ones.
 
-| Design shows | Meeting said | API |
+| Design shows | Meeting said | API (follows the design) |
 |---|---|---|
-| Availability step (working days, day type, blocked dates) | Remove the Availability section | Optional fields + blocked-date endpoints |
-| Work Experience, repeatable | Remove the dedicated section | Optional list |
-| Education, repeatable | One "Highest Education" line | Both: `highestEducation` **and** an optional list |
-| Separate Skills step | Merge skills into profession | `professions[]` and optional `skills[]` |
-| Single *primary* profession | Multi-select professions | `professions[]`; the first is the primary |
-| CV template choice | One standard CV layout | `cvTemplate`, default `CLASSIC`; ignoring it is valid |
-| Signature pad | Scan and upload | Scan and upload |
+| Availability step (working days, day type, blocked dates) | Remove it | Working days and day type **required**; blocked dates optional |
+| Work Experience, repeatable | Remove it | **At least one** entry; title, company, start required; end required unless "Currently working here" |
+| Education, repeatable | One "Highest Education" line | **At least one** entry, every field required. `highestEducation` kept only for old data |
+| Separate Skills step | Merge into profession | **At least one** skill |
+| "Select your primary profession. You can add more later." | Multi-select | Wizard sends one; the Profile tab can add more (`professions[0]` is the primary) |
+| CV template: Classic / Minimal / Sidebar | One standard layout | `cvTemplate`, default `CLASSIC`, all three render |
+| Step 1: email, years of experience, language | — | **Required** (not marked optional) |
+| Portfolio project: cover, title, client, role, dates | — | **Required**; description and work link optional; 3–5 projects |
+| "Reference 1 — name and contact" (one box) | — | `name` holds the box's text; `contact` optional |
+| Signature pad | Scan and upload | Scan and upload (the meeting's later decision; the pad is not in the app) |
 
-**Open question for the client:** which of these does the frontend actually follow?
+**The missing sheet.** `talent premitive pages.png` duplicates another sheet. The screens it
+most likely held (hire-request detail, accept / decline, bookings) were built from the rest
+of the flow and the customer side's matching screens; see section 4.
 
 ---
 

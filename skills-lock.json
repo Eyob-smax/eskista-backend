@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "cloudinary-next": {
+      "source": "cloudinary-devs/skills",
+      "sourceType": "github",
+      "skillPath": "skills/frameworks/cloudinary-next/SKILL.md",
+      "computedHash": "32b7ae1ff20de36a62496bcc4e670724e5e6332b8d1b01a19c3c89bbb3eced77"
+    }
+  }
+}

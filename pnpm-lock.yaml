@@ -68,6 +68,9 @@ importers:
       class-validator:
         specifier: ^0.14.1
         version: 0.14.4
+      cloudinary:
+        specifier: ^2.11.0
+        version: 2.11.0
       compression:
         specifier: ^1.7.5
         version: 1.8.1
@@ -1693,6 +1696,10 @@ packages:
   clone@2.1.2:
     resolution: {integrity: sha512-3Pe/CF1Nn94hyhIYpjtiLhdCoEoz0DqQ+988E9gmeEdQZlojxnOb74wctFyuwWQHzqyf9X7C7MG8juUpqBJT8w==}
     engines: {node: '>=0.8'}
+
+  cloudinary@2.11.0:
+    resolution: {integrity: sha512-o2pAkDDqrzPFE/mn9GCfFjBIGQmPs++Ts6rtkFl4vY528DNHiMovKWjH16HBjeGa9iwI7eAad24aWN2emT0aww==}
+    engines: {node: '>=9'}
 
   cluster-key-slot@1.1.1:
     resolution: {integrity: sha512-rwHwUfXL40Chm1r08yrhU3qpUvdVlgkKNeyeGPOxnW8/SyVDvgRaed/Uz54AqWNaTCAThlj6QAs3TZcKI0xDEw==}
@@ -4938,6 +4945,10 @@ snapshots:
   clone@1.0.4: {}
 
   clone@2.1.2: {}
+
+  cloudinary@2.11.0:
+    dependencies:
+      lodash: 4.18.1
 
   cluster-key-slot@1.1.1: {}
 

@@ -14,6 +14,8 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { computePriceBreakdown } from '../src/common/money';
+import { validateEnv } from '../src/config/env.validation';
+import { scriptConfig, syncLocalToCloudinary } from '../src/modules/storage/sync-to-cloudinary';
 import {
   AgreementStatus,
   AgreementType,
@@ -1684,6 +1686,14 @@ async function main(): Promise<void> {
   await seedSettlementBatch(userIds);
   await recomputeAggregates();
   console.log('  settlement batch + aggregates ✓');
+
+  // The frozen demo documents above are written to local disk. With Cloudinary configured,
+  // copy them up under the same keys so the seeded rows resolve there too.
+  const env = validateEnv(process.env);
+  if (env.STORAGE_DRIVER === 'cloudinary') {
+    const report = await syncLocalToCloudinary(scriptConfig(env));
+    console.log(`  cloudinary:       ${report.uploaded} synced, ${report.failed.length} failed`);
+  }
 
   console.log('\nDone. Sign in as any seeded Telegram id, e.g. 900000002 (Afro Studio vendor).');
 }
