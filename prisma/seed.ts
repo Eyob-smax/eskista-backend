@@ -546,7 +546,8 @@ async function seedTalent(
 
   const talent = await prisma.talentProfile.upsert({
     where: { userId },
-    update: { status: VerificationStatus.VERIFIED },
+    // Approved at the default commission; the rate is recorded, as a real review would.
+    update: { status: VerificationStatus.VERIFIED, commissionRateBps: DEFAULT_COMMISSION_BPS },
     create: {
       userId,
       displayName: 'Dawit Haile',
@@ -825,7 +826,7 @@ async function seedListings(
 
     const listing = await prisma.listing.upsert({
       where: { slug },
-      update: { status: ListingStatus.PUBLISHED },
+      update: { status: ListingStatus.PUBLISHED, commissionRateBps: DEFAULT_COMMISSION_BPS },
       create: {
         slug,
         vendorId,
@@ -848,6 +849,8 @@ async function seedListings(
         rentalRequirements: 'Valid Fayda ID, refundable security deposit.',
         currency: CURRENCY,
         status: ListingStatus.PUBLISHED,
+        // Agreed at review, as the admin flow records it.
+        commissionRateBps: DEFAULT_COMMISSION_BPS,
         submittedAt: daysFromNow(-35),
         publishedAt: daysFromNow(-34),
         reviewedById: adminId,

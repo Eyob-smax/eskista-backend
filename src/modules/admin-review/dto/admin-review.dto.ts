@@ -1,0 +1,189 @@
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ListingStatus, VerificationStatus } from '@prisma/client';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
+
+const trim = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' ? value.trim() : value;
+
+/**
+ * What the admin sees next to the Approve button: the supplier's proposed price, the
+ * commission pre-filled from the default, and exactly what the customer will pay.
+ */
+export class PricingPreviewResponse {
+  @ApiProperty({
+    description: 'What the supplier proposed, per period. This is what they will be paid.',
+    example: 300000,
+  })
+  supplierPriceMinor!: number;
+
+  @ApiProperty({
+    enum: ['HOUR', 'DAY', 'WEEK', 'MONTH', 'PROJECT'],
+    description: 'What one price covers.',
+    example: 'DAY',
+  })
+  periodUnit!: 'HOUR' | 'DAY' | 'WEEK' | 'MONTH' | 'PROJECT';
+
+  @ApiProperty({
+    description: 'The platform default commission — what the review form is pre-filled with.',
+    example: 1500,
+  })
+  defaultCommissionBps!: number;
+
+  @ApiProperty({
+    description:
+      'The commission this preview is calculated at: the one passed as `commissionBps`, ' +
+      'else any rate already on the item, else the default.',
+    example: 1500,
+  })
+  commissionBps!: number;
+
+  @ApiProperty({
+    enum: ['REQUESTED', 'ITEM', 'VENDOR', 'PLATFORM_DEFAULT'],
+    description: 'Where `commissionBps` came from, so the form can say "default" or "custom".',
+    example: 'PLATFORM_DEFAULT',
+  })
+  commissionSource!: 'REQUESTED' | 'ITEM' | 'VENDOR' | 'PLATFORM_DEFAULT';
+
+  @ApiProperty({ description: 'Eskista’s commission per period.', example: 45000 })
+  commissionMinor!: number;
+
+  @ApiProperty({ description: 'VAT rate added automatically.', example: 1500 })
+  vatBps!: number;
+
+  @ApiProperty({ description: 'VAT per period.', example: 51750 })
+  vatMinor!: number;
+
+  @ApiProperty({
+    description: 'What the customer sees on the card: supplier price + commission + VAT.',
+    example: 396750,
+  })
+  customerPriceMinor!: number;
+}
+
+export class ReviewItemResponse {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ example: 'Sony FX3 Cinema Camera' })
+  name!: string;
+
+  @ApiProperty({
+    description: 'Vendor business name for a listing; the talent’s display name for a talent.',
+    example: 'Afro Studio',
+  })
+  supplierName!: string;
+
+  @ApiProperty({ example: 'PENDING_REVIEW' })
+  status!: ListingStatus | VerificationStatus;
+
+  @ApiPropertyOptional({ nullable: true, example: '2026-09-24T09:00:00.000Z' })
+  submittedAt!: string | null;
+
+  @ApiProperty({
+    description: 'False when something stops approval — see `blockers`.',
+    example: true,
+  })
+  canApprove!: boolean;
+
+  @ApiProperty({
+    type: [String],
+    description: 'Why it cannot be approved yet, in words an admin can act on.',
+    example: [],
+  })
+  blockers!: string[];
+
+  @ApiPropertyOptional({
+    type: PricingPreviewResponse,
+    nullable: true,
+    description: 'Null for a talent who proposed no base rate; see `services` instead.',
+  })
+  pricing!: PricingPreviewResponse | null;
+
+  @ApiPropertyOptional({
+    type: () => [ServicePricingResponse],
+    description: 'Talent only: every service they offer, previewed at the same commission.',
+  })
+  services?: ServicePricingResponse[];
+}
+
+export class ServicePricingResponse {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ example: 'Full Day Commercial' })
+  title!: string;
+
+  @ApiProperty({ type: PricingPreviewResponse })
+  pricing!: PricingPreviewResponse;
+}
+
+export class PreviewQuery {
+  @ApiPropertyOptional({
+    minimum: 0,
+    maximum: 10000,
+    description:
+      'Preview at this commission instead — for the live customer price as the admin ' +
+      'types. Nothing is saved.',
+    example: 2000,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(10_000)
+  commissionBps?: number;
+}
+
+export class ApproveDto {
+  @ApiPropertyOptional({
+    minimum: 0,
+    maximum: 10000,
+    description:
+      'Commission agreed at this review, in basis points (1500 = 15%). Omit to accept the ' +
+      'pre-filled figure. It is stored on the item, so a later change to the global default ' +
+      'does not move an item that has already been reviewed.',
+    example: 1500,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(10_000)
+  commissionRateBps?: number;
+
+  @ApiPropertyOptional({ description: 'Listings only: put it on the Featured rail.' })
+  @IsOptional()
+  @IsBoolean()
+  featured?: boolean;
+
+  @ApiPropertyOptional({ description: 'Kept in the audit log.', maxLength: 500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  @Transform(trim)
+  note?: string;
+}
+
+export class RejectDto {
+  @ApiProperty({
+    description: 'Shown to the supplier so they can fix it and resubmit.',
+    example: 'Photos are too dark to show the condition of the sensor.',
+    minLength: 5,
+    maxLength: 500,
+  })
+  @IsString()
+  @MinLength(5)
+  @MaxLength(500)
+  @Transform(trim)
+  reason!: string;
+}
