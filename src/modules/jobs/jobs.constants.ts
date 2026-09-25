@@ -20,6 +20,8 @@ export const JOB_NAMES = {
   selectionReminder: 'hiring.selection-reminder',
   /** The customer's 72 hours to choose are up. */
   selectionDeadline: 'hiring.selection-deadline',
+  /** "It will automatically close in 24 hours" — after the vendor confirms the payout. */
+  bookingAutoClose: 'booking.auto-close',
 } as const;
 
 export type JobName = (typeof JOB_NAMES)[keyof typeof JOB_NAMES];
@@ -46,6 +48,7 @@ export interface JobPayloads {
   [JOB_NAMES.invitationExpiry]: HiringJobPayload;
   [JOB_NAMES.selectionReminder]: HiringJobPayload;
   [JOB_NAMES.selectionDeadline]: HiringJobPayload;
+  [JOB_NAMES.bookingAutoClose]: HiringJobPayload;
 }
 
 /**

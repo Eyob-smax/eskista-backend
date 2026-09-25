@@ -522,11 +522,18 @@ async function seedVendors(userIds: Map<string, string>): Promise<Map<string, st
 
   for (const v of vendors) {
     const userId = userIds.get(v.userKey)!;
+    const contactName = USERS.find((u) => u.key === v.userKey)?.name ?? v.businessName;
     const vendor = await prisma.vendorProfile.upsert({
       where: { userId },
-      update: { status: VerificationStatus.VERIFIED },
+      update: {
+        status: VerificationStatus.VERIFIED,
+        contactName,
+        termsAcceptedAt: daysFromNow(-42),
+      },
       create: {
         userId,
+        contactName,
+        termsAcceptedAt: daysFromNow(-42),
         businessName: v.businessName,
         kind: v.kind,
         vendorType: v.vendorType,
@@ -1141,6 +1148,9 @@ interface BookingPlan {
   withAgreement?: boolean;
   withSettlement?: SettlementStatus;
   withReviews?: boolean;
+  /** How far the vendor's own steps have got: prepared, handed over, or all confirmed. */
+  withHandover?: 'prepared' | 'handedOver' | 'returned' | 'complete';
+  withInspection?: boolean;
 }
 
 const BOOKING_PLANS: BookingPlan[] = [
@@ -1218,6 +1228,8 @@ const BOOKING_PLANS: BookingPlan[] = [
     withAgreement: true,
     withSettlement: SettlementStatus.PAID,
     withReviews: true,
+    withHandover: 'complete',
+    withInspection: true,
   },
   {
     ref: 'ESK-10487',
@@ -1235,6 +1247,45 @@ const BOOKING_PLANS: BookingPlan[] = [
     withInvoice: true,
     withSettlement: SettlementStatus.PAID,
     withReviews: true,
+    withHandover: 'complete',
+    withInspection: true,
+  },
+  {
+    // Paid and confirmed: the vendor's Prepare Equipment → handover flow starts here.
+    ref: 'ESK-10488',
+    listingKey: 'sigma2470',
+    vendorKey: 'addis',
+    customerKey: 'customerHabesha',
+    status: BookingStatus.BOOKING_CONFIRMED,
+    supplierResponse: SupplierResponse.ACCEPTED,
+    startOffset: 3,
+    endOffset: 5,
+    quantity: 1,
+    collectionMethod: CollectionMethod.DELIVERY,
+    purpose: 'Commercial video for Habesha Beer.',
+    withPayment: true,
+    withInvoice: true,
+    withAgreement: true,
+  },
+  {
+    // Back, inspected and paid out: Confirm Return → Confirm Payment → Complete.
+    ref: 'ESK-10489',
+    listingKey: 'aputure300d',
+    vendorKey: 'afro',
+    customerKey: 'customerHabesha',
+    status: BookingStatus.SETTLEMENT,
+    supplierResponse: SupplierResponse.ACCEPTED,
+    startOffset: -9,
+    endOffset: -7,
+    quantity: 1,
+    collectionMethod: CollectionMethod.DELIVERY,
+    purpose: 'Commercial video for Habesha Beer over three shooting days.',
+    withPayment: true,
+    withInvoice: true,
+    withAgreement: true,
+    withSettlement: SettlementStatus.PAID,
+    withHandover: 'handedOver',
+    withInspection: true,
   },
 ];
 
@@ -1249,6 +1300,16 @@ async function seedBookings(
 
   // Clear demo bookings so re-running does not double the dashboard counts.
   await prisma.booking.deleteMany({ where: { reference: { in: refs } } });
+
+  // The demo references are hand-picked (ESK-10482…). Move the live counter past them, so a
+  // real booking can never be issued a reference the seed already used.
+  const highest = Math.max(...refs.map((r) => Number(r.replace('ESK-', '')) - 10_000));
+  await prisma.$executeRaw`
+    INSERT INTO "NumberSequence" ("id", "scope", "period", "lastValue", "updatedAt")
+    VALUES (gen_random_uuid(), 'booking', 'all', ${highest}, now())
+    ON CONFLICT ("scope", "period")
+    DO UPDATE SET "lastValue" = GREATEST("NumberSequence"."lastValue", ${highest})
+  `;
 
   let invoiceCounter = 140;
 
@@ -1482,6 +1543,61 @@ async function seedBookings(
       });
     }
 
+    if (plan.withHandover) {
+      const done = (step: 'prepared' | 'handedOver' | 'returned' | 'complete') =>
+        ['prepared', 'handedOver', 'returned', 'complete'].indexOf(plan.withHandover!) >=
+        ['prepared', 'handedOver', 'returned', 'complete'].indexOf(step);
+      const items = await prisma.listingIncludedItem.findMany({
+        where: { listingId },
+        orderBy: { sortOrder: 'asc' },
+      });
+      const checklist = [
+        { key: 'main', label: listing.name, done: true },
+        ...items.map((item, i) => ({
+          key: `included-${i}`,
+          label: item.quantity > 1 ? `${item.name} x${item.quantity}` : item.name,
+          done: true,
+        })),
+        { key: 'original-accessories', label: 'Original accessories', done: true },
+        { key: 'tested', label: 'Equipment tested', done: true },
+        { key: 'cleaned', label: 'Equipment cleaned', done: true },
+      ];
+      await prisma.vendorHandover.create({
+        data: {
+          bookingId: booking.id,
+          checklist,
+          condition: 'EXCELLENT',
+          preparedAt: daysFromNow(plan.startOffset - 2),
+          ...(done('handedOver')
+            ? {
+                method: CollectionMethod.PICKUP,
+                contactPhone: '+251911000002',
+                methodChosenAt: daysFromNow(plan.startOffset - 2),
+                handedOverAt: daysFromNow(plan.startOffset - 1),
+              }
+            : {}),
+          ...(done('returned') ? { returnConfirmedAt: daysFromNow(plan.endOffset + 1) } : {}),
+          ...(done('complete') ? { payoutConfirmedAt: daysFromNow(plan.endOffset + 3) } : {}),
+        },
+      });
+    }
+
+    if (plan.withInspection) {
+      await prisma.inspection.create({
+        data: {
+          bookingId: booking.id,
+          outcome: 'OK',
+          condition: 'EXCELLENT',
+          physicalPassed: true,
+          functionalPassed: true,
+          feeMinor: 0,
+          depositReturnedMinor: deposit,
+          inspectedById: adminId,
+          inspectedAt: daysFromNow(plan.endOffset + 1),
+        },
+      });
+    }
+
     if (plan.withReviews) {
       // Both review types the client asked for, prompted at return.
       await prisma.review.create({
@@ -1678,6 +1794,29 @@ async function main(): Promise<void> {
   console.log('  vendor agreements: signed');
 
   const listingIds = await seedListings(vendorIds, categoryIds, userIds.get('admin')!);
+  // The ten-star condition picker, for listings seeded before it existed.
+  await prisma.listing.updateMany({
+    where: { conditionRating: null },
+    data: { conditionRating: 9 },
+  });
+  for (const [key, organisationName] of [
+    ['customerHabesha', 'Habesha Films'],
+    ['customerSkyline', 'Skyline Events'],
+  ] as const) {
+    const u = USERS.find((x) => x.key === key)!;
+    await prisma.customerProfile.upsert({
+      where: { userId: userIds.get(key)! },
+      update: { organisationName, kind: 'COMPANY' },
+      create: {
+        userId: userIds.get(key)!,
+        organisationName,
+        kind: 'COMPANY',
+        contactPerson: u.name,
+        email: u.email,
+        phone: u.phone,
+      },
+    });
+  }
   console.log(`  listings:         ${listingIds.size} (published, with units + specs)`);
 
   await seedBookings(userIds, vendorIds, listingIds, templateId);

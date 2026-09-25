@@ -318,6 +318,24 @@ export class EquipmentController {
     return this.equipment.getAvailability(userId, listingId, query);
   }
 
+  @Post(':listingId/availability/:date/toggle')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Tap a date to cycle its status',
+    description:
+      'Set Availability: toggles one day between AVAILABLE and BLOCKED and returns the new ' +
+      'cell. Unblocking a day inside a longer blocked range splits it. RENTED and RESERVED ' +
+      'days come from bookings: **409**.',
+  })
+  @ApiOkResponse({ type: AvailabilityDayResponse })
+  toggleDate(
+    @CurrentUser('id') userId: string,
+    @Param('listingId', ParseUUIDPipe) listingId: string,
+    @Param('date') date: string,
+  ): Promise<AvailabilityDayResponse> {
+    return this.equipment.toggleDate(userId, listingId, date);
+  }
+
   @Post(':listingId/blocked-dates')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({

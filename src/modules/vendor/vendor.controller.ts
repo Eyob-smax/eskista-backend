@@ -48,10 +48,19 @@ export class VendorController {
 
   @Post('onboarding')
   @ApiOperation({
-    summary: 'Create the signed-in user’s vendor profile',
-    description:
-      'Grants the VENDOR role immediately so the vendor experience is reachable while ' +
-      'the profile is still a draft. Verification is a separate, admin-driven step.',
+    summary: 'Create Your Vendor Account',
+    description: `
+**Become a Vendor.** Full name, Business / Company name*, phone, Email*, Location*, Vendor
+type* (Individual · Production Company · Rental Company · Creative Studio) and the terms
+checkbox (\`acceptTerms: true\`).
+
+Individual vs company is derived from the vendor type, so the form never asks for it. The
+profile picture and ID are uploaded next with \`POST /vendor/me/logo\` and
+\`POST /vendor/me/documents\`.
+
+Grants the VENDOR role and switches the user into the vendor app, so it is usable while the
+profile is a draft. Verification is Eskista's separate step.
+`.trim(),
   })
   @ApiCreatedResponse({ type: VendorProfileResponse })
   createProfile(
@@ -65,9 +74,14 @@ export class VendorController {
   @Roles('VENDOR')
   @ApiOperation({
     summary: 'Get my vendor profile',
-    description:
-      'Includes `outstandingRequirements` and `canSubmitForVerification` so the client ' +
-      'can render the verification checklist without duplicating the rules.',
+    description: `
+The **Profile** tab and **Business Information**: logo, name, "Joined Since July 23, 2026",
+\`stats\` (Rentals · Equipment · Rating), every business field, and \`verification\`
+grouped as the screen shows it: **ID** (front and back) and **Business License**, each with
+the green tick once verified.
+
+\`outstandingRequirements\` and \`canSubmitForVerification\` drive the checklist.
+`.trim(),
   })
   @ApiOkResponse({ type: VendorProfileResponse })
   getProfile(@CurrentUser('id') userId: string): Promise<VendorProfileResponse> {
@@ -123,12 +137,13 @@ export class VendorController {
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({
-    summary: 'Upload a verification document',
+    summary: 'Upload an ID or business document',
     description:
-      'Re-uploading the same type replaces the previous file. PNG, JPEG, WebP or PDF, ' +
-      'up to 5MB. Fayda ID is required for every vendor; business registration only ' +
-      'for company vendors. The rental agreement is not uploaded here - Eskista ' +
-      'generates it for signature at /vendor/me/agreement.',
+      '"Upload Your ID": `FAYDA_ID` or `PASSPORT`, up to two files (front and back) — a ' +
+      'third is refused until one is removed. "Business License": `BUSINESS_LICENSE` (or ' +
+      '`BUSINESS_REGISTRATION`), required for companies; a new one replaces the old. PNG, ' +
+      'JPEG, WebP or PDF, up to 5 MB. The vendor agreement is not uploaded here: Eskista ' +
+      'generates it at /vendor/me/agreement.',
   })
   @ApiBody({
     schema: {
@@ -138,7 +153,14 @@ export class VendorController {
         file: { type: 'string', format: 'binary' },
         type: {
           type: 'string',
-          enum: ['FAYDA_ID', 'BUSINESS_REGISTRATION', 'TIN_CERTIFICATE', 'OTHER'],
+          enum: [
+            'FAYDA_ID',
+            'PASSPORT',
+            'BUSINESS_LICENSE',
+            'BUSINESS_REGISTRATION',
+            'TIN_CERTIFICATE',
+            'OTHER',
+          ],
         },
       },
     },

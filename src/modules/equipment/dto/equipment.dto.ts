@@ -141,7 +141,26 @@ export class CreateEquipmentDto {
   specs?: SpecItemDto[];
 
   // Condition
-  @ApiPropertyOptional({ enum: ConditionGrade, default: ConditionGrade.EXCELLENT })
+  @ApiPropertyOptional({
+    minimum: 1,
+    maximum: 10,
+    example: 9,
+    description:
+      'The ten-star **Condition** picker (required to submit). Sets `condition` too: ' +
+      '10 New · 9 Like new · 7–8 Excellent · 5–6 Good · 1–4 Fair.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  conditionRating?: number;
+
+  @ApiPropertyOptional({
+    enum: ConditionGrade,
+    default: ConditionGrade.EXCELLENT,
+    description: 'Only when not sending `conditionRating`, which derives it.',
+  })
   @IsOptional()
   @IsEnum(ConditionGrade)
   condition?: ConditionGrade;
@@ -424,6 +443,8 @@ export class EquipmentDetailResponse extends EquipmentSummaryResponse {
   @ApiProperty({ type: [String] }) compatibility!: string[];
   @ApiPropertyOptional({ nullable: true }) powerBattery!: string | null;
   @ApiProperty({ enum: ConditionGrade }) condition!: ConditionGrade;
+  @ApiPropertyOptional({ nullable: true, description: 'Stars out of ten.', example: 9 })
+  conditionRating!: number | null;
   @ApiPropertyOptional({ nullable: true }) conditionNotes!: string | null;
   @ApiProperty() minRentalPeriods!: number;
   @ApiPropertyOptional({ nullable: true }) maxRentalPeriods!: number | null;
@@ -442,6 +463,22 @@ export class EquipmentDetailResponse extends EquipmentSummaryResponse {
 
   @ApiProperty({ type: [String] }) outstandingRequirements!: string[];
   @ApiProperty() canSubmitForReview!: boolean;
+
+  @ApiProperty({
+    description:
+      '"Equipment Added → Eskista Review → Published → Available for Booking" on the ' +
+      'Equipment Submitted screen.',
+    type: 'array',
+    items: {
+      type: 'object',
+      properties: {
+        key: { type: 'string' },
+        label: { type: 'string' },
+        state: { type: 'string', enum: ['DONE', 'IN_PROGRESS', 'PENDING'] },
+      },
+    },
+  })
+  reviewSteps!: { key: string; label: string; state: string }[];
 }
 
 /** One calendar cell. Mirrors the vendor "Set Availability" legend exactly. */

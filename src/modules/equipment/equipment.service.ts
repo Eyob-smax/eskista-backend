@@ -24,6 +24,7 @@ import {
   type UploadedFile,
 } from '../../common/upload';
 import { PrismaService } from '../prisma/prisma.service';
+import { gradeForRating, listingReviewSteps } from '../vendor-bookings/vendor-booking-view';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
 import type {
   AvailabilityDayResponse,
@@ -113,7 +114,11 @@ export class EquipmentService {
         mainSpecification: dto.mainSpecification,
         compatibility: dto.compatibility ?? [],
         powerBattery: dto.powerBattery,
-        condition: dto.condition ?? ConditionGrade.EXCELLENT,
+        conditionRating: dto.conditionRating,
+        condition:
+          dto.conditionRating !== undefined
+            ? gradeForRating(dto.conditionRating)
+            : (dto.condition ?? ConditionGrade.EXCELLENT),
         conditionNotes: dto.conditionNotes,
         description: dto.description,
         location: dto.location,
@@ -242,6 +247,10 @@ export class EquipmentService {
         data: {
           ...scalars,
           ...(scalars.compatibility ? { compatibility: scalars.compatibility } : {}),
+          // The star rating drives the advertised grade.
+          ...(scalars.conditionRating !== undefined
+            ? { condition: gradeForRating(scalars.conditionRating) }
+            : {}),
           // Editing a published listing returns it to review, so nothing changes
           // under customers without Eskista seeing it.
           ...(listing.status === ListingStatus.PUBLISHED
@@ -298,6 +307,12 @@ export class EquipmentService {
         message: 'Listing is not ready for review',
         outstandingRequirements: outstanding,
       });
+    }
+
+    // The Add Equipment wizard has no units screen: a listing is one item unless the vendor
+    // adds more, so the first unit is created for them rather than blocking submission.
+    if (listing.units.length === 0) {
+      await this.prisma.equipmentUnit.create({ data: { listingId: listing.id, label: 'Unit 1' } });
     }
 
     const updated = await this.prisma.listing.update({
@@ -662,6 +677,67 @@ export class EquipmentService {
     });
   }
 
+  /**
+   * "Tap a date to cycle its status": Available ↔ Blocked for one day.
+   *
+   * Blocking a free day adds a one-day block. Unblocking a day inside a longer range
+   * splits the range around it, so the vendor's other blocked days stay blocked. Rented and
+   * reserved days come from bookings and cannot be tapped.
+   */
+  async toggleDate(
+    userId: string,
+    listingId: string,
+    date: string,
+  ): Promise<AvailabilityDayResponse> {
+    await this.requireOwnedListing(userId, listingId);
+    const day = this.parseDate(date, 'date');
+
+    const booked = await this.prisma.booking.count({
+      where: {
+        listingId,
+        status: { in: LIVE_STATUSES },
+        startDate: { lte: day },
+        endDate: { gte: day },
+      },
+    });
+    if (booked > 0) {
+      throw new ConflictException('This date is booked and cannot be changed');
+    }
+
+    const block = await this.prisma.blockedDateRange.findFirst({
+      where: { listingId, unitId: null, startDate: { lte: day }, endDate: { gte: day } },
+    });
+
+    if (!block) {
+      await this.prisma.blockedDateRange.create({
+        data: { listingId, startDate: day, endDate: day, reason: 'Blocked from the calendar' },
+      });
+    } else {
+      const DAY = 86_400_000;
+      const before =
+        block.startDate < day
+          ? { startDate: block.startDate, endDate: new Date(day.getTime() - DAY) }
+          : null;
+      const after =
+        block.endDate > day
+          ? { startDate: new Date(day.getTime() + DAY), endDate: block.endDate }
+          : null;
+      await this.prisma.$transaction([
+        this.prisma.blockedDateRange.delete({ where: { id: block.id } }),
+        ...[before, after]
+          .filter((r): r is { startDate: Date; endDate: Date } => r !== null)
+          .map((r) =>
+            this.prisma.blockedDateRange.create({
+              data: { listingId, ...r, reason: block.reason },
+            }),
+          ),
+      ]);
+    }
+
+    const [cell] = await this.getAvailability(userId, listingId, { from: date, to: date });
+    return cell;
+  }
+
   async unblockDates(userId: string, listingId: string, blockId: string): Promise<void> {
     await this.requireOwnedListing(userId, listingId);
     const block = await this.prisma.blockedDateRange.findFirst({
@@ -739,13 +815,14 @@ export class EquipmentService {
 
   private outstandingRequirements(listing: ListingDetail): string[] {
     const missing: string[] = [];
+    // What the Add Equipment design marks required: photos, description, condition, and a
+    // price. Main specification and units are not on the wizard, so they do not block.
     if (listing.images.length === 0) missing.push('Add at least one photo');
-    if (listing.units.length === 0) missing.push('Add at least one physical unit');
     if (listing.rentalPriceMinor <= 0) missing.push('Set a rental price');
     if (!listing.description || listing.description.trim().length < 20) {
       missing.push('Write a description of at least 20 characters');
     }
-    if (!listing.mainSpecification) missing.push('Add the main specification');
+    if (listing.conditionRating === null) missing.push("Rate the equipment's condition");
     return missing;
   }
 
@@ -794,6 +871,7 @@ export class EquipmentService {
       compatibility: listing.compatibility,
       powerBattery: listing.powerBattery,
       condition: listing.condition,
+      conditionRating: listing.conditionRating,
       conditionNotes: listing.conditionNotes,
       minRentalPeriods: listing.minRentalPeriods,
       maxRentalPeriods: listing.maxRentalPeriods,
@@ -822,6 +900,10 @@ export class EquipmentService {
       canSubmitForReview:
         outstanding.length === 0 &&
         (listing.status === ListingStatus.DRAFT || listing.status === ListingStatus.REJECTED),
+      reviewSteps: listingReviewSteps(
+        listing.status,
+        listing.units.some((u) => u.status !== UnitStatus.RETIRED),
+      ),
     };
   }
 

@@ -225,16 +225,20 @@ enum VendorType {
 }
 
 model VendorProfile {
-  id           String     @id @default(uuid()) @db.Uuid
-  userId       String     @unique @db.Uuid
-  businessName String
-  kind         VendorKind @default(INDIVIDUAL)
-  vendorType   VendorType
-  email        String
-  phone        String?
-  location     String
-  logoKey      String?
-  about        String?
+  id              String     @id @default(uuid()) @db.Uuid
+  userId          String     @unique @db.Uuid
+  businessName    String
+  /// "Full name (Check if this is accurate)" — the person behind the business.
+  contactName     String?
+  kind            VendorKind @default(INDIVIDUAL)
+  vendorType      VendorType
+  email           String
+  phone           String?
+  location        String
+  logoKey         String?
+  about           String?
+  /// The terms checkbox on Create Your Vendor Account.
+  termsAcceptedAt DateTime?
 
   status            VerificationStatus @default(DRAFT)
   rejectionReason   String?
@@ -438,6 +442,8 @@ enum SupplierDocumentType {
   TIN_CERTIFICATE
   /// A talent may verify with a passport instead of a Fayda ID.
   PASSPORT
+  /// "Business License" on the vendor profile — accepted in place of a registration.
+  BUSINESS_LICENSE
   OTHER
 }
 
@@ -547,8 +553,10 @@ model Listing {
   powerBattery      String?
 
   // ── Condition (advertised; per-unit actual condition lives on EquipmentUnit) ──
-  condition      ConditionGrade @default(EXCELLENT)
-  conditionNotes String?
+  condition       ConditionGrade @default(EXCELLENT)
+  conditionNotes  String?
+  /// The ten-star "Condition" picker on Add Equipment. `condition` is derived from it.
+  conditionRating Int?
 
   // ── Rental information ──
   description           String
@@ -871,6 +879,7 @@ model Booking {
   payments      Payment[]
   fulfilments   Fulfilment[]
   inspection    Inspection?
+  handover      VendorHandover?
   settlement    Settlement?
   invoice       Invoice?
   agreements    Agreement[]
@@ -1259,6 +1268,11 @@ model Inspection {
   bookingId            String            @unique @db.Uuid
   outcome              InspectionOutcome
   condition            ConditionGrade?
+  /// The Inspection Results rows: physical condition and functional test pass or fail.
+  physicalPassed       Boolean           @default(true)
+  functionalPassed     Boolean           @default(true)
+  /// "Missing accessories" — null or empty reads as None.
+  missingItems         String?
   damageNotes          String?
   /// Damage or late fee withheld from the deposit.
   feeMinor             Int               @default(0)
@@ -1880,4 +1894,69 @@ model TalentInvitation {
   @@unique([bookingId, talentProfileId])
   @@index([talentProfileId, status])
   @@index([status, expiresAt])
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Vendor side of an equipment booking
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// "Equipment condition" on Prepare Equipment.
+enum HandoverCondition {
+  EXCELLENT
+  GOOD
+  FAIR
+  NEEDS_ATTENTION
+}
+
+/// What the vendor did and confirmed, alongside the booking's own status.
+///
+/// The booking status is Eskista's — only Eskista moves a rental between stages. These are
+/// the vendor's own steps within them: prepare, hand over, confirm the equipment came back,
+/// confirm the payout arrived. Kept apart so a vendor tapping a button can never skip a
+/// stage Eskista has not reached.
+model VendorHandover {
+  bookingId String @id @db.Uuid
+
+  /// Preparation checklist: [{ key, label, done }], generated from the listing.
+  checklist  Json
+  condition  HandoverCondition?
+  preparedAt DateTime?
+
+  /// "Select Collection Method": the vendor brings it (DELIVERY, to `address`) or
+  /// Eskista collects it (PICKUP, calling `contactPhone`).
+  method         CollectionMethod?
+  address        String?
+  contactPhone   String?
+  methodChosenAt DateTime?
+  handedOverAt   DateTime?
+
+  /// "Confirm Return": the equipment is back with the vendor.
+  returnConfirmedAt DateTime?
+  /// "Not-Confirmed" on Confirm Delivery / Return — Eskista follows up.
+  returnDisputedAt  DateTime?
+  returnDisputeNote String?
+
+  /// "Confirm Payment": the payout reached the vendor.
+  payoutConfirmedAt DateTime?
+  payoutDisputedAt  DateTime?
+  payoutDisputeNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  booking Booking               @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  photos  VendorHandoverPhoto[]
+}
+
+/// "Pre-handover condition photos" — the vendor's record of the state it left in.
+model VendorHandoverPhoto {
+  id        String   @id @default(uuid()) @db.Uuid
+  bookingId String   @db.Uuid
+  fileKey   String
+  fileName  String
+  createdAt DateTime @default(now())
+
+  handover VendorHandover @relation(fields: [bookingId], references: [bookingId], onDelete: Cascade)
+
+  @@index([bookingId])
 }

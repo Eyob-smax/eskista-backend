@@ -16,6 +16,7 @@ import {
   SupplierDocumentType,
   UnitStatus,
   VendorKind,
+  VendorType,
   VerificationStatus,
 } from '@prisma/client';
 import { DEFAULT_CURRENCY } from '../../common/money';
@@ -34,6 +35,7 @@ import type {
 } from '../agreements/dto/agreement.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
+import { vendorBadge } from '../vendor-bookings/vendor-booking-view';
 import type {
   CreateVendorProfileDto,
   UpdateVendorProfileDto,
@@ -55,9 +57,32 @@ const PENDING_BOOKING_STATUSES: BookingStatus[] = [
 ];
 
 const vendorInclude = {
-  documents: { orderBy: { createdAt: 'desc' } },
+  documents: { orderBy: { createdAt: 'asc' } },
   agreements: true,
+  _count: {
+    select: {
+      listings: { where: { status: { not: ListingStatus.ARCHIVED } } },
+      bookings: { where: { status: BookingStatus.CLOSED } },
+    },
+  },
 } satisfies Prisma.VendorProfileInclude;
+
+/** "Upload Your ID" — a Fayda ID or a passport, front and back. */
+const ID_TYPES: SupplierDocumentType[] = [
+  SupplierDocumentType.FAYDA_ID,
+  SupplierDocumentType.PASSPORT,
+];
+const MAX_ID_FILES = 2;
+/** "Business License" — either document proves a registered business. */
+const BUSINESS_TYPES: SupplierDocumentType[] = [
+  SupplierDocumentType.BUSINESS_LICENSE,
+  SupplierDocumentType.BUSINESS_REGISTRATION,
+];
+
+/** The design asks for a vendor type only; an individual is the one type that is not a company. */
+export function kindForType(vendorType: VendorType): VendorKind {
+  return vendorType === VendorType.INDIVIDUAL ? VendorKind.INDIVIDUAL : VendorKind.COMPANY;
+}
 
 type VendorWithDocuments = Prisma.VendorProfileGetPayload<{ include: typeof vendorInclude }>;
 
@@ -82,12 +107,19 @@ export class VendorService {
       throw new ConflictException('This account already has a vendor profile');
     }
 
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { name: true, experienceChosenAt: true },
+    });
+
     const vendor = await this.prisma.$transaction(async (tx) => {
       const created = await tx.vendorProfile.create({
         data: {
           userId,
+          contactName: dto.contactName ?? user.name,
           businessName: dto.businessName,
-          kind: dto.kind,
+          kind: dto.kind ?? kindForType(dto.vendorType),
+          termsAcceptedAt: new Date(),
           vendorType: dto.vendorType,
           email: dto.email,
           phone: dto.phone,
@@ -102,6 +134,11 @@ export class VendorService {
         where: { userId_role: { userId, role: 'VENDOR' } },
         create: { userId, role: 'VENDOR' },
         update: {},
+      });
+      // They chose "list my equipment" to get here; open the vendor app for them.
+      await tx.user.update({
+        where: { id: userId },
+        data: { activeRole: 'VENDOR', experienceChosenAt: user.experienceChosenAt ?? new Date() },
       });
 
       if (dto.additionalPhone) {
@@ -131,9 +168,11 @@ export class VendorService {
   async updateProfile(userId: string, dto: UpdateVendorProfileDto): Promise<VendorProfileResponse> {
     const vendor = await this.requireVendor(userId);
 
+    // A new vendor type implies its kind unless the kind is sent explicitly.
+    const kind = dto.kind ?? (dto.vendorType ? kindForType(dto.vendorType) : undefined);
     const identityChanged =
       (dto.businessName !== undefined && dto.businessName !== vendor.businessName) ||
-      (dto.kind !== undefined && dto.kind !== vendor.kind);
+      (kind !== undefined && kind !== vendor.kind);
 
     const requiresRereview = identityChanged && vendor.status === VerificationStatus.VERIFIED;
 
@@ -141,6 +180,7 @@ export class VendorService {
       where: { id: vendor.id },
       data: {
         ...dto,
+        kind,
         ...(requiresRereview
           ? { status: VerificationStatus.PENDING_REVIEW, verifiedAt: null }
           : {}),
@@ -206,6 +246,16 @@ export class VendorService {
       );
     }
 
+    // An ID has a front and a back: up to two files, kept side by side. Anything else is one
+    // file per type, and a new upload replaces the old one.
+    const isId = ID_TYPES.includes(type);
+    const existingIds = vendor.documents.filter((d) => ID_TYPES.includes(d.type));
+    if (isId && existingIds.length >= MAX_ID_FILES) {
+      throw new ConflictException(
+        `Your ID already has ${MAX_ID_FILES} files (front and back). Remove one to replace it.`,
+      );
+    }
+
     const stored = await this.storage.put({
       buffer: file.buffer,
       originalName: file.originalname,
@@ -213,7 +263,7 @@ export class VendorService {
       folder: `vendors/${vendor.id}/documents`,
     });
 
-    const superseded = vendor.documents.filter((d) => d.type === type);
+    const superseded = isId ? [] : vendor.documents.filter((d) => d.type === type);
 
     const doc = await this.prisma.$transaction(async (tx) => {
       if (superseded.length > 0) {
@@ -399,6 +449,51 @@ export class VendorService {
       }),
     ]);
 
+    const listingCard = {
+      name: true,
+      images: { where: { isPrimary: true }, take: 1, select: { fileKey: true } },
+    } as const;
+    const [returns, toPrepare, upcoming] = await Promise.all([
+      this.prisma.booking.findMany({
+        where: {
+          vendorId: vendor.id,
+          status: { in: [BookingStatus.RETURN_SCHEDULED, BookingStatus.RETURN_RECEIVED] },
+        },
+        select: { listing: { select: { name: true } } },
+        take: 1,
+      }),
+      // Accepted and paid-for or awaiting payment, but not yet marked ready.
+      this.prisma.booking.findMany({
+        where: {
+          vendorId: vendor.id,
+          supplierResponse: 'ACCEPTED',
+          status: { in: [BookingStatus.AWAITING_PAYMENT, BookingStatus.BOOKING_CONFIRMED] },
+          OR: [{ handover: null }, { handover: { preparedAt: null } }],
+        },
+        select: { reference: true, listing: { select: { name: true } } },
+        orderBy: { startDate: 'asc' },
+      }),
+      this.prisma.booking.findMany({
+        where: {
+          vendorId: vendor.id,
+          status: {
+            in: [
+              BookingStatus.ESKISTA_REVIEW,
+              BookingStatus.AWAITING_PAYMENT,
+              BookingStatus.BOOKING_CONFIRMED,
+            ],
+          },
+          supplierResponse: 'ACCEPTED',
+        },
+        include: {
+          listing: { select: listingCard },
+          customer: { select: { customer: { select: { organisationName: true } } } },
+        },
+        orderBy: { startDate: 'asc' },
+        take: 5,
+      }),
+    ]);
+
     const needsAttention: VendorDashboardResponse['needsAttention'] = [];
     if (pendingRequests > 0) {
       needsAttention.push({
@@ -406,7 +501,19 @@ export class VendorService {
         count: pendingRequests,
         title: `${pendingRequests} Rental Request${pendingRequests === 1 ? '' : 's'}`,
         subtitle: 'Confirm equipment availability',
-        actionPath: '/vendor/bookings?status=pending',
+        actionPath: '/api/v1/vendor/bookings?tab=pending',
+      });
+    }
+    if (toPrepare.length > 0) {
+      needsAttention.push({
+        kind: 'PREPARE_EQUIPMENT',
+        count: toPrepare.length,
+        title: `${toPrepare.length} Booking${toPrepare.length === 1 ? '' : 's'} to Prepare`,
+        subtitle:
+          toPrepare.length === 1
+            ? `Prepare ${toPrepare[0].listing?.name ?? 'the equipment'} for handover`
+            : 'Prepare the equipment for handover',
+        actionPath: `/api/v1/vendor/bookings/${toPrepare[0].reference}/preparation`,
       });
     }
     if (returnsDue > 0) {
@@ -414,8 +521,11 @@ export class VendorService {
         kind: 'EQUIPMENT_RETURNS',
         count: returnsDue,
         title: `${returnsDue} Equipment Return${returnsDue === 1 ? '' : 's'}`,
-        subtitle: 'Returns scheduled or awaiting inspection',
-        actionPath: '/vendor/bookings?status=returning',
+        subtitle:
+          returnsDue === 1
+            ? `${returns[0].listing?.name ?? 'Equipment'} return scheduled`
+            : 'Returns scheduled or awaiting inspection',
+        actionPath: '/api/v1/vendor/bookings?tab=active',
       });
     }
     if (listingsMissingAvailability > 0) {
@@ -424,17 +534,37 @@ export class VendorService {
         count: listingsMissingAvailability,
         title: `${listingsMissingAvailability} Equipment Listing${listingsMissingAvailability === 1 ? '' : 's'}`,
         subtitle: 'Missing availability information',
-        actionPath: '/vendor/inventory?filter=incomplete',
+        actionPath: '/api/v1/vendor/equipment',
       });
     }
 
+    // Greeting in Addis Ababa time (UTC+3, no daylight saving).
+    const hour = (new Date().getUTCHours() + 3) % 24;
+    const greeting = hour < 12 ? 'Good Morning' : hour < 17 ? 'Good Afternoon' : 'Good Evening';
+
     return {
+      greeting,
+      businessName: vendor.businessName,
+      isVerified: vendor.status === VerificationStatus.VERIFIED,
+      logoUrl: vendor.logoKey ? this.storage.urlFor(vendor.logoKey) : null,
       activeRentals,
       availableEquipment,
       pendingRequests,
       monthEarningsMinor: monthEarnings._sum.netMinor ?? 0,
       currency: DEFAULT_CURRENCY,
       needsAttention,
+      upcomingRentals: upcoming.map((b) => {
+        const image = b.listing?.images[0];
+        return {
+          reference: b.reference,
+          productName: b.listing?.name ?? '—',
+          productImageUrl: image ? this.storage.urlFor(image.fileKey) : null,
+          customerOrganisation: b.customer.customer?.organisationName ?? null,
+          startDate: b.startDate.toISOString().slice(0, 10),
+          endDate: b.endDate.toISOString().slice(0, 10),
+          badge: vendorBadge(b.status, b.supplierResponse),
+        };
+      }),
     };
   }
 
@@ -461,21 +591,16 @@ export class VendorService {
    * vendor signs, tracked in postSubmissionRequirements below.
    */
   private outstandingRequirements(vendor: VendorWithDocuments): string[] {
-    const present = new Set(
-      vendor.documents.filter((d) => d.status !== DocumentStatus.REJECTED).map((d) => d.type),
-    );
-
-    const required: SupplierDocumentType[] = [SupplierDocumentType.FAYDA_ID];
-    if (vendor.kind === VendorKind.COMPANY) {
-      required.push(SupplierDocumentType.BUSINESS_REGISTRATION);
+    const usable = vendor.documents.filter((d) => d.status !== DocumentStatus.REJECTED);
+    const missing: string[] = [];
+    if (!usable.some((d) => ID_TYPES.includes(d.type))) missing.push('Upload your ID');
+    if (
+      vendor.kind === VendorKind.COMPANY &&
+      !usable.some((d) => BUSINESS_TYPES.includes(d.type))
+    ) {
+      missing.push('Upload your business license');
     }
-
-    const labels: Record<string, string> = {
-      FAYDA_ID: 'Upload your Fayda ID',
-      BUSINESS_REGISTRATION: 'Upload your business registration',
-    };
-
-    const missing = required.filter((type) => !present.has(type)).map((t) => labels[t] ?? t);
+    if (!vendor.contactName) missing.push('Add your full name');
 
     if (!vendor.logoKey) missing.push('Add a profile picture or logo');
     if (!vendor.phone) missing.push('Add a phone number');
@@ -547,8 +672,17 @@ export class VendorService {
       ...this.outstandingRequirements(vendor),
       ...this.postSubmissionRequirements(vendor),
     ];
+    const group = (types: SupplierDocumentType[], required: boolean) => {
+      const files = vendor.documents.filter((d) => types.includes(d.type));
+      return {
+        files: files.map((d) => this.toDocumentResponse(d)),
+        verified: files.length > 0 && files.every((d) => d.status === DocumentStatus.VERIFIED),
+        required,
+      };
+    };
     return {
       id: vendor.id,
+      contactName: vendor.contactName,
       businessName: vendor.businessName,
       kind: vendor.kind,
       vendorType: vendor.vendorType,
@@ -563,7 +697,24 @@ export class VendorService {
       ratingAvg: Number(vendor.ratingAvg),
       ratingCount: vendor.ratingCount,
       createdAt: vendor.createdAt,
+      joinedLabel: `Joined Since ${vendor.createdAt.toLocaleDateString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric',
+        timeZone: 'UTC',
+      })}`,
+      isVerified: vendor.status === VerificationStatus.VERIFIED,
+      termsAcceptedAt: vendor.termsAcceptedAt,
+      stats: {
+        rentals: vendor._count.bookings,
+        equipment: vendor._count.listings,
+        rating: vendor.ratingCount > 0 ? Number(vendor.ratingAvg) : null,
+      },
       documents: vendor.documents.map((d) => this.toDocumentResponse(d)),
+      verification: {
+        id: group(ID_TYPES, true),
+        businessLicense: group(BUSINESS_TYPES, vendor.kind === VendorKind.COMPANY),
+      },
       outstandingRequirements: outstanding,
       canSubmitForVerification:
         outstanding.length === 0 &&
