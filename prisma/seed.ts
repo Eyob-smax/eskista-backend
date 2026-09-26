@@ -13,6 +13,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { crc32, deflateSync } from 'node:zlib';
 import { computePriceBreakdown } from '../src/common/money';
 import { validateEnv } from '../src/config/env.validation';
 import { scriptConfig, syncLocalToCloudinary } from '../src/modules/storage/sync-to-cloudinary';
@@ -73,6 +74,55 @@ const STORAGE_ROOT = process.env.STORAGE_LOCAL_ROOT ?? './storage';
  * GET /vendor/me/agreement fail once anything actually tried to read it. Seeded data
  * should be indistinguishable from data the app produced itself.
  */
+/**
+ * A real PNG — a soft vertical gradient in the given colour — so seeded listing photos are
+ * files that exist and that Cloudinary accepts, rather than keys pointing at nothing.
+ */
+function placeholderPng(width: number, height: number, rgb: [number, number, number]): Buffer {
+  const chunk = (type: string, data: Buffer) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const body = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(body) >>> 0);
+    return Buffer.concat([len, body, crc]);
+  };
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8; // bit depth
+  header[9] = 2; // truecolour RGB
+  const rows: Buffer[] = [];
+  for (let y = 0; y < height; y++) {
+    const shade = 0.75 + (0.25 * y) / height;
+    const row = Buffer.alloc(1 + width * 3);
+    for (let x = 0; x < width; x++) {
+      row[1 + x * 3] = Math.round(rgb[0] * shade);
+      row[2 + x * 3] = Math.round(rgb[1] * shade);
+      row[3 + x * 3] = Math.round(rgb[2] * shade);
+    }
+    rows.push(row);
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(Buffer.concat(rows))),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+function writeSeedFile(key: string, bytes: Buffer): void {
+  const absolute = join(STORAGE_ROOT, key);
+  mkdirSync(dirname(absolute), { recursive: true });
+  writeFileSync(absolute, bytes);
+}
+
+const PHOTO_COLOURS: [number, number, number][] = [
+  [40, 62, 88],
+  [196, 120, 60],
+  [70, 120, 96],
+];
+
 function freezeSeedDocument(key: string, body: string): string {
   const absolute = join(STORAGE_ROOT, key);
   mkdirSync(dirname(absolute), { recursive: true });
@@ -1090,10 +1140,16 @@ async function seedListings(
     });
 
     await prisma.listingImage.deleteMany({ where: { listingId: listing.id } });
+    for (let i = 0; i < 3; i++) {
+      writeSeedFile(
+        `listings/${listing.id}/${i + 1}.png`,
+        placeholderPng(640, 480, PHOTO_COLOURS[i % PHOTO_COLOURS.length]),
+      );
+    }
     await prisma.listingImage.createMany({
       data: Array.from({ length: 3 }, (_, i) => ({
         listingId: listing.id,
-        fileKey: `listings/${listing.id}/${i + 1}.jpg`,
+        fileKey: `listings/${listing.id}/${i + 1}.png`,
         altText: `${l.name} — photo ${i + 1}`,
         isPrimary: i === 0,
         sortOrder: i,

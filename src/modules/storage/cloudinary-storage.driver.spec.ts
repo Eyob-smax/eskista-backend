@@ -153,6 +153,23 @@ describe('CloudinaryStorageDriver', () => {
     });
   });
 
+  it('reports a corrupt image as a bad upload, not a server error', async () => {
+    uploadStream.mockImplementationOnce(((
+      _options: unknown,
+      callback: (e: unknown, r: unknown) => void,
+    ) => ({
+      end: () => callback({ http_code: 400, message: 'Invalid image file' }, undefined),
+    })) as never);
+    await expect(
+      driver.put({
+        buffer: Buffer.from('not a png'),
+        originalName: 'a.png',
+        mimeType: 'image/png',
+        folder: 'talent/t1/public/avatar',
+      }),
+    ).rejects.toThrow('could not be processed');
+  });
+
   it('refuses traversal', async () => {
     await expect(driver.read('../secrets.txt')).rejects.toThrow('unsafe');
   });

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { extname, posix } from 'node:path';
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary, type UploadApiResponse } from 'cloudinary';
 import type { Env } from '../../config/env.validation';
@@ -74,6 +74,14 @@ export class CloudinaryStorageDriver implements StorageDriver {
           },
           (error, result) => {
             if (error || !result) {
+              // Cloudinary answers 400 when the bytes are not what the MIME type claimed
+              // ("Invalid image file"). That is the uploader's mistake, not an outage.
+              if (error?.http_code === 400) {
+                reject(
+                  new BadRequestException(`The file could not be processed: ${error.message}`),
+                );
+                return;
+              }
               reject(
                 new Error(`Cloudinary upload failed for ${key}: ${error?.message ?? 'no result'}`),
               );
