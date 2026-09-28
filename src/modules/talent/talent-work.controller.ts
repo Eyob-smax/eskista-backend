@@ -35,6 +35,7 @@ import {
   DeclineAgreementDto,
   UploadSignedCopyDto,
 } from '../customer-bookings/dto/lifecycle.dto';
+import { ConfirmReceiptDto } from '../vendor-bookings/dto/vendor-booking.dto';
 import {
   DeclineRequestDto,
   HireRequestResponse,
@@ -44,6 +45,7 @@ import {
   EngagementCardResponse,
   EngagementDetailResponse,
   ListEngagementsQuery,
+  TalentCompletionResponse,
   TalentCvResponse,
   TalentDashboardResponse,
   TalentEarningsResponse,
@@ -276,6 +278,58 @@ The venue shows once hired; **access notes unlock once the client has paid**
     @Param('reference') reference: string,
   ): Promise<EngagementDetailResponse> {
     return this.work.getEngagement(userId, reference);
+  }
+
+  @Post('bookings/:reference/payout/confirm')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Confirm Payment',
+    description:
+      '"Could you please confirm that you’ve received your payment?" `confirmed: true`: ' +
+      '**Payment Received!** — complete the booking now, or it closes automatically in 24 ' +
+      'hours. `false` (Not-Confirmed) alerts Eskista. Open once Eskista has paid out.',
+  })
+  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
+  @ApiOkResponse({ type: TalentCompletionResponse })
+  @ApiConflictResponse({ description: 'Not paid out yet, or already confirmed.' })
+  confirmPayout(
+    @CurrentUser('id') userId: string,
+    @Param('reference') reference: string,
+    @Body() dto: ConfirmReceiptDto,
+  ): Promise<TalentCompletionResponse> {
+    return this.work.confirmPayout(userId, reference, dto.confirmed, dto.note);
+  }
+
+  @Post('bookings/:reference/complete')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Complete the booking',
+    description: 'Closes a settled engagement once the payout is confirmed.',
+  })
+  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
+  @ApiOkResponse({ type: EngagementDetailResponse })
+  @ApiConflictResponse({ description: 'Payout not confirmed, or not settled.' })
+  complete(
+    @CurrentUser('id') userId: string,
+    @Param('reference') reference: string,
+  ): Promise<EngagementDetailResponse> {
+    return this.work.complete(userId, reference);
+  }
+
+  @Get('bookings/:reference/settlement-record.pdf')
+  @ApiOperation({ summary: 'Settlement Record (PDF)', description: 'What you were paid for it.' })
+  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
+  @ApiOkResponse({
+    content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } },
+  })
+  async settlementPdf(
+    @CurrentUser('id') userId: string,
+    @Param('reference') reference: string,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } = await this.work.settlementPdf(userId, reference);
+    res.set(PDF_HEADERS(filename));
+    return new StreamableFile(buffer);
   }
 
   @Get('bookings/:reference/agreement')

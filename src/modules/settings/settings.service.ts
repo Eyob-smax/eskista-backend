@@ -21,7 +21,19 @@ export const SETTING_KEYS = {
   maxInvitations: 'hiring.max_invitations',
   invitationTtlHours: 'hiring.invitation_ttl_hours',
   selectionTtlHours: 'hiring.selection_ttl_hours',
+  company: 'company.details',
+  payoutDelayDays: 'payout.delay_days',
 } as const;
+
+/** Eskista's own details, printed at the top of every invoice. */
+export interface CompanyDetails {
+  legalName: string;
+  tin: string | null;
+  vatNumber: string | null;
+  address: string;
+  phone: string;
+  email: string | null;
+}
 
 /** The three limits on a multi-talent hire request, all admin-editable. */
 export interface HiringSettings {
@@ -136,6 +148,26 @@ export class SettingsService {
     return { maxInvitations, invitationTtlHours, selectionTtlHours };
   }
 
+  /** Eskista's legal name, TIN and address for invoices. Admin-editable. */
+  async company(): Promise<CompanyDetails> {
+    const value = await this.raw(SETTING_KEYS.company);
+    const v = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+    const str = (x: unknown) => (typeof x === 'string' && x.trim() ? x.trim() : null);
+    return {
+      legalName: str(v.legalName) ?? 'Eskista Marketplace PLC',
+      tin: str(v.tin),
+      vatNumber: str(v.vatNumber),
+      address: str(v.address) ?? 'Addis Ababa, Ethiopia',
+      phone: str(v.phone) ?? (await this.supportPhone()),
+      email: str(v.email),
+    };
+  }
+
+  /** Days after an engagement completes that its payout is expected. Default one week. */
+  async payoutDelayDays(): Promise<number> {
+    return this.getNumber(SETTING_KEYS.payoutDelayDays, 7, 0, 90);
+  }
+
   /** Invalidates the cache — call after an admin edits a setting. */
   invalidate(key?: string): void {
     if (key) this.cache.delete(key);
@@ -161,6 +193,8 @@ export class SettingsService {
     max: number,
   ): Promise<number> {
     const value = await this.raw(key);
+    // An unset setting falls back. Number(null) is 0, which would otherwise pass as a value.
+    if (value === null || value === undefined || value === '') return fallback;
     const num = typeof value === 'number' ? value : Number(value);
     if (!Number.isFinite(num) || !Number.isInteger(num) || num < min || num > max) {
       if (value !== null) {

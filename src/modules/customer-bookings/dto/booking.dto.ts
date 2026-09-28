@@ -354,7 +354,7 @@ export class BookingPaymentResponse {
 
 export class BookingDocumentResponse {
   @ApiProperty({
-    enum: ['RENTAL_AGREEMENT', 'PAYMENT_EVIDENCE', 'SETTLEMENT_RECORD'],
+    enum: ['INVOICE', 'RENTAL_AGREEMENT', 'PAYMENT_EVIDENCE', 'SETTLEMENT_RECORD'],
     example: 'RENTAL_AGREEMENT',
   })
   kind!: string;

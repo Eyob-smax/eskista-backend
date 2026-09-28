@@ -25,6 +25,8 @@ import { VendorModule } from './modules/vendor/vendor.module';
 import { PrismaModule } from './modules/prisma/prisma.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { HiringModule } from './modules/hiring/hiring.module';
+import { InvoicesModule } from './modules/invoices/invoices.module';
+import { SettlementsModule } from './modules/settlements/settlements.module';
 import { TalentModule } from './modules/talent/talent.module';
 
 @Module({
@@ -84,6 +86,8 @@ import { TalentModule } from './modules/talent/talent.module';
     NumberingModule,
     SettingsModule,
     AgreementsModule,
+    InvoicesModule,
+    SettlementsModule,
     AuthModule,
     HealthModule,
     NotificationsModule,

@@ -197,6 +197,11 @@ export class CustomerBookingsService {
           where: { authorId: userId, kind: { not: ReviewKind.PLATFORM_SERVICE } },
         },
         _count: { select: { attachments: true } },
+        invoiceLines: {
+          where: { invoice: { status: { not: 'VOID' } } },
+          select: { invoice: { select: { number: true, combined: true } } },
+          take: 1,
+        },
       },
     });
 
@@ -294,6 +299,7 @@ export class CustomerBookingsService {
       documents: this.toDocuments(
         booking.agreements.filter((a) => a.counterpartyId === userId),
         booking.payments,
+        booking.invoiceLines[0]?.invoice ?? null,
       ),
       activity: this.toActivity(booking.type, booking.statusEvents),
       pendingAgreementReference: pendingAgreement?.id ?? null,
@@ -571,8 +577,20 @@ export class CustomerBookingsService {
   private toDocuments(
     agreements: { documentKey: string | null; status: AgreementStatus }[],
     payments: { receiptFileKey: string }[],
+    invoice: { number: string; combined: boolean } | null,
   ): BookingDocumentResponse[] {
     const documents: BookingDocumentResponse[] = [];
+
+    if (invoice) {
+      documents.push({
+        kind: 'INVOICE',
+        label: invoice.combined
+          ? `Invoice ${invoice.number} (combined)`
+          : `Invoice ${invoice.number}`,
+        url: `/api/v1/customer/invoices/${invoice.number}/pdf`,
+        format: 'PDF',
+      });
+    }
 
     const agreement = agreements.find((a) => a.documentKey);
     if (agreement?.documentKey) {

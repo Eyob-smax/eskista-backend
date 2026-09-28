@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
   AgreementStatus,
   AgreementType,
@@ -6,6 +6,7 @@ import {
   BookingType,
   InvitationStatus,
   Prisma,
+  Role,
   SettlementStatus,
   type Agreement,
 } from '@prisma/client';
@@ -35,11 +36,13 @@ import {
 import { HiringService } from '../hiring/hiring.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
+import { AUTO_CLOSE_HOURS, SettlementsService } from '../settlements/settlements.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
 import type {
   EngagementCardResponse,
   EngagementDetailResponse,
   ListEngagementsQuery,
+  TalentCompletionResponse,
   TalentCvResponse,
   TalentDashboardResponse,
   TalentEarningsResponse,
@@ -97,7 +100,18 @@ type InvitationRow = Prisma.TalentInvitationGetPayload<{ include: typeof request
 
 const engagementInclude = {
   talentDetail: true,
-  settlement: { select: { status: true, paidAt: true } },
+  settlement: {
+    select: {
+      status: true,
+      paidAt: true,
+      expectedAt: true,
+      netMinor: true,
+      currency: true,
+      payoutReference: true,
+      payeeConfirmedAt: true,
+      payeeDisputedAt: true,
+    },
+  },
 } satisfies Prisma.BookingInclude;
 
 type EngagementRow = Prisma.BookingGetPayload<{ include: typeof engagementInclude }>;
@@ -119,6 +133,7 @@ export class TalentWorkService {
     private readonly hiring: HiringService,
     private readonly agreements: AgreementsService,
     private readonly settings: SettingsService,
+    private readonly settlements: SettlementsService,
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
@@ -244,11 +259,21 @@ export class TalentWorkService {
       agreement?.status === AgreementStatus.AWAITING_UPLOAD ||
       agreement?.status === AgreementStatus.REJECTED;
 
+    const s = booking.settlement;
+    const paid = s?.status === SettlementStatus.PAID;
     const actions: EngagementDetailResponse['actions'] = [];
     if (agreementPending) {
       actions.push({ key: 'SIGN_AGREEMENT', label: 'Download & Sign Agreement', primary: true });
+    } else if (paid && !s.payeeConfirmedAt) {
+      actions.push({ key: 'CONFIRM_PAYMENT', label: 'Confirm Payment', primary: true });
+    } else if (s?.payeeConfirmedAt && booking.status === BookingStatus.SETTLEMENT) {
+      actions.push({ key: 'COMPLETE_BOOKING', label: 'Complete Booking', primary: true });
     }
-    actions.push({ key: 'CONTACT_ESKISTA', label: 'Contact Eskista', primary: !agreementPending });
+    actions.push({
+      key: 'CONTACT_ESKISTA',
+      label: 'Contact Eskista',
+      primary: actions.length === 0,
+    });
 
     return {
       ...this.toEngagementCard(booking),
@@ -268,7 +293,110 @@ export class TalentWorkService {
       agreement: agreement ? this.toAgreement(agreement, booking.reference) : null,
       actions,
       supportPhone,
+      payout: s
+        ? {
+            status: s.status,
+            statusLabel: s.status === SettlementStatus.PAID ? 'Paid' : 'Pending',
+            amountMinor: s.netMinor,
+            currency: s.currency,
+            expectedAt: s.expectedAt?.toISOString().slice(0, 10) ?? null,
+            paidAt: s.paidAt?.toISOString() ?? null,
+            payoutReference: s.payoutReference,
+            confirmedAt: s.payeeConfirmedAt?.toISOString() ?? null,
+            disputedAt: s.payeeDisputedAt?.toISOString() ?? null,
+          }
+        : null,
+      documents: s
+        ? [
+            {
+              kind: 'SETTLEMENT_RECORD',
+              label: 'Settlement Record',
+              url: `/api/v1/talent/bookings/${booking.reference}/settlement-record.pdf`,
+              format: 'PDF',
+            },
+          ]
+        : [],
     };
+  }
+
+  // ── Payout ─────────────────────────────────────────────────────────────────
+
+  /**
+   * Confirm Payment: the payout reached the talent. "Payment Received! You can now complete
+   * this booking, or it will automatically close in 24 hours." `confirmed: false` reports it
+   * missing for Eskista to follow up.
+   */
+  async confirmPayout(
+    userId: string,
+    reference: string,
+    confirmed: boolean,
+    note?: string,
+  ): Promise<TalentCompletionResponse> {
+    const booking = await this.requireEngagement(userId, reference);
+    const s = booking.settlement;
+    if (s?.status !== SettlementStatus.PAID) {
+      throw new ConflictException('Eskista has not sent your payout yet');
+    }
+    if (s.payeeConfirmedAt) throw new ConflictException('You have already confirmed this payout');
+
+    const now = new Date();
+    await this.prisma.settlement.update({
+      where: { bookingId: booking.id },
+      data: confirmed
+        ? { payeeConfirmedAt: now, payeeDisputedAt: null, payeeDisputeNote: null }
+        : { payeeDisputedAt: now, payeeDisputeNote: note },
+    });
+    await this.prisma.bookingStatusEvent.create({
+      data: {
+        bookingId: booking.id,
+        fromStatus: booking.status,
+        toStatus: booking.status,
+        actorId: userId,
+        actorRole: Role.TALENT,
+        reason: confirmed ? 'Talent confirmed the payout' : 'Talent reported the payout missing',
+        metadata: note ? { note } : undefined,
+      },
+    });
+    if (confirmed && booking.status === BookingStatus.SETTLEMENT) {
+      await this.settlements.scheduleAutoClose(booking.id, now);
+    }
+
+    return {
+      title: confirmed ? 'Payment Received!' : 'Eskista Has Been Told',
+      message: confirmed
+        ? `Payment confirmed. You can now complete this booking, or it will automatically ` +
+          `close in ${AUTO_CLOSE_HOURS} hours.`
+        : 'Eskista will look into your payout and contact you.',
+      engagement: await this.getEngagement(userId, reference),
+    };
+  }
+
+  async complete(userId: string, reference: string): Promise<EngagementDetailResponse> {
+    const booking = await this.requireEngagement(userId, reference);
+    if (!booking.settlement?.payeeConfirmedAt) {
+      throw new ConflictException('Confirm you received the payment first');
+    }
+    await this.settlements.close(booking.id, userId, Role.TALENT);
+    return this.getEngagement(userId, reference);
+  }
+
+  async settlementPdf(
+    userId: string,
+    reference: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const talent = await this.profiles.requireTalent(userId);
+    const booking = await this.requireEngagement(userId, reference);
+    return this.settlements.recordPdf(booking.id, talent.displayName, this.titleFor(booking));
+  }
+
+  private async requireEngagement(userId: string, reference: string): Promise<EngagementRow> {
+    const talent = await this.profiles.requireTalent(userId);
+    const booking = await this.prisma.booking.findFirst({
+      where: { reference, talentProfileId: talent.id, status: { in: HIRED_STATUSES } },
+      include: engagementInclude,
+    });
+    if (!booking) throw new NotFoundException('Engagement not found');
+    return booking;
   }
 
   // ── Agreement ──────────────────────────────────────────────────────────────

@@ -103,7 +103,8 @@ model User {
   inspectionsDone   Inspection[]
   settlementsPaid   Settlement[]       @relation("SettlementPaidBy")
   batchesPaid       SettlementBatch[]  @relation("BatchPaidBy")
-  invoicesIssued    Invoice[]
+  invoicesIssued    Invoice[]          @relation("InvoiceIssuedBy")
+  invoices          Invoice[]          @relation("CustomerInvoices")
   auditEntries      AdminAuditLog[]
 
   incidentsReported   Incident[]          @relation("IncidentReporter")
@@ -881,7 +882,7 @@ model Booking {
   inspection    Inspection?
   handover      VendorHandover?
   settlement    Settlement?
-  invoice       Invoice?
+  invoiceLines  InvoiceLine[]
   agreements    Agreement[]
   reviews       Review[]
   conversations Conversation[]
@@ -1108,12 +1109,17 @@ model Invoice {
   /// Human-readable and gapless per period, e.g. "ESK-INV-2026-000148".
   number String @unique
 
-  bookingId String        @unique @db.Uuid
-  status    InvoiceStatus @default(DRAFT)
+  /// Who is billed. Every line on the invoice is one of this customer's bookings.
+  customerId String        @db.Uuid
+  /// More than one booking, paid together. Created by the customer ("Pay together") or
+  /// by an admin.
+  combined   Boolean       @default(false)
+  status     InvoiceStatus @default(DRAFT)
 
   currency             String @default("ETB")
   subtotalMinor        Int
   deliveryFeeMinor     Int    @default(0)
+  serviceFeeMinor      Int    @default(0)
   securityDepositMinor Int    @default(0)
   discountMinor        Int    @default(0)
 
@@ -1125,6 +1131,7 @@ model Invoice {
   vatExempt          Boolean @default(false)
   vatExemptionReason String?
 
+  /// Goods and services, VAT included (or excluded when exempt). The deposit is separate.
   totalMinor      Int
   amountPaidMinor Int @default(0)
 
@@ -1146,11 +1153,39 @@ model Invoice {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  booking  Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  issuedBy User?     @relation(fields: [issuedById], references: [id], onDelete: SetNull)
+  customer User          @relation("CustomerInvoices", fields: [customerId], references: [id])
+  issuedBy User?         @relation("InvoiceIssuedBy", fields: [issuedById], references: [id], onDelete: SetNull)
+  lines    InvoiceLine[]
   payments Payment[]
 
   @@index([status, issuedAt])
+  @@index([customerId, status])
+}
+
+/// One booking on an invoice, with its figures frozen at issue. A booking is on at most
+/// one invoice that is not VOID — enforced where invoices are created.
+model InvoiceLine {
+  id        String @id @default(uuid()) @db.Uuid
+  invoiceId String @db.Uuid
+  bookingId String @db.Uuid
+
+  /// "Sony FX3 Cinema Camera · Aug 18 – Aug 21 (3 days)".
+  description          String
+  subtotalMinor        Int
+  deliveryFeeMinor     Int    @default(0)
+  serviceFeeMinor      Int    @default(0)
+  discountMinor        Int    @default(0)
+  taxMinor             Int    @default(0)
+  securityDepositMinor Int    @default(0)
+  /// This line's goods and services, VAT as charged on the invoice. Deposit separate.
+  totalMinor           Int
+  sortOrder            Int    @default(0)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId, sortOrder])
+  @@index([bookingId])
 }
 
 /// Gapless counter for invoice numbers, booking references and settlement batches.
@@ -1195,11 +1230,15 @@ model Payment {
   receiptMimeType  String?
   receiptSizeBytes Int?
 
-  status          PaymentStatus @default(SUBMITTED)
-  rejectionReason String?
-  submittedAt     DateTime      @default(now())
-  verifiedAt      DateTime?
-  verifiedById    String?       @db.Uuid
+  status             PaymentStatus @default(SUBMITTED)
+  rejectionReason    String?
+  /// One transfer can pay a combined invoice. It is recorded as one payment per booking
+  /// (so each booking's own checks keep working), all sharing the receipt; this holds the
+  /// whole amount the customer declared.
+  declaredTotalMinor Int?
+  submittedAt        DateTime      @default(now())
+  verifiedAt         DateTime?
+  verifiedById       String?       @db.Uuid
 
   booking    Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   invoice    Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
@@ -1372,6 +1411,12 @@ model Settlement {
   paidById        String?          @db.Uuid
   payoutReference String?
   notes           String?
+
+  /// The payee's "Confirm Payment": the money reached them. Talents confirm here; vendors
+  /// confirm on their VendorHandover alongside their other steps.
+  payeeConfirmedAt DateTime?
+  payeeDisputedAt  DateTime?
+  payeeDisputeNote String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

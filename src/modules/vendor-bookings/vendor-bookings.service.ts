@@ -4,9 +4,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
-  Logger,
   NotFoundException,
-  type OnModuleInit,
 } from '@nestjs/common';
 import {
   AgreementType,
@@ -22,16 +20,14 @@ import {
   SupplierResponse,
 } from '@prisma/client';
 import { paginate, type Paginated } from '../../common/dto/pagination.dto';
-import { DEFAULT_CURRENCY, formatMoney } from '../../common/money';
+import { DEFAULT_CURRENCY } from '../../common/money';
 import {
   IMAGE_MIME_TYPES,
   UPLOAD_LIMITS,
   assertValidFile,
   type UploadedFile,
 } from '../../common/upload';
-import { renderSettlementPdf } from '../documents/settlement-renderer';
-import { JOB_NAMES, jobIdFor } from '../jobs/jobs.constants';
-import { JobsService } from '../jobs/jobs.service';
+import { AUTO_CLOSE_HOURS, SettlementsService } from '../settlements/settlements.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
@@ -107,7 +103,6 @@ const RETURNED: BookingStatus[] = [
 ];
 
 const MAX_HANDOVER_PHOTOS = 6;
-const AUTO_CLOSE_HOURS = 24;
 
 const PRIVACY_NOTE =
   'Client contact details are not shared with vendors. All communication goes through Eskista.';
@@ -151,21 +146,13 @@ type BookingRow = Prisma.BookingGetPayload<{ include: typeof bookingInclude }>;
  * their contact details.
  */
 @Injectable()
-export class VendorBookingsService implements OnModuleInit {
-  private readonly logger = new Logger(VendorBookingsService.name);
-
+export class VendorBookingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
-    private readonly jobs: JobsService,
+    private readonly settlements: SettlementsService,
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
-
-  onModuleInit(): void {
-    this.jobs.registerHandler(JOB_NAMES.bookingAutoClose, ({ bookingId }) =>
-      this.autoClose(bookingId),
-    );
-  }
 
   // ── List & detail ──────────────────────────────────────────────────────────
 
@@ -607,14 +594,7 @@ export class VendorBookingsService implements OnModuleInit {
       dto.note,
     );
 
-    if (dto.confirmed) {
-      await this.jobs.scheduleAt(
-        JOB_NAMES.bookingAutoClose,
-        { bookingId: booking.id },
-        new Date(now.getTime() + AUTO_CLOSE_HOURS * 3_600_000),
-        jobIdFor(JOB_NAMES.bookingAutoClose, booking.id),
-      );
-    }
+    if (dto.confirmed) await this.settlements.scheduleAutoClose(booking.id, now);
 
     return {
       reference,
@@ -633,8 +613,7 @@ export class VendorBookingsService implements OnModuleInit {
     if (!booking.handover?.payoutConfirmedAt) {
       throw new ConflictException('Confirm you received the payment first');
     }
-    await this.close(booking.id, userId, Role.VENDOR);
-    await this.jobs.cancel(jobIdFor(JOB_NAMES.bookingAutoClose, booking.id));
+    await this.settlements.close(booking.id, userId, Role.VENDOR);
     return this.findOne(userId, reference);
   }
 
@@ -644,26 +623,11 @@ export class VendorBookingsService implements OnModuleInit {
     reference: string,
   ): Promise<{ buffer: Buffer; filename: string }> {
     const booking = await this.requireOwnedBooking(userId, reference);
-    const s = booking.settlement;
-    if (!s) throw new NotFoundException('No settlement has been recorded for this booking yet');
-    const money = (minor: number) => formatMoney(minor, s.currency);
-
-    const buffer = await renderSettlementPdf({
-      reference,
-      vendorName: booking.vendor?.businessName ?? '—',
-      productName: booking.listing?.name ?? '—',
-      rentalDates: `${isoDay(booking.startDate)} → ${isoDay(booking.endDate)}`,
-      status: s.status,
-      paidAt: s.paidAt ? isoDay(s.paidAt) : null,
-      payoutReference: s.payoutReference ?? s.batch?.payoutReference ?? null,
-      rows: [
-        { label: 'Your listed price for the rental', value: money(booking.supplierEarningsMinor) },
-        { label: 'Deductions (damage / late return)', value: `-${money(s.deductionMinor)}` },
-        { label: 'Paid to you', value: money(s.netMinor), emphasis: true },
-      ],
-      generatedAt: new Date(),
-    });
-    return { buffer, filename: `${reference}-settlement.pdf` };
+    return this.settlements.recordPdf(
+      booking.id,
+      booking.vendor?.businessName ?? '—',
+      booking.listing?.name ?? '—',
+    );
   }
 
   // ── Earnings ───────────────────────────────────────────────────────────────
@@ -799,42 +763,6 @@ export class VendorBookingsService implements OnModuleInit {
   }
 
   // ── internals ──────────────────────────────────────────────────────────────
-
-  /** Closes a settled booking. Idempotent: guarded on the status it expects. */
-  private async close(bookingId: string, actorId: string | null, role: Role | null) {
-    const { count } = await this.prisma.booking.updateMany({
-      where: { id: bookingId, status: BookingStatus.SETTLEMENT },
-      data: { status: BookingStatus.CLOSED },
-    });
-    if (count === 0) {
-      const b = await this.prisma.booking.findUnique({ where: { id: bookingId } });
-      if (b?.status === BookingStatus.CLOSED) return;
-      throw new ConflictException('Only a settled booking can be completed');
-    }
-    await this.prisma.bookingStatusEvent.create({
-      data: {
-        bookingId,
-        fromStatus: BookingStatus.SETTLEMENT,
-        toStatus: BookingStatus.CLOSED,
-        actorId,
-        actorRole: role,
-        reason: role ? 'Vendor completed the booking' : 'Closed automatically after payout',
-      },
-    });
-    // Now the customer can be asked how it went.
-    await this.jobs.scheduleFeedbackRequest(bookingId, new Date());
-  }
-
-  private async autoClose(bookingId: string): Promise<void> {
-    const booking = await this.prisma.booking.findUnique({
-      where: { id: bookingId },
-      include: { handover: true },
-    });
-    if (!booking?.handover?.payoutConfirmedAt) return;
-    if (booking.status !== BookingStatus.SETTLEMENT) return;
-    await this.close(bookingId, null, null);
-    this.logger.log(`Auto-closed ${booking.reference} ${AUTO_CLOSE_HOURS}h after payout`);
-  }
 
   /** A vendor step, on the booking's history, without moving its status. */
   private async recordStep(booking: BookingRow, userId: string, reason: string, note?: string) {

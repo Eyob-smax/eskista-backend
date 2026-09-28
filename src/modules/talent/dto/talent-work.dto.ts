@@ -16,7 +16,13 @@ export class TimelineStepResponse {
 
 export class TalentActionResponse {
   @ApiProperty({
-    enum: ['SIGN_AGREEMENT', 'VIEW_DETAILS', 'CONTACT_ESKISTA'],
+    enum: [
+      'SIGN_AGREEMENT',
+      'CONFIRM_PAYMENT',
+      'COMPLETE_BOOKING',
+      'VIEW_DETAILS',
+      'CONTACT_ESKISTA',
+    ],
     example: 'SIGN_AGREEMENT',
   })
   key!: string;
@@ -88,6 +94,46 @@ export class EngagementDetailResponse extends EngagementCardResponse {
   agreement!: CustomerAgreementResponse | null;
   @ApiProperty({ type: [TalentActionResponse] }) actions!: TalentActionResponse[];
   @ApiProperty({ description: 'Eskista’s number, for Contact Eskista.' }) supportPhone!: string;
+
+  @ApiPropertyOptional({
+    type: () => TalentPayoutResponse,
+    nullable: true,
+    description: 'Once the engagement is done: what you are owed and whether it has been paid.',
+  })
+  payout!: TalentPayoutResponse | null;
+
+  @ApiProperty({
+    type: () => [TalentDocumentLinkResponse],
+    description: 'Settlement Record once a payout is recorded.',
+  })
+  documents!: TalentDocumentLinkResponse[];
+}
+
+export class TalentPayoutResponse {
+  @ApiProperty({ enum: ['PENDING', 'IN_BATCH', 'PAID', 'ON_HOLD'] }) status!: string;
+  @ApiProperty({ example: 'Pending' }) statusLabel!: string;
+  @ApiProperty({ description: 'Your rate in full.' }) amountMinor!: number;
+  @ApiProperty() currency!: string;
+  @ApiPropertyOptional({ nullable: true }) expectedAt!: string | null;
+  @ApiPropertyOptional({ nullable: true }) paidAt!: string | null;
+  @ApiPropertyOptional({ nullable: true }) payoutReference!: string | null;
+  @ApiPropertyOptional({ nullable: true, description: 'You confirmed it arrived.' })
+  confirmedAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, description: 'You reported it missing.' })
+  disputedAt!: string | null;
+}
+
+export class TalentDocumentLinkResponse {
+  @ApiProperty({ enum: ['SETTLEMENT_RECORD'] }) kind!: string;
+  @ApiProperty({ example: 'Settlement Record' }) label!: string;
+  @ApiProperty() url!: string;
+  @ApiProperty({ example: 'PDF' }) format!: string;
+}
+
+export class TalentCompletionResponse {
+  @ApiProperty({ example: 'Payment Received!' }) title!: string;
+  @ApiProperty() message!: string;
+  @ApiProperty({ type: () => EngagementDetailResponse }) engagement!: EngagementDetailResponse;
 }
 
 export class TalentDashboardResponse {

@@ -216,6 +216,18 @@ export class PaymentInstructionsResponse {
     description: 'False while an earlier submission is still being verified.',
     example: true,
   })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'ESK-INV-2026-000201',
+    description:
+      'The invoice this booking is billed on. Use it as the transfer reference. When the ' +
+      'booking is on a combined invoice (`combinedInvoice: true`), pay that invoice instead.',
+  })
+  invoiceNumber!: string | null;
+
+  @ApiProperty({ description: 'This booking is paid together with others on one invoice.' })
+  combinedInvoice!: boolean;
+
   canSubmit!: boolean;
 
   @ApiPropertyOptional({

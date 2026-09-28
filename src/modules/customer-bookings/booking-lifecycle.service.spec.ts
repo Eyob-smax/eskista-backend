@@ -36,6 +36,8 @@ function build(booking: Record<string, unknown> | null, extra: Record<string, un
     {} as never,
     { send: vi.fn() } as never,
     { cancel: vi.fn() } as never,
+    { ensureBookingInvoice: vi.fn().mockResolvedValue(null) } as never,
+    { ensureForBooking: vi.fn().mockResolvedValue({}) } as never,
     { put: vi.fn(), urlFor: (k: string) => `/files/${k}` } as never,
   );
   return { service, prisma, settings };

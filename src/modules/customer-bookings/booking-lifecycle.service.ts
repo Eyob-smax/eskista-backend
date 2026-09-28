@@ -28,12 +28,15 @@ import {
 } from '../../common/upload';
 import type { UploadedFile } from '../../common/upload';
 import { AgreementsService } from '../agreements/agreements.service';
+import { InvoicesService } from '../invoices/invoices.service';
+import { SettlementsService } from '../settlements/settlements.service';
 import { renderAgreementPdf } from '../documents/pdf-renderer';
 import { NotificationsService } from '../notifications/notifications.service';
 import { JOB_NAMES, jobIdFor } from '../jobs/jobs.constants';
 import { JobsService } from '../jobs/jobs.service';
 import { NumberingService } from '../numbering/numbering.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { paymentBlocker, readBank, readTelebirr } from './payment-rules';
 import { SettingsService } from '../settings/settings.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
 import {
@@ -124,6 +127,8 @@ export class BookingLifecycleService {
     private readonly agreements: AgreementsService,
     private readonly notifications: NotificationsService,
     private readonly jobs: JobsService,
+    private readonly invoices: InvoicesService,
+    private readonly settlements: SettlementsService,
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
@@ -282,15 +287,18 @@ export class BookingLifecycleService {
     if (!booking) throw new NotFoundException('Booking not found');
 
     const accounts = await this.settings.paymentAccounts();
-    const telebirr = this.readTelebirr(accounts);
-    const bank = this.readBank(accounts);
+    const telebirr = readTelebirr(accounts);
+    const bank = readBank(accounts);
+    const billing = await this.billingFor(booking.id);
 
     const verified = booking.payments
       .filter((p) => p.status === PaymentStatus.VERIFIED)
       .reduce((sum, p) => sum + p.amountMinor, 0);
     const pending = booking.payments.some((p) => p.status === PaymentStatus.SUBMITTED);
 
-    const blockedReason = this.paymentBlocker(booking.status, pending, booking.agreements);
+    const blockedReason = billing.combined
+      ? `This booking is paid together with others on invoice ${billing.invoiceNumber}.`
+      : paymentBlocker(booking.status, pending, booking.agreements);
 
     return {
       bookingReference: booking.reference,
@@ -298,10 +306,13 @@ export class BookingLifecycleService {
       startDate: booking.startDate.toISOString().slice(0, 10),
       endDate: booking.endDate.toISOString().slice(0, 10),
       currency: booking.currency,
-      amountDueMinor: booking.totalMinor + booking.securityDepositMinor,
+      // The invoice decides the amount: a VAT-exempt invoice takes the VAT out.
+      amountDueMinor: billing.amountDueMinor ?? booking.totalMinor + booking.securityDepositMinor,
       amountPaidMinor: verified,
       telebirr,
       bank,
+      invoiceNumber: billing.invoiceNumber,
+      combinedInvoice: billing.combined,
       canSubmit: blockedReason === null,
       blockedReason,
     };
@@ -331,7 +342,13 @@ export class BookingLifecycleService {
     if (!booking) throw new NotFoundException('Booking not found');
 
     const pending = booking.payments.some((p) => p.status === PaymentStatus.SUBMITTED);
-    const blocker = this.paymentBlocker(booking.status, pending, booking.agreements);
+    const billing = await this.billingFor(booking.id);
+    if (billing.combined) {
+      throw new ConflictException(
+        `This booking is paid together with others. Pay invoice ${billing.invoiceNumber} instead.`,
+      );
+    }
+    const blocker = paymentBlocker(booking.status, pending, booking.agreements);
     if (blocker) throw new ConflictException(blocker);
 
     const valid = assertValidFile(file, {
@@ -344,13 +361,16 @@ export class BookingLifecycleService {
       buffer: valid.buffer,
       originalName: valid.originalname,
       mimeType: valid.mimetype,
-      folder: `bookings/${booking.reference}/payments`,
+      // Under the customer, not the booking: the supplier can read the booking's files, and
+      // a receipt carries the customer's own bank details.
+      folder: `customers/${userId}/payments/${booking.reference}`,
     });
 
     const payment = await this.prisma.$transaction(async (tx) => {
       const created = await tx.payment.create({
         data: {
           bookingId: booking.id,
+          invoiceId: billing.invoiceId,
           method: dto.method,
           transactionReference: dto.transactionReference,
           amountMinor: dto.amountMinor,
@@ -430,6 +450,9 @@ export class BookingLifecycleService {
         },
       }),
     ]);
+
+    // The talent's payout is owed from this moment: record it, to be paid by Eskista.
+    await this.settlements.ensureForBooking(booking.id);
 
     return { status: BookingStatus.RENTAL_COMPLETED };
   }
@@ -932,6 +955,31 @@ export class BookingLifecycleService {
 
   // ── internals ──────────────────────────────────────────────────────────────
 
+  /**
+   * The invoice a booking is billed on — issued on first use — and whether it is combined.
+   * Null figures when the booking is not priced yet.
+   */
+  private async billingFor(bookingId: string): Promise<{
+    invoiceId: string | null;
+    invoiceNumber: string | null;
+    combined: boolean;
+    amountDueMinor: number | null;
+  }> {
+    const invoice = await this.invoices.ensureBookingInvoice(bookingId);
+    if (!invoice) {
+      return { invoiceId: null, invoiceNumber: null, combined: false, amountDueMinor: null };
+    }
+    const line = await this.prisma.invoiceLine.findFirst({
+      where: { invoiceId: invoice.id, bookingId },
+    });
+    return {
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.number,
+      combined: invoice.combined,
+      amountDueMinor: line ? line.totalMinor + line.securityDepositMinor : null,
+    };
+  }
+
   private async requireBooking(userId: string, reference: string): Promise<Booking> {
     const booking = await this.prisma.booking.findFirst({
       where: { reference, customerId: userId },
@@ -939,48 +987,6 @@ export class BookingLifecycleService {
     // 404 rather than 403: another customer's reference is not confirmable.
     if (!booking) throw new NotFoundException('Booking not found');
     return booking;
-  }
-
-  /**
-   * Why payment cannot be submitted right now, or null when it can.
-   *
-   * The same rule the booking's `actions` render, enforced here too — a client that
-   * ignores a disabled button must get a 409, not a payment against an unsigned contract.
-   * Payment opens once the signed copy is **uploaded**; Eskista's review of the scan runs
-   * in parallel rather than holding the customer up. No agreement issued yet means nothing
-   * to wait for.
-   */
-  private paymentBlocker(
-    status: BookingStatus,
-    hasPending: boolean,
-    agreements: { status: AgreementStatus }[] = [],
-  ): string | null {
-    if (status === BookingStatus.DRAFT) {
-      return 'Submit your request before paying.';
-    }
-    if (status === BookingStatus.REQUEST_SUBMITTED || status === BookingStatus.ESKISTA_REVIEW) {
-      return 'Eskista is still reviewing your request.';
-    }
-    if (
-      status === BookingStatus.CANCELLED ||
-      status === BookingStatus.REJECTED ||
-      status === BookingStatus.EXPIRED
-    ) {
-      return 'This booking is closed.';
-    }
-    const unsigned = agreements.some(
-      (a) => a.status === AgreementStatus.AWAITING_UPLOAD || a.status === AgreementStatus.REJECTED,
-    );
-    if (unsigned) {
-      return 'Download, sign and upload the rental agreement first.';
-    }
-    if (agreements.some((a) => a.status === AgreementStatus.DECLINED)) {
-      return 'You declined the agreement for this booking. Contact Eskista to continue.';
-    }
-    if (hasPending) {
-      return 'Eskista is verifying your previous payment.';
-    }
-    return null;
   }
 
   /**
@@ -1015,28 +1021,6 @@ export class BookingLifecycleService {
       day: 'numeric',
       timeZone: 'UTC',
     });
-  }
-
-  private readTelebirr(accounts: Record<string, unknown>): PaymentInstructionsResponse['telebirr'] {
-    const raw = accounts.telebirr;
-    if (typeof raw !== 'object' || raw === null) return null;
-    const { number, accountName } = raw as Record<string, unknown>;
-    if (typeof number !== 'string' || typeof accountName !== 'string') return null;
-    return { number, accountName };
-  }
-
-  private readBank(accounts: Record<string, unknown>): PaymentInstructionsResponse['bank'] {
-    const raw = accounts.bank;
-    if (typeof raw !== 'object' || raw === null) return null;
-    const { bank, accountName, accountNumber } = raw as Record<string, unknown>;
-    if (
-      typeof bank !== 'string' ||
-      typeof accountName !== 'string' ||
-      typeof accountNumber !== 'string'
-    ) {
-      return null;
-    }
-    return { bank, accountName, accountNumber };
   }
 
   private toAgreement(

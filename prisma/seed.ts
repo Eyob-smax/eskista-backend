@@ -1345,6 +1345,122 @@ const BOOKING_PLANS: BookingPlan[] = [
   },
 ];
 
+/**
+ * Two hired talent engagements for the payout flow: one under way (the customer's Complete
+ * Service creates the talent's settlement), one settled and paid out (Confirm Payment, then
+ * Complete). References outside the live talent counter's range.
+ */
+async function seedTalentEngagements(
+  userIds: Map<string, string>,
+  talentIds: string[],
+): Promise<void> {
+  const refs = ['ESK-TLT-9001', 'ESK-TLT-9002'];
+  await prisma.booking.deleteMany({ where: { reference: { in: refs } } });
+
+  const plans = [
+    {
+      ref: 'ESK-TLT-9001',
+      talentId: talentIds[0],
+      status: BookingStatus.IN_PROGRESS,
+      start: -1,
+      end: 1,
+      paid: false,
+    },
+    {
+      ref: 'ESK-TLT-9002',
+      talentId: talentIds[1],
+      status: BookingStatus.SETTLEMENT,
+      start: -9,
+      end: -8,
+      paid: true,
+    },
+  ];
+
+  for (const plan of plans) {
+    const talent = await prisma.talentProfile.findUniqueOrThrow({ where: { id: plan.talentId } });
+    const startDate = daysFromNow(plan.start);
+    const endDate = daysFromNow(plan.end);
+    const days = inclusiveDays(startDate, endDate);
+    const priced = computePriceBreakdown({
+      supplierUnitPriceMinor: talent.baseRateMinor ?? etb(5_000),
+      periods: days,
+      taxRateBps: VAT_BPS,
+      commissionRateBps: talent.commissionRateBps ?? DEFAULT_COMMISSION_BPS,
+    });
+
+    const booking = await prisma.booking.create({
+      data: {
+        reference: plan.ref,
+        type: BookingType.TALENT,
+        customerId: userIds.get('customerHabesha')!,
+        talentProfileId: talent.id,
+        startDate,
+        endDate,
+        periods: days,
+        contactPhone: '+251911234567',
+        projectType: 'COMMERCIAL_PRODUCTION',
+        projectDescription: 'Commercial shoot for Habesha Beer.',
+        status: plan.status,
+        supplierResponse: SupplierResponse.ACCEPTED,
+        currency: CURRENCY,
+        unitPriceMinor: priced.unitPriceMinor,
+        subtotalMinor: priced.subtotalMinor,
+        taxRateBps: priced.taxRateBps,
+        taxMinor: priced.taxMinor,
+        totalMinor: priced.totalMinor,
+        commissionRateBps: priced.commissionRateBps,
+        commissionMinor: priced.commissionMinor,
+        supplierEarningsMinor: priced.supplierEarningsMinor,
+        pricedAt: daysFromNow(plan.start - 5),
+        talentDetail: {
+          create: {
+            eventLocation: 'Bole studio, Addis Ababa',
+            city: 'Addis Ababa',
+            venue: 'Bole studio',
+            startTime: '08:00',
+            endTime: '18:00',
+            headcount: 1,
+          },
+        },
+        statusEvents: {
+          create: [
+            { toStatus: BookingStatus.REQUEST_SUBMITTED, createdAt: daysFromNow(plan.start - 7) },
+            { toStatus: BookingStatus.ESKISTA_REVIEW, createdAt: daysFromNow(plan.start - 7) },
+            { toStatus: BookingStatus.AWAITING_PAYMENT, createdAt: daysFromNow(plan.start - 5) },
+            { toStatus: BookingStatus.BOOKING_CONFIRMED, createdAt: daysFromNow(plan.start - 3) },
+            { toStatus: BookingStatus.IN_PROGRESS, createdAt: startDate },
+            ...(plan.status === BookingStatus.SETTLEMENT
+              ? [
+                  { toStatus: BookingStatus.RENTAL_COMPLETED, createdAt: endDate },
+                  { toStatus: BookingStatus.SETTLEMENT, createdAt: daysFromNow(plan.end + 1) },
+                ]
+              : []),
+          ],
+        },
+      },
+    });
+
+    if (plan.paid) {
+      await prisma.settlement.create({
+        data: {
+          bookingId: booking.id,
+          payeeKind: PayeeKind.TALENT,
+          talentProfileId: talent.id,
+          grossMinor: priced.supplierEarningsMinor + priced.commissionMinor,
+          commissionMinor: priced.commissionMinor,
+          netMinor: priced.supplierEarningsMinor,
+          currency: CURRENCY,
+          status: SettlementStatus.PAID,
+          expectedAt: daysFromNow(plan.end + 7),
+          paidAt: daysFromNow(-1),
+          paidById: userIds.get('admin')!,
+          payoutReference: 'CBE-TRF-90217',
+        },
+      });
+    }
+  }
+}
+
 async function seedBookings(
   userIds: Map<string, string>,
   vendorIds: Map<string, string>,
@@ -1355,6 +1471,18 @@ async function seedBookings(
   const refs = BOOKING_PLANS.map((p) => p.ref);
 
   // Clear demo bookings so re-running does not double the dashboard counts.
+  // Invoices are the customer's, not the booking's: clear the demo ones by number first,
+  // or they would outlive their bookings as empty invoices.
+  await prisma.invoice.deleteMany({
+    where: {
+      OR: [
+        { number: { startsWith: 'ESK-INV-2026-0001' } },
+        // Any invoice — combined ones included — that bills one of the demo bookings, so a
+        // re-seed never leaves an invoice with a line missing and stale totals.
+        { lines: { some: { booking: { reference: { in: refs } } } } },
+      ],
+    },
+  });
   await prisma.booking.deleteMany({ where: { reference: { in: refs } } });
 
   // The demo references are hand-picked (ESK-10482…). Move the live counter past them, so a
@@ -1368,6 +1496,13 @@ async function seedBookings(
   `;
 
   let invoiceCounter = 140;
+  // Keep the live invoice counter past the demo numbers (ESK-INV-2026-000141…).
+  await prisma.$executeRaw`
+    INSERT INTO "NumberSequence" ("id", "scope", "period", "lastValue", "updatedAt")
+    VALUES (gen_random_uuid(), 'invoice', '2026', 199, now())
+    ON CONFLICT ("scope", "period")
+    DO UPDATE SET "lastValue" = GREATEST("NumberSequence"."lastValue", 199)
+  `;
 
   for (const plan of BOOKING_PLANS) {
     const listingId = listingIds.get(plan.listingKey)!;
@@ -1472,7 +1607,7 @@ async function seedBookings(
       await prisma.invoice.create({
         data: {
           number: `ESK-INV-2026-${String(invoiceCounter).padStart(6, '0')}`,
-          bookingId: booking.id,
+          customerId: userIds.get(plan.customerKey)!,
           status: plan.withPayment ? InvoiceStatus.PAID : InvoiceStatus.ISSUED,
           currency: CURRENCY,
           subtotalMinor: subtotal,
@@ -1495,6 +1630,17 @@ async function seedBookings(
           issuedAt: daysFromNow(-1),
           dueAt: startDate,
           issuedById: adminId,
+          lines: {
+            create: {
+              bookingId: booking.id,
+              description: `${listing.name} · ${startDate.toISOString().slice(0, 10)} – ${endDate.toISOString().slice(0, 10)}`,
+              subtotalMinor: subtotal,
+              deliveryFeeMinor: deliveryFee,
+              securityDepositMinor: deposit,
+              taxMinor: tax,
+              totalMinor: total,
+            },
+          },
         },
       });
     }
@@ -1877,6 +2023,8 @@ async function main(): Promise<void> {
 
   await seedBookings(userIds, vendorIds, listingIds, templateId);
   console.log(`  bookings:         ${BOOKING_PLANS.length} across the lifecycle`);
+  await seedTalentEngagements(userIds, talentIds);
+  console.log('  talent engagements: 2 (in progress, settled)');
 
   await seedSettlementBatch(userIds);
   await recomputeAggregates();
