@@ -3,7 +3,14 @@ import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type SequenceScope =
-  'booking' | 'talent-booking' | 'agreement' | 'incident' | 'invoice' | 'settlement-batch';
+  | 'booking'
+  | 'talent-booking'
+  | 'agreement'
+  | 'incident'
+  | 'invoice'
+  | 'settlement-batch'
+  | 'payment'
+  | 'settlement';
 
 /**
  * Gapless, human-readable identifiers.
@@ -87,6 +94,21 @@ export class NumberingService {
     const year = now.getUTCFullYear();
     const value = await this.nextValue('invoice', String(year), tx);
     return `ESK-INV-${year}-${String(value).padStart(6, '0')}`;
+  }
+
+  /**
+   * Payment reference, e.g. `PAY-0842` — the "Payment ID" on Payments Verification. One per
+   * transfer: the per-booking rows of a combined-invoice payment share it.
+   */
+  async nextPaymentReference(tx?: Prisma.TransactionClient): Promise<string> {
+    const value = await this.nextValue('payment', 'all', tx);
+    return `PAY-${String(value).padStart(4, '0')}`;
+  }
+
+  /** Settlement reference, e.g. `STL-0842` — one per booking payout. */
+  async nextSettlementReference(tx?: Prisma.TransactionClient): Promise<string> {
+    const value = await this.nextValue('settlement', 'all', tx);
+    return `STL-${String(value).padStart(4, '0')}`;
   }
 
   /** Settlement batch reference, e.g. `ESK-STL-2026-09-0007`. */

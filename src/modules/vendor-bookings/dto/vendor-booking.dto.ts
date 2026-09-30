@@ -309,6 +309,12 @@ export class VendorPaymentDetailsResponse {
   @ApiPropertyOptional({ nullable: true }) payoutReference!: string | null;
   @ApiPropertyOptional({
     nullable: true,
+    example: 'Telebirr •••• 3344',
+    description: 'Where Eskista sent it.',
+  })
+  paidTo!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
     example: 'Settlement paid on Aug 24, 2026 via Bank Transfer',
   })
   note!: string | null;

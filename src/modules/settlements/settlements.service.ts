@@ -5,13 +5,33 @@ import {
   NotFoundException,
   type OnModuleInit,
 } from '@nestjs/common';
-import { BookingStatus, PayeeKind, Role, SettlementStatus, type Settlement } from '@prisma/client';
+import {
+  BookingStatus,
+  InspectionKind,
+  PayeeKind,
+  Role,
+  SettlementStatus,
+  type Settlement,
+} from '@prisma/client';
 import { formatMoney } from '../../common/money';
 import { renderSettlementPdf } from '../documents/settlement-renderer';
 import { JOB_NAMES, jobIdFor } from '../jobs/jobs.constants';
 import { JobsService } from '../jobs/jobs.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NumberingService } from '../numbering/numbering.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
+import { settlementTotals } from './settlement-math';
+
+/** Eskista's payout details for Mark as Paid. */
+export interface MarkPaidInput {
+  /** The bank or Telebirr transaction id of the payout. */
+  payoutReference: string;
+  /** A specific payout account of the payee; their primary one when omitted. */
+  payoutAccountId?: string;
+  paidAt?: Date;
+  note?: string;
+}
 
 /** "It will automatically close in 24 hours" — after the payee confirms the payout. */
 export const AUTO_CLOSE_HOURS = 24;
@@ -34,6 +54,8 @@ export class SettlementsService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
     private readonly jobs: JobsService,
+    private readonly numbering: NumberingService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   onModuleInit(): void {
@@ -50,34 +72,162 @@ export class SettlementsService implements OnModuleInit {
     const existing = await this.prisma.settlement.findUnique({ where: { bookingId } });
     if (existing) return existing;
 
-    const booking = await this.prisma.booking.findUniqueOrThrow({ where: { id: bookingId } });
+    const booking = await this.prisma.booking.findUniqueOrThrow({
+      where: { id: bookingId },
+      include: { inspections: { where: { kind: InspectionKind.RETURN } } },
+    });
     const isTalent = booking.talentProfileId !== null;
     if (!isTalent && !booking.vendorId) {
       throw new ConflictException('This booking has no supplier to settle with');
     }
     const delayDays = await this.settings.payoutDelayDays();
 
+    // What the return inspection withheld from the customer's deposit pays for the damage
+    // to the vendor's gear, so it is passed on to them.
+    const damageFee = booking.inspections[0]?.feeMinor ?? 0;
+    const adjustments =
+      damageFee > 0
+        ? [{ amountMinor: damageFee, reason: 'Damage compensation withheld from the deposit' }]
+        : [];
+    const totals = settlementTotals(booking.supplierEarningsMinor, adjustments);
+
     try {
-      return await this.prisma.settlement.create({
-        data: {
-          bookingId,
-          payeeKind: isTalent ? PayeeKind.TALENT : PayeeKind.VENDOR,
-          talentProfileId: booking.talentProfileId,
-          vendorId: isTalent ? null : booking.vendorId,
-          grossMinor: booking.supplierEarningsMinor + booking.commissionMinor,
-          commissionMinor: booking.commissionMinor,
-          netMinor: booking.supplierEarningsMinor,
-          currency: booking.currency,
-          status: SettlementStatus.PENDING,
-          expectedAt: new Date(Date.now() + delayDays * 86_400_000),
-        },
-      });
+      return await this.prisma.$transaction(async (tx) =>
+        tx.settlement.create({
+          data: {
+            reference: await this.numbering.nextSettlementReference(tx),
+            bookingId,
+            payeeKind: isTalent ? PayeeKind.TALENT : PayeeKind.VENDOR,
+            talentProfileId: booking.talentProfileId,
+            vendorId: isTalent ? null : booking.vendorId,
+            grossMinor: booking.supplierEarningsMinor + booking.commissionMinor,
+            commissionMinor: booking.commissionMinor,
+            adjustmentMinor: totals.adjustmentMinor,
+            deductionMinor: totals.deductionMinor,
+            netMinor: totals.netMinor,
+            currency: booking.currency,
+            status: SettlementStatus.PENDING,
+            expectedAt: new Date(Date.now() + delayDays * 86_400_000),
+            adjustments: { create: adjustments },
+          },
+        }),
+      );
     } catch (error) {
       // Two finishing paths racing on the unique booking id: the loser reads the winner's.
       const again = await this.prisma.settlement.findUnique({ where: { bookingId } });
       if (again) return again;
       throw error;
     }
+  }
+
+  /**
+   * Adds a "± Adjustment" and recomputes the payout. Only before it is paid: a paid
+   * settlement is a record of money that moved.
+   */
+  async addAdjustment(
+    settlementId: string,
+    adminId: string,
+    amountMinor: number,
+    reason: string,
+  ): Promise<Settlement> {
+    const settlement = await this.prisma.settlement.findUnique({
+      where: { id: settlementId },
+      include: { booking: { select: { supplierEarningsMinor: true } } },
+    });
+    if (!settlement) throw new NotFoundException('Settlement not found');
+    if (settlement.status === SettlementStatus.PAID) {
+      throw new ConflictException('A paid settlement cannot be adjusted');
+    }
+    if (amountMinor === 0) throw new ConflictException('An adjustment cannot be zero');
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.settlementAdjustment.create({
+        data: { settlementId, amountMinor, reason, createdById: adminId },
+      });
+      const all = await tx.settlementAdjustment.findMany({ where: { settlementId } });
+      const totals = settlementTotals(settlement.booking.supplierEarningsMinor, all);
+      return tx.settlement.update({ where: { id: settlementId }, data: totals });
+    });
+  }
+
+  /** Removes an adjustment added by mistake, before the settlement is paid. */
+  async removeAdjustment(settlementId: string, adjustmentId: string): Promise<Settlement> {
+    const settlement = await this.prisma.settlement.findUnique({
+      where: { id: settlementId },
+      include: { booking: { select: { supplierEarningsMinor: true } } },
+    });
+    if (!settlement) throw new NotFoundException('Settlement not found');
+    if (settlement.status === SettlementStatus.PAID) {
+      throw new ConflictException('A paid settlement cannot be adjusted');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.settlementAdjustment.deleteMany({
+        where: { id: adjustmentId, settlementId },
+      });
+      if (count === 0) throw new NotFoundException('Adjustment not found');
+      const all = await tx.settlementAdjustment.findMany({ where: { settlementId } });
+      const totals = settlementTotals(settlement.booking.supplierEarningsMinor, all);
+      return tx.settlement.update({ where: { id: settlementId }, data: totals });
+    });
+  }
+
+  /**
+   * Mark as Paid: Eskista sent the money. Copies the destination account onto the
+   * settlement, so the record keeps showing where the money went after the payee changes
+   * their details. The payee then confirms it arrived.
+   */
+  async markPaid(settlementId: string, adminId: string, input: MarkPaidInput): Promise<Settlement> {
+    const settlement = await this.prisma.settlement.findUnique({ where: { id: settlementId } });
+    if (!settlement) throw new NotFoundException('Settlement not found');
+    if (settlement.status === SettlementStatus.PAID) {
+      throw new ConflictException('This settlement is already paid');
+    }
+
+    const owner =
+      settlement.payeeKind === PayeeKind.TALENT
+        ? { talentProfileId: settlement.talentProfileId }
+        : { vendorId: settlement.vendorId };
+    const account = await this.prisma.payoutAccount.findFirst({
+      where: input.payoutAccountId ? { id: input.payoutAccountId, ...owner } : owner,
+      orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+    });
+    if (input.payoutAccountId && !account) {
+      throw new NotFoundException('That payout account does not belong to this payee');
+    }
+
+    return this.prisma.settlement.update({
+      where: { id: settlementId },
+      data: {
+        status: SettlementStatus.PAID,
+        paidAt: input.paidAt ?? new Date(),
+        paidById: adminId,
+        payoutReference: input.payoutReference,
+        notes: input.note ?? settlement.notes,
+        payoutChannel: account?.channel ?? null,
+        payoutProvider: account?.provider ?? null,
+        payoutAccountName: account?.accountName ?? null,
+        payoutAccountNumber: account?.accountNumber ?? null,
+        // A payout re-sent after a "not received" report starts a fresh confirmation.
+        payeeDisputedAt: null,
+        payeeDisputeNote: null,
+      },
+    });
+  }
+
+  /** Holds a payout, e.g. while a dispute is open, or releases it back to pending. */
+  async setHold(settlementId: string, hold: boolean, note?: string): Promise<Settlement> {
+    const settlement = await this.prisma.settlement.findUnique({ where: { id: settlementId } });
+    if (!settlement) throw new NotFoundException('Settlement not found');
+    if (settlement.status === SettlementStatus.PAID) {
+      throw new ConflictException('This settlement is already paid');
+    }
+    return this.prisma.settlement.update({
+      where: { id: settlementId },
+      data: {
+        status: hold ? SettlementStatus.ON_HOLD : SettlementStatus.PENDING,
+        notes: note ?? settlement.notes,
+      },
+    });
   }
 
   /** Schedules the automatic close a day after the payee confirmed their payout. */
@@ -111,13 +261,25 @@ export class SettlementsService implements OnModuleInit {
         toStatus: BookingStatus.CLOSED,
         actorId,
         actorRole: role,
-        reason: role
-          ? `${role === Role.TALENT ? 'Talent' : 'Vendor'} completed the booking`
-          : 'Closed automatically after payout',
+        reason: !role
+          ? 'Closed automatically after payout'
+          : role === Role.ADMIN
+            ? 'Eskista closed the booking'
+            : `${role === Role.TALENT ? 'Talent' : 'Vendor'} completed the booking`,
       },
     });
     await this.jobs.cancel(jobIdFor(JOB_NAMES.bookingAutoClose, bookingId));
     await this.jobs.scheduleFeedbackRequest(bookingId, new Date());
+    const closed = await this.prisma.booking.findUniqueOrThrow({
+      where: { id: bookingId },
+      select: { customerId: true, reference: true },
+    });
+    await this.notifications.send(
+      closed.customerId,
+      'BOOKING_COMPLETED',
+      { reference: closed.reference },
+      { bookingReference: closed.reference },
+    );
   }
 
   /** The Settlement Record PDF, for vendor and talent alike. */
@@ -128,7 +290,14 @@ export class SettlementsService implements OnModuleInit {
   ): Promise<{ buffer: Buffer; filename: string }> {
     const booking = await this.prisma.booking.findUniqueOrThrow({
       where: { id: bookingId },
-      include: { settlement: { include: { batch: { select: { payoutReference: true } } } } },
+      include: {
+        settlement: {
+          include: {
+            batch: { select: { payoutReference: true } },
+            adjustments: { orderBy: { createdAt: 'asc' } },
+          },
+        },
+      },
     });
     const s = booking.settlement;
     if (!s) throw new NotFoundException('No settlement has been recorded for this booking yet');
@@ -145,8 +314,16 @@ export class SettlementsService implements OnModuleInit {
       payoutReference: s.payoutReference ?? s.batch?.payoutReference ?? null,
       rows: [
         { label: 'Your listed price', value: money(booking.supplierEarningsMinor) },
-        { label: 'Deductions', value: `-${money(s.deductionMinor)}` },
-        { label: 'Paid to you', value: money(s.netMinor), emphasis: true },
+        ...s.adjustments.map((a) => ({
+          label: a.reason,
+          value: a.amountMinor < 0 ? `-${money(-a.amountMinor)}` : `+${money(a.amountMinor)}`,
+        })),
+        ...(s.adjustments.length === 0 ? [{ label: 'Adjustments', value: money(0) }] : []),
+        {
+          label: s.paidAt ? 'Paid to you' : 'To be paid to you',
+          value: money(s.netMinor),
+          emphasis: true,
+        },
       ],
       generatedAt: new Date(),
     });

@@ -58,7 +58,14 @@ export class TalentCatalogueService {
     const rows = await this.prisma.talentProfile.findMany({
       where: VISIBLE,
       include: cardInclude,
-      orderBy: [{ ratingAvg: 'desc' }, { completedBookings: 'desc' }, { id: 'asc' }],
+      // Talent promoted in Marketplace Content comes first, in its pinned order.
+      orderBy: [
+        { featureTier: { sort: 'asc', nulls: 'last' } },
+        { featureSortOrder: 'asc' },
+        { ratingAvg: 'desc' },
+        { completedBookings: 'desc' },
+        { id: 'asc' },
+      ],
       take,
     });
     const price = await this.pricing.pricer();

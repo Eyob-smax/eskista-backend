@@ -115,3 +115,43 @@ describe('NotificationsService.markRead', () => {
     expect(result.isRead).toBe(true);
   });
 });
+
+describe('NotificationsService.notifyAdmins', () => {
+  it('writes one bell entry per active admin', async () => {
+    const createMany = vi.fn().mockResolvedValue({ count: 2 });
+    const findMany = vi.fn().mockResolvedValue([{ id: 'a1' }, { id: 'a2' }]);
+    const service = new NotificationsService({
+      user: { findMany },
+      notification: { createMany },
+    } as never);
+
+    await service.notifyAdmins('ADMIN_PAYMENT_SUBMITTED', {
+      payment: 'PAY-0042',
+      reference: 'ESK-10484',
+      amount: 'ETB 12,500.00',
+    });
+
+    const rows = createMany.mock.calls[0][0].data as { userId: string; body: string }[];
+    expect(rows.map((r) => r.userId)).toEqual(['a1', 'a2']);
+    expect(rows[0].body).toBe(
+      'PAY-0042 for ESK-10484 (ETB 12,500.00) is waiting for verification.',
+    );
+  });
+
+  it('narrows to the tiers whose work it is, always including Super Admins', async () => {
+    const findMany = vi.fn().mockResolvedValue([]);
+    const service = new NotificationsService({ user: { findMany }, notification: {} } as never);
+
+    await service.notifyAdmins('ADMIN_PAYOUT_DISPUTED', {}, undefined, ['FINANCE']);
+
+    const where = findMany.mock.calls[0][0].where as { OR: { adminProfile: unknown }[] };
+    expect(where.OR[0].adminProfile).toEqual({ tier: { in: ['FINANCE', 'SUPER_ADMIN'] } });
+  });
+
+  it('never throws when the bell cannot be written', async () => {
+    const service = new NotificationsService({
+      user: { findMany: vi.fn().mockRejectedValue(new Error('db down')) },
+    } as never);
+    await expect(service.notifyAdmins('ADMIN_BOOKING_REQUEST')).resolves.toBeUndefined();
+  });
+});

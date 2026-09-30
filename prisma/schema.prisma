@@ -69,6 +69,10 @@ model User {
   /// the Profile tab.
   experienceChosenAt DateTime?
   isBlocked          Boolean   @default(false)
+  /// When and why the account was suspended ("Suspend User"). `isBlocked` is what the
+  /// session guard enforces.
+  blockedAt          DateTime?
+  blockedReason      String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -111,8 +115,50 @@ model User {
   incidentsResolved   Incident[]          @relation("IncidentResolver")
   attachmentsUploaded BookingAttachment[] @relation("BookingAttachmentUploader")
 
+  adminProfile      AdminProfile?          @relation("AdminProfileUser")
+  adminsCreated     AdminProfile[]         @relation("AdminCreatedBy")
+  adjustmentsMade   SettlementAdjustment[]
+  talentsRegistered TalentProfile[]        @relation("TalentRegisteredBy")
+
   @@index([isBlocked])
   @@index([phone])
+}
+
+/// The dashboard's role tier ("Super Admin"). Every admin holds the ADMIN role; the tier
+/// narrows what they may do:
+///   SUPER_ADMIN — everything, including the admin team and system settings.
+///   ADMIN       — runs operations: bookings, inspections, catalogue, users, content.
+///   FINANCE     — payments, invoices and payouts, and reads everything else.
+///   SUPPORT     — incidents and messages, and reads everything else.
+enum AdminTier {
+  SUPER_ADMIN
+  ADMIN
+  FINANCE
+  SUPPORT
+}
+
+model AdminProfile {
+  userId String    @id @db.Uuid
+  tier   AdminTier @default(ADMIN)
+  /// "Operations Lead", shown under the name on Admin Detail.
+  title  String?
+  phone  String?
+
+  createdById     String?   @db.Uuid
+  /// Suspension itself is `User.isBlocked`, which the session guard enforces; these say
+  /// when and why, for the Admin Detail screen.
+  suspendedAt     DateTime?
+  suspendedReason String?
+  /// "Last active session". Touched at most every few minutes by the admin guard.
+  lastActiveAt    DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User  @relation("AdminProfileUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy User? @relation("AdminCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([tier])
 }
 
 model RoleMembership {
@@ -256,6 +302,10 @@ model VendorProfile {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// When and why an admin suspended the vendor (status SUSPENDED).
+  suspendedAt     DateTime?
+  suspendedReason String?
+
   user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   verifiedByAdmin User?              @relation("VendorVerifiedBy", fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
   documents       SupplierDocument[]
@@ -265,9 +315,68 @@ model VendorProfile {
   settlements     Settlement[]
   batches         SettlementBatch[]
   reviews         Review[]
+  payoutAccounts  PayoutAccount[]
 
   @@index([status])
   @@index([businessName])
+}
+
+/// Bank or wallet. Shared by Eskista's own collection accounts and suppliers' payout
+/// accounts.
+enum AccountChannel {
+  TELEBIRR
+  BANK
+}
+
+/// Where Eskista sends a supplier's money: "Payout Method: Telebirr · 0911…", with an
+/// alternative. Exactly one owner is set. One account per owner is primary; a settlement
+/// copies the primary one when it is paid, so a later change never rewrites history.
+model PayoutAccount {
+  id              String         @id @default(uuid()) @db.Uuid
+  vendorId        String?        @db.Uuid
+  talentProfileId String?        @db.Uuid
+  channel         AccountChannel
+  /// "Telebirr", "Commercial Bank of Ethiopia", "Awash Bank".
+  provider        String
+  accountName     String
+  accountNumber   String
+  isPrimary       Boolean        @default(false)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  vendor        VendorProfile? @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  talentProfile TalentProfile? @relation(fields: [talentProfileId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId, isPrimary])
+  @@index([talentProfileId, isPrimary])
+}
+
+/// Eskista's own accounts that customers pay into — "Eskista Operating Accounts" in
+/// System Settings. Shown on every payment screen, in `sortOrder`.
+model CollectionAccount {
+  id            String         @id @default(uuid()) @db.Uuid
+  channel       AccountChannel
+  provider      String
+  accountName   String
+  accountNumber String
+  /// Telebirr merchant id, when it differs from the number customers dial.
+  merchantId    String?
+  isActive      Boolean        @default(true)
+  sortOrder     Int            @default(0)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  payments Payment[]
+
+  @@index([isActive, sortOrder])
+}
+
+/// The Marketplace Content tiers: where a promoted item appears on the website hero grid
+/// and in the Telegram bot. No tier is "Standard".
+enum FeatureTier {
+  FEATURED
+  HIGHLIGHTED
+  SPOTLIGHT
 }
 
 enum ExperienceLevel {
@@ -347,11 +456,31 @@ model TalentProfile {
   ratingCount       Int     @default(0)
   completedBookings Int     @default(0)
 
+  /// When and why an admin suspended the profile (status SUSPENDED).
+  suspendedAt     DateTime?
+  suspendedReason String?
+
+  /// Marketplace Content: promoted on the hero grid and in the bot. Null is Standard.
+  featureTier      FeatureTier?
+  featuredAt       DateTime?
+  featuredUntil    DateTime?
+  /// "Pin": lower comes first within a tier.
+  featureSortOrder Int          @default(0)
+
+  /// "Register New Talent": a profile an admin created for someone. The person takes it
+  /// over by entering `claimCode` in the Mini App, which moves it onto their Telegram
+  /// account.
+  registeredByAdminId String?   @db.Uuid
+  claimCode           String?   @unique
+  claimCodeExpiresAt  DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   user            User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   verifiedByAdmin User?                    @relation("TalentVerifiedBy", fields: [verifiedByAdminId], references: [id], onDelete: SetNull)
+  registeredBy    User?                    @relation("TalentRegisteredBy", fields: [registeredByAdminId], references: [id], onDelete: SetNull)
+  payoutAccounts  PayoutAccount[]
   documents       SupplierDocument[]
   agreements      Agreement[]
   services        TalentService[]
@@ -369,6 +498,7 @@ model TalentProfile {
   @@index([status, isAvailableForHire])
   @@index([location])
   @@index([experienceLevel])
+  @@index([featureTier, featureSortOrder])
 }
 
 /// One offering on a talent's profile — the client's "search by service type".
@@ -487,23 +617,46 @@ enum CategoryKind {
 }
 
 model Category {
-  id        String       @id @default(uuid()) @db.Uuid
-  kind      CategoryKind @default(EQUIPMENT)
-  slug      String       @unique
-  name      String
-  imageKey  String?
-  parentId  String?      @db.Uuid
-  sortOrder Int          @default(0)
-  isActive  Boolean      @default(true)
-  createdAt DateTime     @default(now())
+  id          String       @id @default(uuid()) @db.Uuid
+  kind        CategoryKind @default(EQUIPMENT)
+  slug        String       @unique
+  name        String
+  /// The thumbnail on the category screens.
+  imageKey    String?
+  /// "Internal description" — for admins, not shown to customers.
+  description String?
+  /// Talent categories: "Specializations & Skills" suggested to talents in this category.
+  skills      String[]
+  parentId    String?      @db.Uuid
+  sortOrder   Int          @default(0)
+  /// "Publicly Visible".
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @default(now()) @updatedAt
 
-  parent         Category?       @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
-  children       Category[]      @relation("CategoryTree")
+  parent         Category?             @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children       Category[]            @relation("CategoryTree")
   listings       Listing[]
   talentServices TalentService[]
+  associations   CategoryAssociation[] @relation("AssociationFrom")
+  associatedWith CategoryAssociation[] @relation("AssociationTo")
 
   @@index([kind, isActive, sortOrder])
   @@index([parentId])
+}
+
+/// "Cross-Marketplace Associations": renting from Camera suggests Lenses, Lighting, Audio —
+/// and talent categories such as Camera Operator. Directed: from `categoryId` to `relatedId`.
+model CategoryAssociation {
+  categoryId String @db.Uuid
+  relatedId  String @db.Uuid
+  sortOrder  Int    @default(0)
+
+  category Category @relation("AssociationFrom", fields: [categoryId], references: [id], onDelete: Cascade)
+  related  Category @relation("AssociationTo", fields: [relatedId], references: [id], onDelete: Cascade)
+
+  @@id([categoryId, relatedId])
+  @@index([relatedId])
 }
 
 enum ListingStatus {
@@ -584,9 +737,14 @@ model Listing {
   /// so changing it never reprices a booking already made.
   commissionRateBps Int?
 
-  /// Admin-curated "Featured Equipment" rail.
-  isFeatured    Boolean   @default(false)
-  featuredUntil DateTime?
+  /// Admin-curated "Featured Equipment" rail. Kept in step with `featureTier`: true exactly
+  /// when a tier is set.
+  isFeatured       Boolean      @default(false)
+  featuredUntil    DateTime?
+  featureTier      FeatureTier?
+  featuredAt       DateTime?
+  /// "Pin": lower comes first within a tier.
+  featureSortOrder Int          @default(0)
 
   ratingAvg    Decimal @default(0) @db.Decimal(3, 2)
   ratingCount  Int     @default(0)
@@ -614,6 +772,7 @@ model Listing {
   @@index([vendorId, status])
   @@index([categoryId, status])
   @@index([isFeatured, status])
+  @@index([featureTier, featureSortOrder])
   @@index([rentalPriceMinor])
   @@index([location])
 }
@@ -686,6 +845,24 @@ enum UnitStatus {
   RETIRED
 }
 
+/// Who physically holds a unit: the vendor, Eskista's hub ("the Hub Vault"), or the client.
+/// Gear travels vendor → hub → client → hub → (vendor, or stays at the hub).
+enum UnitCustody {
+  VENDOR
+  HUB
+  CLIENT
+}
+
+/// The condition scale staff use on every inspection form.
+enum InspectionGrade {
+  PRISTINE
+  EXCELLENT
+  GOOD
+  FAIR
+  NEEDS_ATTENTION
+  DAMAGED
+}
+
 /// An individually tracked physical copy. Admin assigns specific units to a booking,
 /// which is what makes damage attributable.
 model EquipmentUnit {
@@ -699,6 +876,12 @@ model EquipmentUnit {
   conditionNotes String?
   status         UnitStatus     @default(AVAILABLE)
 
+  /// "Current custody" on the unit detail. Moved by the operational steps.
+  custody         UnitCustody      @default(VENDOR)
+  /// The grade and time of the latest inspection of any kind.
+  lastGrade       InspectionGrade?
+  lastInspectedAt DateTime?
+
   acquiredAt DateTime?
   retiredAt  DateTime?
   createdAt  DateTime  @default(now())
@@ -707,6 +890,7 @@ model EquipmentUnit {
   listing      Listing            @relation(fields: [listingId], references: [id], onDelete: Cascade)
   bookingUnits BookingUnit[]
   blockedDates BlockedDateRange[]
+  inspections  Inspection[]
 
   @@unique([listingId, serialNumber])
   @@index([listingId, status])
@@ -849,6 +1033,15 @@ model Booking {
   /// Talent requests: when the customer must have chosen, set on the first acceptance.
   selectionDeadlineAt DateTime?
 
+  /// The security deposit going back to the customer after the return inspection: the
+  /// deposit less anything withheld for damage. Recorded by Eskista when sent.
+  depositRefundMinor     Int?
+  depositRefundedAt      DateTime?
+  depositRefundReference String?
+
+  /// Created by an admin on the customer's behalf ("Create Hiring Request").
+  createdByAdminId String? @db.Uuid
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -879,7 +1072,8 @@ model Booking {
   incidents     Incident[]
   payments      Payment[]
   fulfilments   Fulfilment[]
-  inspection    Inspection?
+  /// At most one OUTGOING (before dispatch) and one RETURN.
+  inspections   Inspection[]
   handover      VendorHandover?
   settlement    Settlement?
   invoiceLines  InvoiceLine[]
@@ -1212,14 +1406,21 @@ enum PaymentStatus {
   SUBMITTED
   VERIFIED
   REJECTED
+  /// "Request New Slip": the slip is unreadable or incomplete. The customer uploads again;
+  /// nothing is wrong with the payment itself.
+  RESUBMISSION_REQUESTED
 }
 
 /// Offline payment into Eskista's own Telebirr/CBE accounts, evidenced by an uploaded
 /// receipt and verified by an admin. No gateway, no webhooks.
 model Payment {
   id                   String        @id @default(uuid()) @db.Uuid
+  /// "PAY-0842". Shared by the per-booking rows of one combined-invoice transfer.
+  reference            String?
   bookingId            String        @db.Uuid
   invoiceId            String?       @db.Uuid
+  /// Which of Eskista's accounts the customer says they paid into.
+  collectionAccountId  String?       @db.Uuid
   method               PaymentMethod
   transactionReference String
   amountMinor          Int
@@ -1240,13 +1441,23 @@ model Payment {
   verifiedAt         DateTime?
   verifiedById       String?       @db.Uuid
 
-  booking    Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  invoice    Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
-  verifiedBy User?    @relation(fields: [verifiedById], references: [id], onDelete: SetNull)
+  /// Payment Metadata, filled by the admin from the bank or wallet statement: what actually
+  /// arrived for this booking, and whose account it came from.
+  receivedAmountMinor Int?
+  payerName           String?
+  payerAccount        String?
+  /// The admin's note on confirm, reject or "Request New Slip".
+  reviewNote          String?
+
+  booking           Booking            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  invoice           Invoice?           @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  verifiedBy        User?              @relation(fields: [verifiedById], references: [id], onDelete: SetNull)
+  collectionAccount CollectionAccount? @relation(fields: [collectionAccountId], references: [id], onDelete: SetNull)
 
   @@index([bookingId, status])
   @@index([status, submittedAt])
   @@index([transactionReference])
+  @@index([reference])
 }
 
 // ═════════════════════════════════════════════════════════ fulfilment & inspection
@@ -1301,29 +1512,54 @@ enum InspectionOutcome {
   LATE_RETURN
 }
 
-/// "Equipment will be inspected on receipt."
+/// OUTGOING is the check at Eskista's hub before the gear leaves ("Update Manual Outgoing
+/// Inspection"); RETURN is "Post-Shoot Return Inspection" when it comes back; ROUTINE is a
+/// check on a unit outside any booking ("Routine Service", "Staff Inspection").
+enum InspectionKind {
+  OUTGOING
+  RETURN
+  ROUTINE
+}
+
+/// "Equipment will be inspected on receipt." Every inspection of a unit, which together are
+/// its Condition History. A booking has at most one OUTGOING and one RETURN.
 model Inspection {
-  id                   String            @id @default(uuid()) @db.Uuid
-  bookingId            String            @unique @db.Uuid
-  outcome              InspectionOutcome
+  id                   String             @id @default(uuid()) @db.Uuid
+  kind                 InspectionKind     @default(RETURN)
+  /// Null for a ROUTINE inspection.
+  bookingId            String?            @db.Uuid
+  /// The unit inspected. A booking inspection may leave it null when the booking has no
+  /// assigned unit; it then applies to every unit on the booking.
+  unitId               String?            @db.Uuid
+  grade                InspectionGrade?
+  /// "Inspector": the admin recording it, or the name of the staff member who did the check.
+  inspectorName        String?
+  /// Free-text observation on the inspection forms.
+  notes                String?
+  /// RETURN only: what the design's customer and vendor screens summarise.
+  outcome              InspectionOutcome?
   condition            ConditionGrade?
   /// The Inspection Results rows: physical condition and functional test pass or fail.
-  physicalPassed       Boolean           @default(true)
-  functionalPassed     Boolean           @default(true)
+  physicalPassed       Boolean            @default(true)
+  functionalPassed     Boolean            @default(true)
   /// "Missing accessories" — null or empty reads as None.
   missingItems         String?
   damageNotes          String?
   /// Damage or late fee withheld from the deposit.
-  feeMinor             Int               @default(0)
-  depositReturnedMinor Int               @default(0)
-  currency             String            @default("ETB")
-  inspectedById        String?           @db.Uuid
-  inspectedAt          DateTime          @default(now())
+  feeMinor             Int                @default(0)
+  depositReturnedMinor Int                @default(0)
+  currency             String             @default("ETB")
+  inspectedById        String?            @db.Uuid
+  inspectedAt          DateTime           @default(now())
 
-  booking     Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  booking     Booking?          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  unit        EquipmentUnit?    @relation(fields: [unitId], references: [id], onDelete: SetNull)
   inspectedBy User?             @relation(fields: [inspectedById], references: [id], onDelete: SetNull)
   photos      InspectionPhoto[]
 
+  @@unique([bookingId, kind])
+  @@index([unitId, inspectedAt])
+  @@index([kind, inspectedAt])
   @@index([outcome])
 }
 
@@ -1390,8 +1626,16 @@ model SettlementBatch {
 }
 
 /// Per-booking payout line. Drives the Earnings screen's Paid/Pending chips.
+///
+/// "Rental Revenue − Commission ± Adjustments = Vendor Settlement": `grossMinor` is what the
+/// customer paid for the goods before VAT, `commissionMinor` Eskista's share, and
+/// `netMinor` = supplier price + `adjustmentMinor`. Adjustments are itemised in
+/// SettlementAdjustment; `deductionMinor` is the negative part of them, kept for the
+/// payee's "Deductions" line.
 model Settlement {
   id        String    @id @default(uuid()) @db.Uuid
+  /// "STL-0842".
+  reference String?   @unique
   bookingId String    @unique @db.Uuid
   batchId   String?   @db.Uuid
   payeeKind PayeeKind
@@ -1401,8 +1645,10 @@ model Settlement {
 
   grossMinor      Int
   commissionMinor Int
-  /// Deductions carried from inspection (damage, late return).
+  /// The negative adjustments, as a positive figure.
   deductionMinor  Int              @default(0)
+  /// Signed sum of the adjustments.
+  adjustmentMinor Int              @default(0)
   netMinor        Int
   currency        String           @default("ETB")
   status          SettlementStatus @default(PENDING)
@@ -1418,19 +1664,43 @@ model Settlement {
   payeeDisputedAt  DateTime?
   payeeDisputeNote String?
 
+  /// "Destination": the payout account the money was sent to, copied when marked paid.
+  payoutChannel       AccountChannel?
+  payoutProvider      String?
+  payoutAccountName   String?
+  payoutAccountNumber String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  booking       Booking          @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  batch         SettlementBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  vendor        VendorProfile?   @relation(fields: [vendorId], references: [id], onDelete: SetNull)
-  talentProfile TalentProfile?   @relation(fields: [talentProfileId], references: [id], onDelete: SetNull)
-  paidBy        User?            @relation("SettlementPaidBy", fields: [paidById], references: [id], onDelete: SetNull)
+  booking       Booking                @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  batch         SettlementBatch?       @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  vendor        VendorProfile?         @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  talentProfile TalentProfile?         @relation(fields: [talentProfileId], references: [id], onDelete: SetNull)
+  paidBy        User?                  @relation("SettlementPaidBy", fields: [paidById], references: [id], onDelete: SetNull)
+  adjustments   SettlementAdjustment[]
 
   @@index([vendorId, status])
   @@index([talentProfileId, status])
   @@index([batchId])
   @@index([status, expectedAt])
+}
+
+/// One "± Adjustment" on a settlement: damage compensation passed on from the customer's
+/// deposit (positive), a penalty for a late handover (negative), a correction.
+model SettlementAdjustment {
+  id           String   @id @default(uuid()) @db.Uuid
+  settlementId String   @db.Uuid
+  /// Signed: positive adds to the payout.
+  amountMinor  Int
+  reason       String
+  createdById  String?  @db.Uuid
+  createdAt    DateTime @default(now())
+
+  settlement Settlement @relation(fields: [settlementId], references: [id], onDelete: Cascade)
+  createdBy  User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([settlementId])
 }
 
 // ═════════════════════════════════════════════════════════ reviews
@@ -1665,6 +1935,13 @@ enum IncidentType {
   MISSING_ACCESSORY
   TECHNICAL_MALFUNCTION
   DELIVERY_ISSUE
+  // ── Talent engagements (Issues & Grievance Desk) ──
+  LATE_ARRIVAL
+  OVERTIME
+  NO_SHOW
+  CONDUCT
+  SCOPE_DISPUTE
+  PAYMENT_DISPUTE
   OTHER
 }
 
@@ -1672,6 +1949,11 @@ enum IncidentPhase {
   DURING_DELIVERY_PICKUP
   DURING_RENTAL
   DURING_RETURN
+  /// Found at Eskista's return inspection.
+  DURING_INSPECTION
+  BEFORE_ENGAGEMENT
+  DURING_ENGAGEMENT
+  AFTER_ENGAGEMENT
 }
 
 enum IncidentStatus {
@@ -1771,8 +2053,9 @@ model BookingAttachment {
   @@index([bookingId, kind])
 }
 
-/// A customer-reported problem. Eskista mediates every one of these — the screen says so
-/// explicitly — so an incident never routes to the vendor directly.
+/// A reported problem. Eskista mediates every one of these — the screen says so explicitly
+/// — so an incident never routes between customer and supplier directly. Customers and
+/// talents report their own; admins raise them from an inspection ("Report an Issue").
 model Incident {
   id        String @id @default(uuid()) @db.Uuid
   /// Customer-facing, e.g. "ESK-INC-00042".
@@ -1780,9 +2063,13 @@ model Incident {
   bookingId String @db.Uuid
 
   reportedById String        @db.Uuid
+  /// Which side reported it: CUSTOMER, TALENT, VENDOR, or ADMIN from an inspection.
+  reporterRole Role          @default(CUSTOMER)
   type         IncidentType
   phase        IncidentPhase
   description  String
+  /// Money the resolution moves, if any: withheld from the deposit, refunded, adjusted.
+  amountMinor  Int?
 
   status            IncidentStatus @default(REPORTED)
   resolution        String?
@@ -1969,11 +2256,16 @@ model VendorHandover {
 
   /// "Select Collection Method": the vendor brings it (DELIVERY, to `address`) or
   /// Eskista collects it (PICKUP, calling `contactPhone`).
-  method         CollectionMethod?
-  address        String?
-  contactPhone   String?
-  methodChosenAt DateTime?
-  handedOverAt   DateTime?
+  method             CollectionMethod?
+  address            String?
+  contactPhone       String?
+  methodChosenAt     DateTime?
+  handedOverAt       DateTime?
+  /// Eskista has the gear at its hub — the other side of the vendor's handover.
+  receivedAtHubAt    DateTime?
+  /// Eskista sent the gear back to the vendor after the return inspection. Null when it
+  /// stays at the hub for the next rental.
+  returnedToVendorAt DateTime?
 
   /// "Confirm Return": the equipment is back with the vendor.
   returnConfirmedAt DateTime?

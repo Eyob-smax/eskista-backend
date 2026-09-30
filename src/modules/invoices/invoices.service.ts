@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AdminTier,
   BookingStatus,
   InvoiceStatus,
   PaymentStatus,
@@ -19,8 +20,10 @@ import {
   assertValidFile,
   type UploadedFile,
 } from '../../common/upload';
+import { formatMoney } from '../../common/money';
 import { paymentBlocker, readBank, readTelebirr } from '../customer-bookings/payment-rules';
 import { renderInvoicePdf } from '../documents/invoice-renderer';
+import { NotificationsService } from '../notifications/notifications.service';
 import { NumberingService } from '../numbering/numbering.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
@@ -102,6 +105,7 @@ export class InvoicesService {
     private readonly prisma: PrismaService,
     private readonly numbering: NumberingService,
     private readonly settings: SettingsService,
+    private readonly notifications: NotificationsService,
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
@@ -284,7 +288,10 @@ export class InvoicesService {
     number: string,
   ): Promise<InvoicePaymentInstructionsResponse> {
     const invoice = await this.requireInvoice(number, customerId);
-    const accounts = await this.settings.paymentAccounts();
+    const [accounts, collectionAccounts] = await Promise.all([
+      this.settings.paymentAccounts(),
+      this.settings.collectionAccounts(),
+    ]);
     const blockers = this.blockersFor(invoice, customerId);
     const due = invoice.totalMinor + invoice.securityDepositMinor;
     return {
@@ -294,6 +301,7 @@ export class InvoicesService {
       amountPaidMinor: invoice.amountPaidMinor,
       telebirr: readTelebirr(accounts),
       bank: readBank(accounts),
+      accounts: collectionAccounts,
       paymentReference: invoice.number,
       canSubmit: blockers.length === 0,
       blockers,
@@ -330,15 +338,27 @@ export class InvoicesService {
       folder: `customers/${customerId}/invoices/${invoice.number}`,
     });
 
+    if (dto.collectionAccountId) {
+      const account = await this.prisma.collectionAccount.findFirst({
+        where: { id: dto.collectionAccountId, isActive: true },
+        select: { id: true },
+      });
+      if (!account) throw new BadRequestException('collectionAccountId is not an Eskista account');
+    }
+
     const dues = invoice.lines.map((l) => l.totalMinor + l.securityDepositMinor);
     const shares = allocatePayment(dto.amountMinor, dues);
 
-    await this.prisma.$transaction(async (tx) => {
+    const paymentReference = await this.prisma.$transaction(async (tx) => {
+      // One transfer, one PAY reference, shared by its per-booking rows.
+      const reference = await this.numbering.nextPaymentReference(tx);
       for (const [index, line] of invoice.lines.entries()) {
         await tx.payment.create({
           data: {
+            reference,
             bookingId: line.bookingId,
             invoiceId: invoice.id,
+            collectionAccountId: dto.collectionAccountId,
             method: dto.method,
             transactionReference: dto.transactionReference,
             amountMinor: shares[index],
@@ -362,7 +382,19 @@ export class InvoicesService {
           },
         });
       }
+      return reference;
     });
+
+    await this.notifications.notifyAdmins(
+      'ADMIN_PAYMENT_SUBMITTED',
+      {
+        payment: paymentReference,
+        reference: invoice.number,
+        amount: formatMoney(dto.amountMinor, invoice.currency),
+      },
+      { invoiceNumber: invoice.number, paymentReference },
+      [AdminTier.FINANCE],
+    );
 
     return this.detail(invoice.id);
   }

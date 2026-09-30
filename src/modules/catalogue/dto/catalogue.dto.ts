@@ -272,6 +272,24 @@ export class CategoryResponse {
     example: 24,
   })
   itemCount!: number;
+
+  @ApiPropertyOptional({ nullable: true, description: 'Set for a subcategory.' })
+  parentId!: string | null;
+
+  @ApiProperty({
+    type: [String],
+    description: 'Talent categories: specializations and skills to offer on the profile.',
+  })
+  skills!: string[];
+
+  @ApiProperty({
+    type: 'array',
+    items: { type: 'object' },
+    description:
+      'Categories Eskista suggests alongside this one — "you may also need" lenses with a ' +
+      'camera, or a camera operator with a cinema camera. Equipment or talent.',
+  })
+  related!: { id: string; slug: string; name: string; kind: 'EQUIPMENT' | 'TALENT' }[];
 }
 
 export class CatalogueVendorResponse {

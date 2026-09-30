@@ -17,6 +17,7 @@ import { crc32, deflateSync } from 'node:zlib';
 import { computePriceBreakdown } from '../src/common/money';
 import { validateEnv } from '../src/config/env.validation';
 import { scriptConfig, syncLocalToCloudinary } from '../src/modules/storage/sync-to-cloudinary';
+import { seedAdminSide } from './seed-admin';
 import {
   AgreementStatus,
   AgreementType,
@@ -1787,9 +1788,11 @@ async function seedBookings(
     if (plan.withInspection) {
       await prisma.inspection.create({
         data: {
+          kind: 'RETURN',
           bookingId: booking.id,
           outcome: 'OK',
           condition: 'EXCELLENT',
+          grade: 'EXCELLENT',
           physicalPassed: true,
           functionalPassed: true,
           feeMinor: 0,
@@ -2029,6 +2032,13 @@ async function main(): Promise<void> {
   await seedSettlementBatch(userIds);
   await recomputeAggregates();
   console.log('  settlement batch + aggregates ✓');
+
+  await seedAdminSide(prisma);
+  console.log('  admin side: team, operating + payout accounts, hub records, content, open work ✓');
+  console.log(
+    '  admin sign-in:    ops@eskista.et (Super Admin), finance@eskista.et, support@eskista.et — ' +
+      `password ${process.env.SEED_ADMIN_PASSWORD ? 'from SEED_ADMIN_PASSWORD' : 'eskista-admin-2026'}`,
+  );
 
   // The frozen demo documents above are written to local disk. With Cloudinary configured,
   // copy them up under the same keys so the seeded rows resolve there too.

@@ -8,7 +8,9 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
-import { CurrentUser, Roles } from '../auth/auth.decorators';
+import { CurrentUser } from '../auth/auth.decorators';
+import { AdminTier } from '@prisma/client';
+import { AdminAccess } from '../admin/core/admin-access';
 import { AdminPricingService } from './admin-pricing.service';
 import {
   CommissionResponse,
@@ -30,7 +32,7 @@ talent) → the platform default. Changing any level moves the catalogue immedia
 @ApiTags('admin · pricing')
 @ApiBearerAuth()
 @ApiForbiddenResponse({ description: 'Admins only.' })
-@Roles('ADMIN')
+@AdminAccess()
 @Controller({ path: 'admin/pricing', version: '1' })
 export class AdminPricingController {
   constructor(private readonly pricing: AdminPricingService) {}
@@ -43,6 +45,7 @@ export class AdminPricingController {
   }
 
   @Patch()
+  @AdminAccess(AdminTier.SUPER_ADMIN)
   @ApiOperation({
     summary: 'Change the default commission, service fee or delivery fee',
     description: `${HOW_IT_PRICES}\n\nSend only what changes. Audited, with the optional reason.`,
@@ -56,6 +59,7 @@ export class AdminPricingController {
   }
 
   @Patch('listings/:id/commission')
+  @AdminAccess(AdminTier.SUPER_ADMIN)
   @ApiOperation({
     summary: 'Set the commission on one listing',
     description:
@@ -74,6 +78,7 @@ export class AdminPricingController {
   }
 
   @Patch('vendors/:id/commission')
+  @AdminAccess(AdminTier.SUPER_ADMIN)
   @ApiOperation({
     summary: 'Set the commission on all of a vendor’s listings',
     description: 'Applies wherever a listing has no override of its own. `null` removes it.',
@@ -90,6 +95,7 @@ export class AdminPricingController {
   }
 
   @Patch('talent/:id/commission')
+  @AdminAccess(AdminTier.SUPER_ADMIN)
   @ApiOperation({
     summary: 'Set the commission on a talent',
     description:

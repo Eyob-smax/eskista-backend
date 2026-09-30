@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AdminTier,
   DocumentStatus,
   Prisma,
   ReviewCheckState,
@@ -656,6 +657,18 @@ export class TalentProfileService {
       },
     });
     await this.notifications.send(userId, 'TALENT_PROFILE_SUBMITTED');
+    const submitted = await this.prisma.talentProfile.findUnique({
+      where: { userId },
+      select: { id: true, displayName: true },
+    });
+    if (submitted) {
+      await this.notifications.notifyAdmins(
+        'ADMIN_SUPPLIER_SUBMITTED',
+        { name: submitted.displayName, kind: 'talent' },
+        { talentProfileId: submitted.id },
+        [AdminTier.ADMIN],
+      );
+    }
 
     return this.getProfile(userId);
   }

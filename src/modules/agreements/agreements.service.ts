@@ -317,6 +317,63 @@ export class AgreementsService {
     }
   }
 
+  // ── Eskista's review of a scan ─────────────────────────────────────────────
+
+  /**
+   * Eskista accepts the uploaded scan: the right document, legible, signed. The agreement
+   * is then in force. Only a scan under review can be approved.
+   */
+  async approveScan(agreementId: string, adminId: string): Promise<Agreement> {
+    const agreement = await this.prisma.agreement.findUnique({ where: { id: agreementId } });
+    if (!agreement) throw new NotFoundException('Agreement not found');
+    if (agreement.status === AgreementStatus.APPROVED) return agreement;
+    if (agreement.status !== AgreementStatus.UNDER_REVIEW || !agreement.scannedCopyKey) {
+      throw new ConflictException('There is no uploaded scan waiting for review');
+    }
+    return this.prisma.agreement.update({
+      where: { id: agreementId },
+      data: {
+        status: AgreementStatus.APPROVED,
+        reviewedAt: new Date(),
+        reviewedById: adminId,
+        rejectionReason: null,
+      },
+    });
+  }
+
+  /** Eskista rejects the scan — wrong document, unsigned, illegible. The signer re-uploads. */
+  async rejectScan(agreementId: string, adminId: string, reason: string): Promise<Agreement> {
+    const agreement = await this.prisma.agreement.findUnique({ where: { id: agreementId } });
+    if (!agreement) throw new NotFoundException('Agreement not found');
+    if (agreement.status !== AgreementStatus.UNDER_REVIEW) {
+      throw new ConflictException('There is no uploaded scan waiting for review');
+    }
+    return this.prisma.agreement.update({
+      where: { id: agreementId },
+      data: {
+        status: AgreementStatus.REJECTED,
+        reviewedAt: new Date(),
+        reviewedById: adminId,
+        rejectionReason: reason,
+      },
+    });
+  }
+
+  /** Voids an agreement whose booking will not go ahead. Idempotent. */
+  async voidForBooking(bookingId: string): Promise<void> {
+    await this.prisma.agreement.updateMany({
+      where: { bookingId, status: { notIn: [AgreementStatus.APPROVED, AgreementStatus.VOID] } },
+      data: { status: AgreementStatus.VOID },
+    });
+  }
+
+  /** The frozen text for an admin, who is not a party but may read every agreement. */
+  async getBodyForAdmin(agreementId: string): Promise<string> {
+    const agreement = await this.prisma.agreement.findUnique({ where: { id: agreementId } });
+    if (!agreement) throw new NotFoundException('Agreement not found');
+    return this.getBody(agreementId, agreement.counterpartyId);
+  }
+
   // ── internals ──────────────────────────────────────────────────────────────
 
   /**

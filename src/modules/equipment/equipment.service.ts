@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AdminTier,
   BookingStatus,
   ConditionGrade,
   ListingStatus,
@@ -23,6 +24,7 @@ import {
   UPLOAD_LIMITS,
   type UploadedFile,
 } from '../../common/upload';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { gradeForRating, listingReviewSteps } from '../vendor-bookings/vendor-booking-view';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
@@ -85,6 +87,7 @@ type ListingDetail = Prisma.ListingGetPayload<{ include: typeof detailInclude }>
 export class EquipmentService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
@@ -324,6 +327,13 @@ export class EquipmentService {
       },
       include: detailInclude,
     });
+
+    await this.notifications.notifyAdmins(
+      'ADMIN_LISTING_SUBMITTED',
+      { vendor: vendor.businessName, item: updated.name },
+      { listingId },
+      [AdminTier.ADMIN],
+    );
 
     const live = await this.liveBookingsFor([listingId]);
     return this.toDetail(updated, live);

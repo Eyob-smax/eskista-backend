@@ -1,0 +1,94 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: eskista-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - eskista-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: eskista-redis
+    restart: always
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - eskista-net
+
+  api:
+    build:
+      context: .
+      target: production
+    container_name: eskista-api
+    restart: always
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      REDIS_URL: redis://:${REDIS_PASSWORD:-}@redis:6379
+    ports:
+      - '${PORT:-3000}:3000'
+    volumes:
+      - api_storage:/app/storage
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    networks:
+      - eskista-net
+
+  # Nginx reverse proxy with SSL termination
+  nginx:
+    image: nginx:alpine
+    container_name: eskista-nginx
+    restart: always
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot_webroot:/var/www/certbot:ro
+      - certbot_certs:/etc/letsencrypt:ro
+    depends_on:
+      - api
+    networks:
+      - eskista-net
+
+  # Certbot for automatic SSL certificate renewal
+  certbot:
+    image: certbot/certbot
+    container_name: eskista-certbot
+    volumes:
+      - certbot_webroot:/var/www/certbot
+      - certbot_certs:/etc/letsencrypt
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - eskista-net
+
+volumes:
+  postgres_data:
+  redis_data:
+  api_storage:
+  certbot_webroot:
+  certbot_certs:
+
+networks:
+  eskista-net:
+    driver: bridge

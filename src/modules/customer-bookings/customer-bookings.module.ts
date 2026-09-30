@@ -15,6 +15,6 @@ import { CustomerBookingsService } from './customer-bookings.service';
   imports: [CustomerModule, AgreementsModule, NotificationsModule, JobsModule, HiringModule],
   controllers: [CustomerBookingsController, BookingLifecycleController],
   providers: [CustomerBookingsService, BookingRequestService, BookingLifecycleService],
-  exports: [CustomerBookingsService],
+  exports: [CustomerBookingsService, BookingRequestService],
 })
 export class CustomerBookingsModule {}

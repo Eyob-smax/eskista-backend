@@ -5,6 +5,7 @@ import {
   BookingType,
   DeliveryStage,
   FulfilmentDirection,
+  InspectionKind,
   InvitationStatus,
   PaymentStatus,
   Prisma,
@@ -190,7 +191,9 @@ export class CustomerBookingsService {
         statusEvents: { orderBy: { createdAt: 'desc' } },
         payments: { orderBy: { submittedAt: 'desc' } },
         fulfilments: { orderBy: { createdAt: 'asc' } },
-        inspection: true,
+        // The return inspection is the one the customer is shown; the outgoing check is
+        // Eskista's own record.
+        inspections: { where: { kind: InspectionKind.RETURN }, take: 1 },
         agreements: true,
         settlement: true,
         reviews: {
@@ -222,6 +225,7 @@ export class CustomerBookingsService {
 
     const delivery = booking.fulfilments.find((f) => f.direction === FulfilmentDirection.OUTBOUND);
     const ret = booking.fulfilments.find((f) => f.direction === FulfilmentDirection.RETURN);
+    const returnInspection = booking.inspections[0];
 
     const card = this.toCard(booking, {
       agreementSigned: booking.agreements.some(
@@ -276,15 +280,18 @@ export class CustomerBookingsService {
         submittedAt: p.submittedAt.toISOString(),
         verifiedAt: p.verifiedAt?.toISOString() ?? null,
       })),
-      inspection: booking.inspection
+      inspection: returnInspection
         ? {
             isComplete: true,
-            outcome: booking.inspection.outcome,
-            outcomeLabel: INSPECTION_LABELS[booking.inspection.outcome],
-            notes: booking.inspection.damageNotes,
-            deductionMinor: booking.inspection.feeMinor,
-            depositReturnedMinor: booking.inspection.depositReturnedMinor,
-            completedAt: booking.inspection.inspectedAt.toISOString(),
+            outcome: returnInspection.outcome,
+            outcomeLabel: INSPECTION_LABELS[returnInspection.outcome ?? 'OK'],
+            notes: returnInspection.damageNotes,
+            deductionMinor: returnInspection.feeMinor,
+            depositReturnedMinor:
+              booking.depositRefundMinor ?? returnInspection.depositReturnedMinor,
+            completedAt: returnInspection.inspectedAt.toISOString(),
+            depositRefundedAt: booking.depositRefundedAt?.toISOString() ?? null,
+            depositRefundReference: booking.depositRefundReference,
           }
         : {
             // Present but empty, so the customer knows an inspection is still coming.
@@ -295,6 +302,8 @@ export class CustomerBookingsService {
             deductionMinor: null,
             depositReturnedMinor: null,
             completedAt: null,
+            depositRefundedAt: null,
+            depositRefundReference: null,
           },
       documents: this.toDocuments(
         booking.agreements.filter((a) => a.counterpartyId === userId),

@@ -1,5 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { NotificationChannel, Prisma } from '@prisma/client';
+import { AdminTier, NotificationChannel, Prisma, Role } from '@prisma/client';
 import type { CursorPage } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -132,6 +132,128 @@ export const NOTIFICATION_TEMPLATES = {
     title: 'Booking Confirmed',
     body: 'Payment for {{reference}} is confirmed. See the venue details in the app.',
   },
+
+  // ── Customer: raised by Eskista's operations ──
+  BOOKING_REJECTED: {
+    title: 'Booking Declined',
+    body: 'Your request {{reference}} could not be confirmed. {{reason}}',
+  },
+  PAYMENT_RESUBMIT: {
+    title: 'New Payment Slip Needed',
+    body: 'Please upload a new payment slip for {{reference}}. {{reason}}',
+  },
+  INSPECTION_COMPLETED: {
+    title: 'Inspection Complete',
+    body: 'Eskista has inspected your return for {{reference}}. {{summary}}',
+  },
+  DEPOSIT_REFUNDED: {
+    title: 'Deposit Refunded',
+    body: '{{amount}} of your deposit for {{reference}} has been sent back to you.',
+  },
+  ACCOUNT_SUSPENDED: {
+    title: 'Account Suspended',
+    body: 'Your Eskista account has been suspended. {{reason}}',
+  },
+
+  // ── Vendor and talent: raised by Eskista's operations ──
+  SUPPLIER_BOOKING_APPROVED: {
+    title: 'Booking Approved',
+    body: 'Eskista approved {{reference}}. The customer is now signing and paying.',
+  },
+  SUPPLIER_BOOKING_CONFIRMED: {
+    title: 'Booking Confirmed',
+    body: 'Payment for {{reference}} is confirmed. {{next}}',
+  },
+  SUPPLIER_BOOKING_CANCELLED: {
+    title: 'Booking Cancelled',
+    body: 'Eskista cancelled {{reference}}. {{reason}}',
+  },
+  PAYOUT_SENT: {
+    title: 'Payout Sent',
+    body: 'Eskista sent {{amount}} for {{reference}}. Confirm once it arrives.',
+  },
+  VENDOR_VERIFIED: {
+    title: 'Vendor Account Verified',
+    body: 'Your vendor account is verified. Your approved equipment is now live.',
+  },
+  VENDOR_REJECTED: {
+    title: 'Vendor Account Needs Changes',
+    body: 'Your vendor account could not be verified yet. {{reason}}',
+  },
+  VENDOR_SUSPENDED: {
+    title: 'Vendor Account Suspended',
+    body: 'Your vendor account has been suspended and your equipment hidden. {{reason}}',
+  },
+  TALENT_PROFILE_SUSPENDED: {
+    title: 'Profile Suspended',
+    body: 'Your talent profile has been suspended and hidden from clients. {{reason}}',
+  },
+  LISTING_APPROVED: {
+    title: 'Equipment Published',
+    body: '{{item}} is approved and live on Eskista.',
+  },
+  LISTING_REJECTED: {
+    title: 'Equipment Needs Changes',
+    body: '{{item}} could not be published yet. {{reason}}',
+  },
+  LISTING_FEATURED: {
+    title: 'Featured on Eskista',
+    body: '{{item}} is now promoted as {{tier}} on the Eskista homepage and bot.',
+  },
+
+  // ── Admin: the dashboard bell ──
+  ADMIN_BOOKING_REQUEST: {
+    title: 'New Booking Request',
+    body: '{{customer}} requested {{item}} ({{reference}}).',
+  },
+  ADMIN_VENDOR_RESPONDED: {
+    title: 'Vendor Responded',
+    body: '{{vendor}} {{answer}} {{reference}}.',
+  },
+  ADMIN_TALENT_HIRED: {
+    title: 'Talent Hired',
+    body: '{{customer}} hired {{talent}} for {{reference}}.',
+  },
+  ADMIN_AGREEMENT_UPLOADED: {
+    title: 'Signed Agreement Uploaded',
+    body: 'A signed agreement for {{reference}} is waiting for review.',
+  },
+  ADMIN_PAYMENT_SUBMITTED: {
+    title: 'Payment Slip Uploaded',
+    body: '{{payment}} for {{reference}} ({{amount}}) is waiting for verification.',
+  },
+  ADMIN_HANDOVER_CONFIRMED: {
+    title: 'Vendor Handed Over',
+    body: '{{vendor}} handed over the equipment for {{reference}}. Receive it at the hub.',
+  },
+  ADMIN_RETURN_SCHEDULED: {
+    title: 'Return Scheduled',
+    body: 'The return for {{reference}} is booked for {{when}}.',
+  },
+  ADMIN_SERVICE_COMPLETED: {
+    title: 'Service Completed',
+    body: '{{customer}} confirmed {{reference}} is complete. The payout is now due.',
+  },
+  ADMIN_INCIDENT_REPORTED: {
+    title: 'Issue Reported',
+    body: '{{incident}} on {{reference}}: {{type}}.',
+  },
+  ADMIN_PAYOUT_DISPUTED: {
+    title: 'Payout Reported Missing',
+    body: '{{payee}} says the payout for {{reference}} has not arrived.',
+  },
+  ADMIN_RETURN_DISPUTED: {
+    title: 'Return Disputed',
+    body: '{{vendor}} has not confirmed the equipment for {{reference}} is back.',
+  },
+  ADMIN_SUPPLIER_SUBMITTED: {
+    title: 'New Registration',
+    body: '{{name}} submitted a {{kind}} profile for verification.',
+  },
+  ADMIN_LISTING_SUBMITTED: {
+    title: 'Equipment Submitted',
+    body: '{{vendor}} submitted {{item}} for review.',
+  },
 } as const;
 
 export type NotificationType = keyof typeof NOTIFICATION_TEMPLATES;
@@ -173,6 +295,52 @@ export class NotificationsService {
       });
     } catch (error) {
       this.logger.error(`Could not write ${type} notification for ${userId}: ${String(error)}`);
+    }
+  }
+
+  /**
+   * Raises a notification for every active admin — the dashboard bell. `tiers` narrows it
+   * to the admins whose work it is (a payment slip to Finance and Super Admins); every
+   * Super Admin always receives it.
+   */
+  async notifyAdmins(
+    type: NotificationType,
+    values: Record<string, string> = {},
+    data?: Prisma.InputJsonValue,
+    tiers?: AdminTier[],
+  ): Promise<void> {
+    const template = NOTIFICATION_TEMPLATES[type];
+    try {
+      const admins = await this.prisma.user.findMany({
+        where: {
+          isBlocked: false,
+          roles: { some: { role: Role.ADMIN } },
+          ...(tiers
+            ? {
+                OR: [
+                  { adminProfile: { tier: { in: [...tiers, AdminTier.SUPER_ADMIN] } } },
+                  // An admin created before tiers existed has no profile yet.
+                  { adminProfile: null },
+                ],
+              }
+            : {}),
+        },
+        select: { id: true },
+      });
+      if (admins.length === 0) return;
+      const body = this.interpolate(template.body, values);
+      await this.prisma.notification.createMany({
+        data: admins.map((a) => ({
+          userId: a.id,
+          type,
+          title: template.title,
+          body,
+          data,
+          channels: [NotificationChannel.IN_APP],
+        })),
+      });
+    } catch (error) {
+      this.logger.error(`Could not write ${type} admin notification: ${String(error)}`);
     }
   }
 

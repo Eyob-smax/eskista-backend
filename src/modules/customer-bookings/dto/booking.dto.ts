@@ -419,6 +419,15 @@ export class BookingInspectionResponse {
 
   @ApiPropertyOptional({ nullable: true, example: '2026-08-22T09:00:00.000Z' })
   completedAt!: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'When Eskista sent the deposit back. Null while it is still to be refunded.',
+  })
+  depositRefundedAt!: string | null;
+
+  @ApiPropertyOptional({ nullable: true, description: 'The refund transfer reference.' })
+  depositRefundReference!: string | null;
 }
 
 export class ActivityEntryResponse {

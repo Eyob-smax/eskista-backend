@@ -80,6 +80,14 @@ export class CatalogueService {
     const categories = await this.prisma.category.findMany({
       where: { kind, isActive: true },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      include: {
+        // "Cross-Marketplace Associations", set by Eskista: what to suggest alongside.
+        associations: {
+          where: { related: { isActive: true } },
+          orderBy: { sortOrder: 'asc' },
+          include: { related: { select: { id: true, slug: true, name: true, kind: true } } },
+        },
+      },
     });
 
     const byCategory = new Map<string, number>();
@@ -116,6 +124,9 @@ export class CatalogueService {
       name: c.name,
       imageUrl: c.imageKey ? this.storage.urlFor(c.imageKey) : null,
       itemCount: byCategory.get(c.id) ?? 0,
+      parentId: c.parentId,
+      skills: c.skills,
+      related: c.associations.map((a) => a.related),
     }));
   }
 
@@ -130,7 +141,16 @@ export class CatalogueService {
   async getHome(): Promise<HomeResponse> {
     const [categories, featured, popular, featuredTalent] = await Promise.all([
       this.listCategories(CategoryKind.EQUIPMENT),
-      this.findCards({ ...VISIBLE, isFeatured: true }, [{ publishedAt: 'desc' }], 10),
+      // Promoted from Marketplace Content: pinned order first, and never past its end date.
+      this.findCards(
+        {
+          ...VISIBLE,
+          isFeatured: true,
+          OR: [{ featuredUntil: null }, { featuredUntil: { gt: new Date() } }],
+        },
+        [{ featureSortOrder: 'asc' }, { featuredAt: 'desc' }, { publishedAt: 'desc' }],
+        10,
+      ),
       this.findCards(VISIBLE, [{ bookingCount: 'desc' }, { ratingAvg: 'desc' }], 10),
       this.talent.featured(6),
     ]);

@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AdminTier,
   BookingStatus,
   BookingType,
   CollectionMethod,
@@ -15,6 +16,7 @@ import {
 } from '@prisma/client';
 import { billablePeriods, computePriceBreakdown, workingDays } from '../../common/money';
 import { CustomerService } from '../customer/customer.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { HiringService } from '../hiring/hiring.service';
 import { NumberingService } from '../numbering/numbering.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -52,6 +54,7 @@ export class BookingRequestService {
     private readonly numbering: NumberingService,
     private readonly customers: CustomerService,
     private readonly hiring: HiringService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ── Equipment ──────────────────────────────────────────────────────────────
@@ -191,7 +194,26 @@ export class BookingRequestService {
       }),
     ]);
 
+    await this.notifications.notifyAdmins(
+      'ADMIN_BOOKING_REQUEST',
+      {
+        customer: await this.customerName(userId),
+        item: updated.listing?.name ?? 'equipment',
+        reference: updated.reference,
+      },
+      { bookingReference: updated.reference },
+      [AdminTier.ADMIN],
+    );
+
     return this.toDraftResponse(updated, []);
+  }
+
+  private async customerName(userId: string): Promise<string> {
+    const u = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, customer: { select: { organisationName: true } } },
+    });
+    return u?.customer?.organisationName ?? u?.name ?? 'A customer';
   }
 
   async deleteDraft(userId: string, bookingId: string): Promise<void> {

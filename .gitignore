@@ -14,3 +14,5 @@ pnpm-debug.log*
 *.tsbuildinfo
 storage/*
 !storage/.gitkeep
+.claude/
+skills-lock.json

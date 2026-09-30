@@ -1,5 +1,6 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  FeatureTier,
   DocumentStatus,
   ListingStatus,
   PricingModel,
@@ -30,7 +31,7 @@ const UNIT_FOR_MODEL: Record<PricingModel, Unit> = {
 };
 
 const listingInclude = {
-  vendor: { select: { businessName: true, status: true, commissionRateBps: true } },
+  vendor: { select: { businessName: true, status: true, commissionRateBps: true, userId: true } },
 } satisfies Prisma.ListingInclude;
 
 const talentInclude = {
@@ -144,9 +145,20 @@ export class AdminReviewService {
         reviewedById: adminId,
         rejectionReason: null,
         commissionRateBps,
-        ...(dto.featured !== undefined ? { isFeatured: dto.featured } : {}),
+        ...(dto.featured === true
+          ? {
+              isFeatured: true,
+              featureTier: listing.featureTier ?? FeatureTier.FEATURED,
+              featuredAt: new Date(),
+            }
+          : dto.featured === false
+            ? { isFeatured: false, featureTier: null, featuredAt: null }
+            : {}),
       },
       include: listingInclude,
+    });
+    await this.notifications.send(updated.vendor.userId, 'LISTING_APPROVED', {
+      item: updated.name,
     });
 
     await this.audit(
@@ -176,6 +188,10 @@ export class AdminReviewService {
         reviewedById: adminId,
       },
       include: listingInclude,
+    });
+    await this.notifications.send(updated.vendor.userId, 'LISTING_REJECTED', {
+      item: updated.name,
+      reason: dto.reason,
     });
 
     await this.audit(

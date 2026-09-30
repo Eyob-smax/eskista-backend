@@ -7,6 +7,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { validateEnv, type Env } from './config/env.validation';
 import { AccountModule } from './modules/account/account.module';
+import { AdminModule } from './modules/admin/admin.module';
 import { AdminPricingModule } from './modules/admin-pricing/admin-pricing.module';
 import { AdminReviewModule } from './modules/admin-review/admin-review.module';
 import { AgreementsModule } from './modules/agreements/agreements.module';
@@ -28,6 +29,8 @@ import { HiringModule } from './modules/hiring/hiring.module';
 import { InvoicesModule } from './modules/invoices/invoices.module';
 import { SettlementsModule } from './modules/settlements/settlements.module';
 import { TalentModule } from './modules/talent/talent.module';
+import { PayoutAccountsModule } from './modules/payout-accounts/payout-accounts';
+import { SupplierIncidentsModule } from './modules/incidents/supplier-incidents';
 
 @Module({
   imports: [
@@ -104,6 +107,7 @@ import { TalentModule } from './modules/talent/talent.module';
     // Admin
     AdminPricingModule,
     AdminReviewModule,
+    AdminModule,
 
     // Customer-side feature modules
     CatalogueModule,
@@ -113,6 +117,10 @@ import { TalentModule } from './modules/talent/talent.module';
     // Talent-side feature modules
     HiringModule,
     TalentModule,
+
+    // Shared by vendors and talents
+    PayoutAccountsModule,
+    SupplierIncidentsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

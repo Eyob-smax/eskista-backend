@@ -1,5 +1,6 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
+  AdminTier,
   AgreementStatus,
   AgreementType,
   BookingStatus,
@@ -34,8 +35,10 @@ import {
   talentPeriods,
 } from '../hiring/hiring-rules';
 import { HiringService } from '../hiring/hiring.service';
+import { maskAccount } from '../payout-accounts/payout-accounts';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AUTO_CLOSE_HOURS, SettlementsService } from '../settlements/settlements.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../storage/storage.interface';
 import type {
@@ -134,6 +137,7 @@ export class TalentWorkService {
     private readonly agreements: AgreementsService,
     private readonly settings: SettingsService,
     private readonly settlements: SettlementsService,
+    private readonly notifications: NotificationsService,
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
@@ -302,6 +306,10 @@ export class TalentWorkService {
             expectedAt: s.expectedAt?.toISOString().slice(0, 10) ?? null,
             paidAt: s.paidAt?.toISOString() ?? null,
             payoutReference: s.payoutReference,
+            paidTo:
+              s.payoutProvider && s.payoutAccountNumber
+                ? `${s.payoutProvider} ${maskAccount(s.payoutAccountNumber)}`
+                : null,
             confirmedAt: s.payeeConfirmedAt?.toISOString() ?? null,
             disputedAt: s.payeeDisputedAt?.toISOString() ?? null,
           }
@@ -359,6 +367,15 @@ export class TalentWorkService {
     });
     if (confirmed && booking.status === BookingStatus.SETTLEMENT) {
       await this.settlements.scheduleAutoClose(booking.id, now);
+    }
+    if (!confirmed) {
+      const talent = await this.profiles.requireTalent(userId);
+      await this.notifications.notifyAdmins(
+        'ADMIN_PAYOUT_DISPUTED',
+        { payee: talent.displayName, reference },
+        { bookingReference: reference },
+        [AdminTier.FINANCE],
+      );
     }
 
     return {
@@ -457,6 +474,12 @@ export class TalentWorkService {
       mimeType: valid.mimetype,
       sizeBytes: valid.size,
     });
+    await this.notifications.notifyAdmins(
+      'ADMIN_AGREEMENT_UPLOADED',
+      { reference },
+      { bookingReference: reference, agreementId: agreement.id },
+      [AdminTier.ADMIN],
+    );
     return this.toAgreement(updated, reference);
   }
 

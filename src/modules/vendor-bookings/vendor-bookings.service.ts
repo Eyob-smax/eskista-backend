@@ -7,12 +7,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AdminTier,
   AgreementType,
   BookingStatus,
   CollectionMethod,
   CustomerKind,
   DeliveryStage,
   FulfilmentDirection,
+  InspectionKind,
   PaymentStatus,
   Prisma,
   Role,
@@ -27,6 +29,8 @@ import {
   assertValidFile,
   type UploadedFile,
 } from '../../common/upload';
+import { NotificationsService } from '../notifications/notifications.service';
+import { maskAccount } from '../payout-accounts/payout-accounts';
 import { AUTO_CLOSE_HOURS, SettlementsService } from '../settlements/settlements.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
@@ -125,7 +129,7 @@ const bookingInclude = {
   assignedUnits: { include: { unit: true } },
   statusEvents: { orderBy: { createdAt: 'asc' } },
   handover: { include: { photos: { orderBy: { createdAt: 'asc' } } } },
-  inspection: { include: { photos: true } },
+  inspections: { where: { kind: InspectionKind.RETURN }, include: { photos: true }, take: 1 },
   fulfilments: true,
   settlement: { include: { batch: { select: { reference: true, payoutReference: true } } } },
   payments: { where: { status: PaymentStatus.VERIFIED }, orderBy: { verifiedAt: 'desc' }, take: 1 },
@@ -151,6 +155,7 @@ export class VendorBookingsService {
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
     private readonly settlements: SettlementsService,
+    private readonly notifications: NotificationsService,
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
@@ -234,6 +239,7 @@ export class VendorBookingsService {
         update: {},
       });
     });
+    await this.tellEskista(booking.id, 'ADMIN_VENDOR_RESPONDED', { answer: 'accepted' });
 
     return this.findOne(userId, reference);
   }
@@ -270,6 +276,7 @@ export class VendorBookingsService {
         },
       });
     });
+    await this.tellEskista(booking.id, 'ADMIN_VENDOR_RESPONDED', { answer: 'declined' });
 
     return this.findOne(userId, reference);
   }
@@ -430,6 +437,7 @@ export class VendorBookingsService {
       data: { handedOverAt: new Date() },
     });
     await this.recordStep(booking, userId, 'Vendor confirmed the handover');
+    await this.tellEskista(booking.id, 'ADMIN_HANDOVER_CONFIRMED');
 
     return {
       reference,
@@ -532,6 +540,7 @@ export class VendorBookingsService {
       dto.confirmed ? 'Vendor confirmed the equipment is back' : 'Vendor disputed the return',
       dto.note,
     );
+    if (!dto.confirmed) await this.tellEskista(booking.id, 'ADMIN_RETURN_DISPUTED');
 
     return {
       reference,
@@ -593,6 +602,7 @@ export class VendorBookingsService {
       dto.confirmed ? 'Vendor confirmed the payout' : 'Vendor reported the payout missing',
       dto.note,
     );
+    if (!dto.confirmed) await this.tellEskista(booking.id, 'ADMIN_PAYOUT_DISPUTED');
 
     if (dto.confirmed) await this.settlements.scheduleAutoClose(booking.id, now);
 
@@ -765,6 +775,30 @@ export class VendorBookingsService {
   // ── internals ──────────────────────────────────────────────────────────────
 
   /** A vendor step, on the booking's history, without moving its status. */
+  /** Raises the admin bell for a vendor step that gives Eskista something to do. */
+  private async tellEskista(
+    bookingId: string,
+    type:
+      | 'ADMIN_VENDOR_RESPONDED'
+      | 'ADMIN_HANDOVER_CONFIRMED'
+      | 'ADMIN_RETURN_DISPUTED'
+      | 'ADMIN_PAYOUT_DISPUTED',
+    values: Record<string, string> = {},
+  ): Promise<void> {
+    const b = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      select: { reference: true, vendor: { select: { businessName: true } } },
+    });
+    if (!b) return;
+    const vendor = b.vendor?.businessName ?? 'The vendor';
+    await this.notifications.notifyAdmins(
+      type,
+      { vendor, payee: vendor, reference: b.reference, ...values },
+      { bookingReference: b.reference },
+      type === 'ADMIN_PAYOUT_DISPUTED' ? [AdminTier.FINANCE] : [AdminTier.ADMIN],
+    );
+  }
+
   private async recordStep(booking: BookingRow, userId: string, reason: string, note?: string) {
     await this.prisma.bookingStatusEvent.create({
       data: {
@@ -823,7 +857,7 @@ export class VendorBookingsService {
   }
 
   private toInspection(booking: BookingRow): VendorInspectionResponse | null {
-    const i = booking.inspection;
+    const i = booking.inspections[0];
     if (!i) return null;
     const passFail = (ok: boolean) => ({
       value: ok ? 'Passed' : 'Failed',
@@ -913,7 +947,7 @@ export class VendorBookingsService {
         currency: b.currency,
       },
       timeline: buildVendorTimeline(view),
-      actions: buildVendorActions({ ...view, hasInspection: b.inspection !== null }),
+      actions: buildVendorActions({ ...view, hasInspection: b.inspections.length > 0 }),
       nextStep: this.nextStep(b),
       preparation: this.toPreparation(b),
       handover: {
@@ -980,8 +1014,8 @@ export class VendorBookingsService {
     const depositHeld =
       b.securityDepositMinor === 0
         ? 'No deposit'
-        : b.inspection
-          ? b.inspection.depositReturnedMinor >= b.securityDepositMinor
+        : b.inspections[0]
+          ? b.inspections[0].depositReturnedMinor >= b.securityDepositMinor
             ? 'Released on return'
             : 'Partly withheld'
           : 'Held until return';
@@ -993,9 +1027,14 @@ export class VendorBookingsService {
       settlementDate: s?.paidAt ? isoDay(s.paidAt) : s?.expectedAt ? isoDay(s.expectedAt) : null,
       approvalStatus: s ? (s.status === SettlementStatus.ON_HOLD ? 'On hold' : 'Approved') : null,
       payoutReference: s?.payoutReference ?? s?.batch?.payoutReference ?? null,
+      paidTo:
+        s?.payoutProvider && s.payoutAccountNumber
+          ? `${s.payoutProvider} ${maskAccount(s.payoutAccountNumber)}`
+          : null,
+      // The payout's own channel — never the customer's payment method.
       note:
         s?.status === SettlementStatus.PAID && s.paidAt
-          ? `Settlement paid on ${longDate(s.paidAt)}${methodLabel ? ` via ${methodLabel}` : ''}`
+          ? `Settlement paid on ${longDate(s.paidAt)}${s.payoutProvider ? ` via ${s.payoutProvider}` : ''}`
           : null,
     };
   }

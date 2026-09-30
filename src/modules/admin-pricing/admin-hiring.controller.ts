@@ -8,10 +8,11 @@ import {
   ApiPropertyOptional,
   ApiTags,
 } from '@nestjs/swagger';
-import { Prisma } from '@prisma/client';
+import { AdminTier, Prisma } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
-import { CurrentUser, Roles } from '../auth/auth.decorators';
+import { CurrentUser } from '../auth/auth.decorators';
+import { AdminAccess } from '../admin/core/admin-access';
 import { PrismaService } from '../prisma/prisma.service';
 import { SETTING_KEYS, SettingsService } from '../settings/settings.service';
 
@@ -67,7 +68,7 @@ export class UpdateHiringSettingsDto {
 @ApiTags('admin · settings')
 @ApiBearerAuth()
 @ApiForbiddenResponse({ description: 'Admins only.' })
-@Roles('ADMIN')
+@AdminAccess()
 @Controller({ path: 'admin/settings/hiring', version: '1' })
 export class AdminHiringController {
   constructor(
@@ -89,6 +90,7 @@ export class AdminHiringController {
   }
 
   @Patch()
+  @AdminAccess(AdminTier.SUPER_ADMIN)
   @ApiOperation({
     summary: 'Change the talent hire limits',
     description:

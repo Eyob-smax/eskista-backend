@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AdminTier,
   AgreementStatus,
   AgreementType,
   BookingStatus,
@@ -27,6 +28,7 @@ import {
   UPLOAD_LIMITS,
   type UploadedFile,
 } from '../../common/upload';
+import { NotificationsService } from '../notifications/notifications.service';
 import { AgreementsService } from '../agreements/agreements.service';
 import type {
   AgreementBodyResponse,
@@ -91,6 +93,7 @@ export class VendorService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly agreements: AgreementsService,
+    private readonly notifications: NotificationsService,
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
@@ -343,6 +346,12 @@ export class VendorService {
     // Issued on submission rather than after approval, so the vendor can read and sign
     // the contract while Eskista reviews their documents instead of waiting twice.
     await this.agreements.issueVendorOnboarding(vendor.id);
+    await this.notifications.notifyAdmins(
+      'ADMIN_SUPPLIER_SUBMITTED',
+      { name: vendor.businessName, kind: 'vendor' },
+      { vendorId: vendor.id },
+      [AdminTier.ADMIN],
+    );
 
     return this.toProfileResponse(await this.requireVendor(userId));
   }
@@ -399,6 +408,12 @@ export class VendorService {
       mimeType: valid.mimetype,
       sizeBytes: valid.size,
     });
+    await this.notifications.notifyAdmins(
+      'ADMIN_AGREEMENT_UPLOADED',
+      { reference: vendor.businessName },
+      { vendorId: vendor.id, agreementId: agreement.id },
+      [AdminTier.ADMIN],
+    );
     return this.toAgreementResponse(uploaded);
   }
 

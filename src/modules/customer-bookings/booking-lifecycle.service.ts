@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AdminTier,
   AgreementStatus,
   BookingAttachmentKind,
   BookingStatus,
@@ -30,6 +31,7 @@ import type { UploadedFile } from '../../common/upload';
 import { AgreementsService } from '../agreements/agreements.service';
 import { InvoicesService } from '../invoices/invoices.service';
 import { SettlementsService } from '../settlements/settlements.service';
+import { formatMoney } from '../../common/money';
 import { renderAgreementPdf } from '../documents/pdf-renderer';
 import { NotificationsService } from '../notifications/notifications.service';
 import { JOB_NAMES, jobIdFor } from '../jobs/jobs.constants';
@@ -201,6 +203,13 @@ export class BookingLifecycleService {
       sizeBytes: valid.size,
     });
 
+    await this.notifications.notifyAdmins(
+      'ADMIN_AGREEMENT_UPLOADED',
+      { reference: booking.reference },
+      { bookingReference: booking.reference, agreementId },
+      [AdminTier.ADMIN],
+    );
+
     return this.toAgreement(updated, booking.reference);
   }
 
@@ -286,7 +295,10 @@ export class BookingLifecycleService {
     });
     if (!booking) throw new NotFoundException('Booking not found');
 
-    const accounts = await this.settings.paymentAccounts();
+    const [accounts, collectionAccounts] = await Promise.all([
+      this.settings.paymentAccounts(),
+      this.settings.collectionAccounts(),
+    ]);
     const telebirr = readTelebirr(accounts);
     const bank = readBank(accounts);
     const billing = await this.billingFor(booking.id);
@@ -311,6 +323,7 @@ export class BookingLifecycleService {
       amountPaidMinor: verified,
       telebirr,
       bank,
+      accounts: collectionAccounts,
       invoiceNumber: billing.invoiceNumber,
       combinedInvoice: billing.combined,
       canSubmit: blockedReason === null,
@@ -350,6 +363,7 @@ export class BookingLifecycleService {
     }
     const blocker = paymentBlocker(booking.status, pending, booking.agreements);
     if (blocker) throw new ConflictException(blocker);
+    await this.assertCollectionAccount(dto.collectionAccountId);
 
     const valid = assertValidFile(file, {
       allowed: DOCUMENT_MIME_TYPES,
@@ -369,8 +383,10 @@ export class BookingLifecycleService {
     const payment = await this.prisma.$transaction(async (tx) => {
       const created = await tx.payment.create({
         data: {
+          reference: await this.numbering.nextPaymentReference(tx),
           bookingId: booking.id,
           invoiceId: billing.invoiceId,
+          collectionAccountId: dto.collectionAccountId,
           method: dto.method,
           transactionReference: dto.transactionReference,
           amountMinor: dto.amountMinor,
@@ -397,9 +413,19 @@ export class BookingLifecycleService {
       return created;
     });
 
-    // Deliberately no notification here. The customer just pressed the button; telling
-    // them what they did is noise. "Payment Verified" is Eskista's to send, once they
-    // have actually checked it.
+    // No notification to the customer: they just pressed the button, and telling them what
+    // they did is noise. "Payment Verified" is Eskista's to send once checked. Eskista's
+    // finance team does need to know there is a slip to check.
+    await this.notifications.notifyAdmins(
+      'ADMIN_PAYMENT_SUBMITTED',
+      {
+        payment: payment.reference ?? 'A payment',
+        reference: booking.reference,
+        amount: formatMoney(payment.amountMinor, payment.currency),
+      },
+      { bookingReference: booking.reference, paymentReference: payment.reference },
+      [AdminTier.FINANCE],
+    );
 
     return {
       id: payment.id,
@@ -453,6 +479,12 @@ export class BookingLifecycleService {
 
     // The talent's payout is owed from this moment: record it, to be paid by Eskista.
     await this.settlements.ensureForBooking(booking.id);
+    await this.notifications.notifyAdmins(
+      'ADMIN_SERVICE_COMPLETED',
+      { customer: 'The client', reference: booking.reference },
+      { bookingReference: booking.reference },
+      [AdminTier.FINANCE],
+    );
 
     return { status: BookingStatus.RENTAL_COMPLETED };
   }
@@ -787,6 +819,15 @@ export class BookingLifecycleService {
     await this.jobs.cancel(jobIdFor(JOB_NAMES.returnReminder, booking.id));
 
     if (changed) {
+      await this.notifications.notifyAdmins(
+        'ADMIN_RETURN_SCHEDULED',
+        {
+          reference: booking.reference,
+          when: scheduledAt.toISOString().slice(0, 16).replace('T', ' '),
+        },
+        { bookingReference: booking.reference },
+        [AdminTier.ADMIN],
+      );
       await this.notifications.send(
         userId,
         'RETURN_SCHEDULED',
@@ -870,6 +911,16 @@ export class BookingLifecycleService {
       'INCIDENT_RECEIVED',
       { reference: incident.reference },
       { bookingReference: booking.reference, incidentReference: incident.reference },
+    );
+    await this.notifications.notifyAdmins(
+      'ADMIN_INCIDENT_REPORTED',
+      {
+        incident: incident.reference,
+        reference: booking.reference,
+        type: incident.type.toLowerCase().replace(/_/g, ' '),
+      },
+      { bookingReference: booking.reference, incidentReference: incident.reference },
+      [AdminTier.SUPPORT, AdminTier.ADMIN],
     );
 
     return this.toIncident(incident);
@@ -978,6 +1029,16 @@ export class BookingLifecycleService {
       combined: invoice.combined,
       amountDueMinor: line ? line.totalMinor + line.securityDepositMinor : null,
     };
+  }
+
+  /** The Eskista account the customer says they paid into must be one currently offered. */
+  private async assertCollectionAccount(id: string | undefined): Promise<void> {
+    if (!id) return;
+    const account = await this.prisma.collectionAccount.findFirst({
+      where: { id, isActive: true },
+      select: { id: true },
+    });
+    if (!account) throw new BadRequestException('collectionAccountId is not an Eskista account');
   }
 
   private async requireBooking(userId: string, reference: string): Promise<Booking> {

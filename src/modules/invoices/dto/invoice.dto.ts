@@ -11,10 +11,13 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   Min,
   MinLength,
 } from 'class-validator';
+
+import { CollectionAccountResponse } from '../../customer-bookings/dto/lifecycle.dto';
 
 const trim = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.trim() : value;
@@ -57,6 +60,11 @@ export class PayInvoiceDto {
   @IsInt()
   @Min(1)
   amountMinor!: number;
+
+  @ApiPropertyOptional({ description: 'Which Eskista account from `accounts` was paid into.' })
+  @IsOptional()
+  @IsUUID()
+  collectionAccountId?: string;
 }
 
 export class SetVatDto {
@@ -184,6 +192,11 @@ export class InvoicePaymentInstructionsResponse {
   telebirr!: { number: string; accountName: string } | null;
   @ApiPropertyOptional({ nullable: true, type: Object })
   bank!: { bank: string; accountName: string; accountNumber: string } | null;
+  @ApiProperty({
+    type: () => [CollectionAccountResponse],
+    description: 'Every account to pay into.',
+  })
+  accounts!: CollectionAccountResponse[];
   @ApiProperty({ description: 'Use the invoice number as the transfer reference.' })
   paymentReference!: string;
   @ApiProperty() canSubmit!: boolean;

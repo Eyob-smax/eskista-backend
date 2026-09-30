@@ -117,6 +117,12 @@ export class TalentPayoutResponse {
   @ApiPropertyOptional({ nullable: true }) expectedAt!: string | null;
   @ApiPropertyOptional({ nullable: true }) paidAt!: string | null;
   @ApiPropertyOptional({ nullable: true }) payoutReference!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Telebirr •••• 3344',
+    description: 'Where Eskista sent it.',
+  })
+  paidTo!: string | null;
   @ApiPropertyOptional({ nullable: true, description: 'You confirmed it arrived.' })
   confirmedAt!: string | null;
   @ApiPropertyOptional({ nullable: true, description: 'You reported it missing.' })

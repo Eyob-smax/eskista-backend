@@ -26,6 +26,7 @@ function build(booking: Record<string, unknown> | null, extra: Record<string, un
       telebirr: { number: '0911234567', accountName: 'Eskista Equipment Rentals' },
       bank: { bank: 'CBE', accountName: 'Eskista Marketplace PLC', accountNumber: '1000 1' },
     }),
+    collectionAccounts: vi.fn().mockResolvedValue([]),
     returnSlotTimes: vi.fn().mockResolvedValue(['09:00', '14:00']),
     returnInstructions: vi.fn().mockResolvedValue([]),
   };
@@ -34,7 +35,7 @@ function build(booking: Record<string, unknown> | null, extra: Record<string, un
     settings as never,
     {} as never,
     {} as never,
-    { send: vi.fn() } as never,
+    { send: vi.fn(), notifyAdmins: vi.fn() } as never,
     { cancel: vi.fn() } as never,
     { ensureBookingInvoice: vi.fn().mockResolvedValue(null) } as never,
     { ensureForBooking: vi.fn().mockResolvedValue({}) } as never,

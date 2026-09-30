@@ -8,6 +8,7 @@ import {
   type OnModuleInit,
 } from '@nestjs/common';
 import {
+  AdminTier,
   BookingStatus,
   BookingType,
   InvitationStatus,
@@ -264,6 +265,20 @@ export class HiringService implements OnModuleInit {
       invitations.map((i) => i.id),
       invitationTtlHours,
       expiresAt,
+    );
+    const request = await this.prisma.booking.findUniqueOrThrow({
+      where: { id: bookingId },
+      select: { reference: true, customer: { select: { name: true } } },
+    });
+    await this.notifications.notifyAdmins(
+      'ADMIN_BOOKING_REQUEST',
+      {
+        customer: request.customer.name,
+        item: `${invitations.length} talent${invitations.length === 1 ? '' : 's'}`,
+        reference: request.reference,
+      },
+      { bookingReference: request.reference },
+      [AdminTier.ADMIN, AdminTier.SUPPORT],
     );
   }
 
@@ -856,6 +871,27 @@ export class HiringService implements OnModuleInit {
     }
 
     await this.announceOutcome(request, toHire, hiredBookingIds, rejected, actor);
+
+    const hired = await this.prisma.booking.findMany({
+      where: { id: { in: hiredBookingIds } },
+      select: {
+        reference: true,
+        customer: { select: { name: true } },
+        talentProfile: { select: { displayName: true } },
+      },
+    });
+    for (const h of hired) {
+      await this.notifications.notifyAdmins(
+        'ADMIN_TALENT_HIRED',
+        {
+          customer: h.customer.name,
+          talent: h.talentProfile?.displayName ?? 'a talent',
+          reference: h.reference,
+        },
+        { bookingReference: h.reference },
+        [AdminTier.ADMIN],
+      );
+    }
   }
 
   private async createSibling(

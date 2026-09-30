@@ -13,6 +13,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   Max,
   MaxLength,
@@ -172,6 +173,26 @@ export class BankInstructionsResponse {
   accountNumber!: string;
 }
 
+export class CollectionAccountResponse {
+  @ApiPropertyOptional({ nullable: true, description: 'Send as `collectionAccountId`.' })
+  id!: string | null;
+
+  @ApiProperty({ enum: ['TELEBIRR', 'BANK'] })
+  channel!: 'TELEBIRR' | 'BANK';
+
+  @ApiProperty({ example: 'Commercial Bank of Ethiopia' })
+  provider!: string;
+
+  @ApiProperty({ example: 'Eskista Marketplace PLC' })
+  accountName!: string;
+
+  @ApiProperty({ example: '1000234567890' })
+  accountNumber!: string;
+
+  @ApiPropertyOptional({ nullable: true, example: '882910' })
+  merchantId!: string | null;
+}
+
 export class PaymentInstructionsResponse {
   @ApiProperty({ example: 'ESK-10482' })
   bookingReference!: string;
@@ -211,6 +232,14 @@ export class PaymentInstructionsResponse {
 
   @ApiPropertyOptional({ type: BankInstructionsResponse, nullable: true })
   bank!: BankInstructionsResponse | null;
+
+  @ApiProperty({
+    type: () => [CollectionAccountResponse],
+    description:
+      'Every Eskista account the customer may pay into, in display order. `telebirr` and ' +
+      '`bank` are the first of each, kept for older screens.',
+  })
+  accounts!: CollectionAccountResponse[];
 
   @ApiProperty({
     description: 'False while an earlier submission is still being verified.',
@@ -267,6 +296,13 @@ export class SubmitPaymentDto {
   @IsInt()
   @Min(1)
   amountMinor!: number;
+
+  @ApiPropertyOptional({
+    description: 'Which of the accounts in `accounts` on the payment instructions was paid into.',
+  })
+  @IsOptional()
+  @IsUUID()
+  collectionAccountId?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

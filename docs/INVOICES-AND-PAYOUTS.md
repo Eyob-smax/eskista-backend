@@ -41,8 +41,10 @@ on it.
 `GET /admin/invoices/:number`, `PATCH /admin/invoices/:number/vat` (the per-invoice VAT
 exemption, before any payment), `POST /admin/invoices/:number/void`, `GET …/pdf`.
 
-When the admin payment review is built, verifying a payment calls
-`InvoicesService.recomputePaid`, which moves the invoice to PARTIALLY_PAID or PAID.
+Payments are verified at `/admin/payments` (see docs/ADMIN-SIDE.md). A transfer gets one
+`PAY-…` reference, shared by its per-booking rows; confirming it calls
+`InvoicesService.recomputePaid`, which moves the invoice to PARTIALLY_PAID or PAID, and
+confirms each booking that is now paid in full with its agreement approved.
 
 ### VAT
 
@@ -61,9 +63,11 @@ and VAT are on the customer's side.
 
 - **Talent:** the customer's **Complete Service** creates the settlement (PENDING, expected
   after `payout.delay_days`, default 7).
-- **Vendor:** created when Eskista settles the rental (admin work, next).
-- Eskista pays it (admin). The payee then **Confirm Payment** and **Complete**, or the
-  booking closes itself 24 hours after the confirmation.
+- **Vendor:** created when Eskista moves the rental to Settlement after the return
+  inspection. Damage withheld from the customer's deposit is added as an adjustment.
+- Eskista pays it at `/admin/settlements/:STL-ref/pay`, which copies the payee's primary
+  payout account onto the settlement. The payee then **Confirm Payment** and **Complete**,
+  or the booking closes itself 24 hours after the confirmation.
 
 | Talent screen | Endpoint |
 |---|---|

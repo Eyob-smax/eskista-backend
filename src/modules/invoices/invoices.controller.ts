@@ -30,10 +30,11 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { Role } from '@prisma/client';
+import { AdminTier, Role } from '@prisma/client';
 import type { Response } from 'express';
 import type { UploadedFile } from '../../common/upload';
-import { CurrentUser, Roles } from '../auth/auth.decorators';
+import { CurrentUser } from '../auth/auth.decorators';
+import { AdminAccess } from '../admin/core/admin-access';
 import {
   AdminInvoiceQuery,
   CombineInvoiceDto,
@@ -229,7 +230,7 @@ or **409** lists which are not. Eskista then verifies the payment; nothing is co
 @ApiTags('admin · invoices')
 @ApiBearerAuth()
 @ApiForbiddenResponse({ description: 'Admins only.' })
-@Roles('ADMIN')
+@AdminAccess()
 @Controller({ path: 'admin/invoices', version: '1' })
 export class AdminInvoicesController {
   constructor(private readonly invoices: InvoicesService) {}
@@ -242,6 +243,7 @@ export class AdminInvoicesController {
   }
 
   @Post()
+  @AdminAccess(AdminTier.FINANCE)
   @ApiOperation({
     summary: 'Combine a customer’s bookings into one invoice',
     description:
@@ -265,6 +267,7 @@ export class AdminInvoicesController {
   }
 
   @Patch(':number/vat')
+  @AdminAccess(AdminTier.FINANCE)
   @ApiParam(NUMBER)
   @ApiOperation({
     summary: 'Charge or waive VAT on this invoice',
@@ -282,6 +285,7 @@ export class AdminInvoicesController {
   }
 
   @Post(':number/void')
+  @AdminAccess(AdminTier.FINANCE)
   @HttpCode(HttpStatus.OK)
   @ApiParam(NUMBER)
   @ApiOperation({

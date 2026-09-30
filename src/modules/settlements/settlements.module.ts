@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { JobsModule } from '../jobs/jobs.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { SettlementsService } from './settlements.service';
 
 /**
@@ -8,7 +9,7 @@ import { SettlementsService } from './settlements.service';
  */
 @Global()
 @Module({
-  imports: [JobsModule],
+  imports: [JobsModule, NotificationsModule],
   providers: [SettlementsService],
   exports: [SettlementsService],
 })

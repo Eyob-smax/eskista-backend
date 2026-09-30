@@ -7,5 +7,6 @@ import { AdminReviewService } from './admin-review.service';
   imports: [NotificationsModule],
   controllers: [AdminReviewController],
   providers: [AdminReviewService],
+  exports: [AdminReviewService],
 })
 export class AdminReviewModule {}

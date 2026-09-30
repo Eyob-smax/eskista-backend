@@ -19,7 +19,9 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
-import { CurrentUser, Roles } from '../auth/auth.decorators';
+import { CurrentUser } from '../auth/auth.decorators';
+import { AdminTier } from '@prisma/client';
+import { AdminAccess } from '../admin/core/admin-access';
 import { AdminReviewService } from './admin-review.service';
 import { ApproveDto, PreviewQuery, RejectDto, ReviewItemResponse } from './dto/admin-review.dto';
 
@@ -39,7 +41,7 @@ approved.
 @ApiTags('admin · review')
 @ApiBearerAuth()
 @ApiForbiddenResponse({ description: 'Admins only.' })
-@Roles('ADMIN')
+@AdminAccess()
 @Controller({ path: 'admin/review', version: '1' })
 export class AdminReviewController {
   constructor(private readonly review: AdminReviewService) {}
@@ -72,6 +74,7 @@ export class AdminReviewController {
   }
 
   @Post('listings/:id/approve')
+  @AdminAccess(AdminTier.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Approve a listing and fix its commission',
@@ -89,6 +92,7 @@ export class AdminReviewController {
   }
 
   @Post('listings/:id/reject')
+  @AdminAccess(AdminTier.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Send a listing back to the vendor',
@@ -130,6 +134,7 @@ export class AdminReviewController {
   }
 
   @Post('talent/:id/approve')
+  @AdminAccess(AdminTier.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Verify a talent and fix their commission',
@@ -147,6 +152,7 @@ export class AdminReviewController {
   }
 
   @Post('talent/:id/reject')
+  @AdminAccess(AdminTier.ADMIN)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Send a talent registration back',

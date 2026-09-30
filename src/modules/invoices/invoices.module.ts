@@ -1,4 +1,5 @@
 import { Global, Module } from '@nestjs/common';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { AdminInvoicesController, CustomerInvoicesController } from './invoices.controller';
 import { InvoicesService } from './invoices.service';
 
@@ -8,6 +9,7 @@ import { InvoicesService } from './invoices.service';
  */
 @Global()
 @Module({
+  imports: [NotificationsModule],
   controllers: [CustomerInvoicesController, AdminInvoicesController],
   providers: [InvoicesService],
   exports: [InvoicesService],

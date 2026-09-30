@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import type { AccountChannel } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -50,6 +51,18 @@ export const HIRING_DEFAULTS: HiringSettings = {
   invitationTtlHours: 48,
   selectionTtlHours: 72,
 };
+
+/** One of Eskista's accounts customers pay into, as every payment screen shows it. */
+export interface CollectionAccountView {
+  /** Null only for an account still read from the legacy `payment.accounts` setting. */
+  id: string | null;
+  channel: AccountChannel;
+  /** "Telebirr", "Commercial Bank of Ethiopia". */
+  provider: string;
+  accountName: string;
+  accountNumber: string;
+  merchantId: string | null;
+}
 
 const CACHE_TTL_MS = 60_000;
 
@@ -108,9 +121,51 @@ export class SettingsService {
     return [];
   }
 
+  /**
+   * Eskista's operating accounts, active ones in display order — managed in System
+   * Settings. Falls back to the legacy `payment.accounts` setting until the first account
+   * is added there, so a database seeded before the table existed still shows where to pay.
+   */
+  async collectionAccounts(): Promise<CollectionAccountView[]> {
+    const rows = await this.prisma.collectionAccount.findMany({
+      where: { isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    });
+    if (rows.length > 0) {
+      return rows.map((r) => ({
+        id: r.id,
+        channel: r.channel,
+        provider: r.provider,
+        accountName: r.accountName,
+        accountNumber: r.accountNumber,
+        merchantId: r.merchantId,
+      }));
+    }
+    return legacyAccounts(await this.raw(SETTING_KEYS.paymentAccounts));
+  }
+
+  /**
+   * The first Telebirr and first bank account in the `{ telebirr, bank }` shape the
+   * payment screens were built on. `collectionAccounts()` has the full list.
+   */
   async paymentAccounts(): Promise<Record<string, unknown>> {
-    const value = await this.raw(SETTING_KEYS.paymentAccounts);
-    return typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {};
+    const accounts = await this.collectionAccounts();
+    const telebirr = accounts.find((a) => a.channel === 'TELEBIRR');
+    const bank = accounts.find((a) => a.channel === 'BANK');
+    return {
+      ...(telebirr
+        ? { telebirr: { number: telebirr.accountNumber, accountName: telebirr.accountName } }
+        : {}),
+      ...(bank
+        ? {
+            bank: {
+              bank: bank.provider,
+              accountName: bank.accountName,
+              accountNumber: bank.accountNumber,
+            },
+          }
+        : {}),
+    };
   }
 
   /**
@@ -212,4 +267,39 @@ export class SettingsService {
     if (value === 'false') return false;
     return fallback;
   }
+}
+
+/** Reads the pre-table `payment.accounts` setting: `{ telebirr: {...}, bank: {...} }`. */
+export function legacyAccounts(value: unknown): CollectionAccountView[] {
+  if (typeof value !== 'object' || value === null) return [];
+  const v = value as Record<string, Record<string, unknown> | undefined>;
+  const out: CollectionAccountView[] = [];
+  const t = v.telebirr;
+  if (t && typeof t.number === 'string' && typeof t.accountName === 'string') {
+    out.push({
+      id: null,
+      channel: 'TELEBIRR',
+      provider: 'Telebirr',
+      accountName: t.accountName,
+      accountNumber: t.number,
+      merchantId: null,
+    });
+  }
+  const b = v.bank;
+  if (
+    b &&
+    typeof b.bank === 'string' &&
+    typeof b.accountName === 'string' &&
+    typeof b.accountNumber === 'string'
+  ) {
+    out.push({
+      id: null,
+      channel: 'BANK',
+      provider: b.bank,
+      accountName: b.accountName,
+      accountNumber: b.accountNumber,
+      merchantId: null,
+    });
+  }
+  return out;
 }
