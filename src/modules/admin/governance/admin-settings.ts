@@ -13,7 +13,9 @@ import {
   Put,
 } from '@nestjs/common';
 import {
+  ApiOkResponse,
   ApiOperation,
+  ApiParam,
   ApiProperty,
   ApiPropertyOptional,
   ApiTags,
@@ -39,6 +41,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { ApiStandardErrors } from '../../../common/dto/api-docs';
 import { CurrentUser } from '../../auth/auth.decorators';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SETTING_KEYS, SettingsService } from '../../settings/settings.service';
@@ -169,6 +172,48 @@ export class GeneralSettingsDto {
  * System Settings beyond pricing (which lives at `/admin/pricing`): Eskista's operating
  * accounts — where customers pay — and the general knobs.
  */
+export class OperatingAccountResponse {
+  @ApiProperty({ format: 'uuid', description: 'Customers send it as `collectionAccountId`.' }) id!: string;
+  @ApiProperty({ enum: AccountChannel, example: AccountChannel.BANK }) channel!: AccountChannel;
+  @ApiProperty({ example: 'Commercial Bank of Ethiopia' }) provider!: string;
+  @ApiProperty({ example: 'Eskista Marketplace PLC' }) accountName!: string;
+  @ApiProperty({ example: '1000234567890' }) accountNumber!: string;
+  @ApiPropertyOptional({ nullable: true, example: null }) merchantId!: string | null;
+  @ApiProperty({ example: true, description: 'Shown on the payment screens.' }) isActive!: boolean;
+  @ApiProperty({ example: 1 }) sortOrder!: number;
+  @ApiProperty({ example: 12, description: 'Payments recorded against it; such an account is only deactivated, never deleted.' })
+  payments!: number;
+  @ApiProperty() createdAt!: string;
+  @ApiProperty() updatedAt!: string;
+}
+
+export class CompanyDetailsResponse {
+  @ApiProperty({ example: 'Eskista Marketplace PLC' }) legalName!: string;
+  @ApiPropertyOptional({ nullable: true, example: '0001234567' }) tin!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'VAT-0099887' }) vatNumber!: string | null;
+  @ApiProperty({ example: 'Addis Ababa, Ethiopia' }) address!: string;
+  @ApiProperty({ example: '+251966554411' }) phone!: string;
+  @ApiPropertyOptional({ nullable: true, example: 'billing@eskista.et' }) email!: string | null;
+}
+
+export class PricingSummaryResponse {
+  @ApiProperty({ example: 1500, description: 'Standard commission, basis points.' }) commissionBps!: number;
+  @ApiProperty({ example: 1500, description: '0 when VAT is switched off.' }) vatBps!: number;
+  @ApiProperty({ example: 0 }) serviceFeeBps!: number;
+  @ApiProperty({ example: '/api/v1/admin/pricing', description: 'Where these are changed.' }) editAt!: string;
+}
+
+export class GeneralSettingsResponse {
+  @ApiProperty({ example: 7, description: 'Days after Settlement that a payout is due.' }) payoutDelayDays!: number;
+  @ApiProperty({ example: '+251966554411' }) supportPhone!: string;
+  @ApiProperty({ type: [String], example: ['09:00', '10:00', '14:00', '16:00'] }) returnSlotTimes!: string[];
+  @ApiProperty({ type: [String], example: ['Pack all included items and accessories.'] })
+  returnInstructions!: string[];
+  @ApiProperty({ type: CompanyDetailsResponse, description: 'Printed at the top of every invoice.' })
+  company!: CompanyDetailsResponse;
+  @ApiProperty({ type: PricingSummaryResponse, description: 'Read-only here.' }) pricing!: PricingSummaryResponse;
+}
+
 @Injectable()
 export class AdminSettingsService {
   constructor(
@@ -177,7 +222,7 @@ export class AdminSettingsService {
     private readonly audit: AdminAuditService,
   ) {}
 
-  async accounts() {
+  async accounts(): Promise<OperatingAccountResponse[]> {
     const rows = await this.prisma.collectionAccount.findMany({
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
@@ -187,11 +232,23 @@ export class AdminSettingsService {
       _count: true,
     });
     const counts = new Map(used.map((u) => [u.collectionAccountId, u._count]));
-    return rows.map((r) => ({ ...r, payments: counts.get(r.id) ?? 0 }));
+    return rows.map((r) => ({
+      id: r.id,
+      channel: r.channel,
+      provider: r.provider,
+      accountName: r.accountName,
+      accountNumber: r.accountNumber,
+      merchantId: r.merchantId,
+      isActive: r.isActive,
+      sortOrder: r.sortOrder,
+      payments: counts.get(r.id) ?? 0,
+      createdAt: r.createdAt.toISOString(),
+      updatedAt: r.updatedAt.toISOString(),
+    }));
   }
 
   /** Add Account. The first one of the table takes over from the legacy setting. */
-  async addAccount(adminId: string, dto: OperatingAccountDto) {
+  async addAccount(adminId: string, dto: OperatingAccountDto): Promise<OperatingAccountResponse[]> {
     const last = await this.prisma.collectionAccount.aggregate({ _max: { sortOrder: true } });
     const created = await this.prisma.collectionAccount.create({
       data: { ...dto, sortOrder: (last._max.sortOrder ?? -1) + 1 },
@@ -207,7 +264,11 @@ export class AdminSettingsService {
     return this.accounts();
   }
 
-  async updateAccount(adminId: string, id: string, dto: UpdateOperatingAccountDto) {
+  async updateAccount(
+    adminId: string,
+    id: string,
+    dto: UpdateOperatingAccountDto,
+  ): Promise<OperatingAccountResponse[]> {
     const before = await this.prisma.collectionAccount.findUnique({ where: { id } });
     if (!before) throw new NotFoundException('Account not found');
     await this.prisma.collectionAccount.update({ where: { id }, data: dto });
@@ -223,7 +284,7 @@ export class AdminSettingsService {
   }
 
   /** Removes an account; one customers have already paid into is only deactivated. */
-  async removeAccount(adminId: string, id: string) {
+  async removeAccount(adminId: string, id: string): Promise<OperatingAccountResponse[]> {
     const used = await this.prisma.payment.count({ where: { collectionAccountId: id } });
     if (used > 0) {
       await this.prisma.collectionAccount.update({ where: { id }, data: { isActive: false } });
@@ -241,7 +302,9 @@ export class AdminSettingsService {
     return this.accounts();
   }
 
-  async orderAccounts(adminId: string, ids: string[]) {
+  async orderAccounts(adminId: string, ids: string[]): Promise<OperatingAccountResponse[]> {
+    const known = await this.prisma.collectionAccount.count({ where: { id: { in: ids } } });
+    if (known !== ids.length) throw new BadRequestException('Some ids are not operating accounts');
     await this.prisma.$transaction(
       ids.map((id, index) =>
         this.prisma.collectionAccount.update({ where: { id }, data: { sortOrder: index } }),
@@ -258,7 +321,7 @@ export class AdminSettingsService {
     return this.accounts();
   }
 
-  async general() {
+  async general(): Promise<GeneralSettingsResponse> {
     const [
       payoutDelayDays,
       supportPhone,
@@ -288,7 +351,7 @@ export class AdminSettingsService {
     };
   }
 
-  async updateGeneral(adminId: string, dto: GeneralSettingsDto) {
+  async updateGeneral(adminId: string, dto: GeneralSettingsDto): Promise<GeneralSettingsResponse> {
     const before = await this.general();
     const writes: [string, Prisma.InputJsonValue][] = [];
     if (dto.payoutDelayDays !== undefined)
@@ -307,7 +370,7 @@ export class AdminSettingsService {
         ...((current?.value as Record<string, unknown> | null) ?? {}),
         ...dto.company,
       };
-      writes.push([SETTING_KEYS.company, merged]);
+      writes.push([SETTING_KEYS.company, merged as Prisma.InputJsonValue]);
     }
     if (writes.length === 0) throw new BadRequestException('Nothing to change');
     await this.prisma.$transaction(
@@ -342,53 +405,85 @@ export class AdminSettingsController {
   @ApiOperation({
     summary: 'Eskista Operating Accounts',
     description:
-      'Where customers pay — Telebirr merchant, CBE, Awash… Shown on every payment screen.',
+      'Where customers pay — Telebirr merchant, CBE, Awash… Shown, active ones in order, on every payment screen.',
   })
-  accounts() {
+  @ApiOkResponse({ type: [OperatingAccountResponse] })
+  @ApiStandardErrors()
+  accounts(): Promise<OperatingAccountResponse[]> {
     return this.settings.accounts();
   }
 
   @Post('operating-accounts')
   @AdminAccess(AdminTier.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Add Account' })
-  add(@CurrentUser('id') adminId: string, @Body() dto: OperatingAccountDto) {
+  @ApiOperation({ summary: 'Add Account', description: 'Added at the end of the order. Returns every account.' })
+  @ApiOkResponse({ type: [OperatingAccountResponse] })
+  @ApiStandardErrors({ badRequest: 'A field is invalid — e.g. the account number is not digits.' })
+  add(
+    @CurrentUser('id') adminId: string,
+    @Body() dto: OperatingAccountDto,
+  ): Promise<OperatingAccountResponse[]> {
     return this.settings.addAccount(adminId, dto);
   }
 
   @Patch('operating-accounts/:id')
   @AdminAccess(AdminTier.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Edit an account, or hide it (`isActive: false`)' })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'The operating account id.' })
+  @ApiOkResponse({ type: [OperatingAccountResponse] })
+  @ApiStandardErrors({ badRequest: 'A field is invalid.', notFound: 'Account not found' })
   update(
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateOperatingAccountDto,
-  ) {
+  ): Promise<OperatingAccountResponse[]> {
     return this.settings.updateAccount(adminId, id, dto);
   }
 
   @Delete('operating-accounts/:id')
   @AdminAccess(AdminTier.SUPER_ADMIN)
   @ApiOperation({ summary: 'Remove — or deactivate, if customers have paid into it' })
-  remove(@CurrentUser('id') adminId: string, @Param('id', ParseUUIDPipe) id: string) {
+  @ApiParam({ name: 'id', format: 'uuid', description: 'The operating account id.' })
+  @ApiOkResponse({ type: [OperatingAccountResponse] })
+  @ApiStandardErrors({ notFound: 'Account not found' })
+  remove(
+    @CurrentUser('id') adminId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<OperatingAccountResponse[]> {
     return this.settings.removeAccount(adminId, id);
   }
 
   @Put('operating-accounts/order')
   @AdminAccess(AdminTier.SUPER_ADMIN)
-  order(@CurrentUser('id') adminId: string, @Body() dto: OrderDto) {
+  @ApiOperation({ summary: 'The order accounts are shown in' })
+  @ApiOkResponse({ type: [OperatingAccountResponse] })
+  @ApiStandardErrors({ badRequest: 'Some ids are not operating accounts' })
+  order(@CurrentUser('id') adminId: string, @Body() dto: OrderDto): Promise<OperatingAccountResponse[]> {
     return this.settings.orderAccounts(adminId, dto.ids);
   }
 
   @Get('general')
   @ApiOperation({
     summary: 'System Settings — payout delay, support phone, returns, company details',
+    description: 'Pricing (commission, VAT, fees) is shown here and edited at `/admin/pricing`.',
   })
-  general() {
+  @ApiOkResponse({ type: GeneralSettingsResponse })
+  @ApiStandardErrors()
+  general(): Promise<GeneralSettingsResponse> {
     return this.settings.general();
   }
 
   @Patch('general')
   @AdminAccess(AdminTier.SUPER_ADMIN)
-  updateGeneral(@CurrentUser('id') adminId: string, @Body() dto: GeneralSettingsDto) {
+  @ApiOperation({
+    summary: 'Change System Settings',
+    description: 'Send only what changes; company details are merged into what is there.',
+  })
+  @ApiOkResponse({ type: GeneralSettingsResponse })
+  @ApiStandardErrors({ badRequest: 'Nothing to change' })
+  updateGeneral(
+    @CurrentUser('id') adminId: string,
+    @Body() dto: GeneralSettingsDto,
+  ): Promise<GeneralSettingsResponse> {
     return this.settings.updateGeneral(adminId, dto);
   }
 }

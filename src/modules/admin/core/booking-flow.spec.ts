@@ -32,6 +32,7 @@ const context = (over: Partial<AdminActionContext> = {}): AdminActionContext => 
   unitAssigned: false,
   outboundStage: null,
   depositRefundDue: false,
+  outgoingDamaged: false,
   settlementExists: false,
   returnedToVendor: false,
   ...over,

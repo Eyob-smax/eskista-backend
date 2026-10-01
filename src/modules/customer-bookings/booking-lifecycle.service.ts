@@ -460,12 +460,14 @@ export class BookingLifecycleService {
       throw new ConflictException('This engagement has not started yet.');
     }
 
-    await this.prisma.$transaction([
-      this.prisma.booking.update({
-        where: { id: booking.id },
+    await this.prisma.$transaction(async (tx) => {
+      // Guarded on the status just read, so an admin moving it on meanwhile is not undone.
+      const { count } = await tx.booking.updateMany({
+        where: { id: booking.id, status: booking.status },
         data: { status: BookingStatus.RENTAL_COMPLETED },
-      }),
-      this.prisma.bookingStatusEvent.create({
+      });
+      if (count === 0) throw new ConflictException('This engagement has just changed; reload it.');
+      await tx.bookingStatusEvent.create({
         data: {
           bookingId: booking.id,
           fromStatus: booking.status,
@@ -474,8 +476,8 @@ export class BookingLifecycleService {
           actorRole: Role.CUSTOMER,
           reason: 'Customer confirmed the service was delivered',
         },
-      }),
-    ]);
+      });
+    });
 
     // The talent's payout is owed from this moment: record it, to be paid by Eskista.
     await this.settlements.ensureForBooking(booking.id);
@@ -798,10 +800,12 @@ export class BookingLifecycleService {
       }
 
       if (booking.status !== BookingStatus.RETURN_SCHEDULED) {
-        await tx.booking.update({
-          where: { id: booking.id },
+        const { count } = await tx.booking.updateMany({
+          where: { id: booking.id, status: booking.status },
           data: { status: BookingStatus.RETURN_SCHEDULED },
         });
+        // Rolls back the return leg too, if Eskista moved the booking on meanwhile.
+        if (count === 0) throw new ConflictException('This booking has just changed; reload it.');
         await tx.bookingStatusEvent.create({
           data: {
             bookingId: booking.id,

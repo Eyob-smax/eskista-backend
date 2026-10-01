@@ -13,8 +13,6 @@ import {
   FulfilmentDirection,
   FulfilmentMethod,
   InspectionKind,
-  InvoiceStatus,
-  PaymentStatus,
   Prisma,
   Role,
   SettlementStatus,
@@ -24,7 +22,7 @@ import {
 } from '@prisma/client';
 import { formatMoney } from '../../../common/money';
 import { AgreementsService } from '../../agreements/agreements.service';
-import { HiringService } from '../../hiring/hiring.service';
+import { BookingWrapUpService } from '../../customer-bookings/booking-wrap-up.service';
 import { InvoicesService } from '../../invoices/invoices.service';
 import { JOB_NAMES, jobIdFor } from '../../jobs/jobs.constants';
 import { JobsService } from '../../jobs/jobs.service';
@@ -117,8 +115,8 @@ export class AdminBookingOpsService {
     private readonly agreements: AgreementsService,
     private readonly invoices: InvoicesService,
     private readonly settlements: SettlementsService,
-    private readonly hiring: HiringService,
     private readonly notifications: NotificationsService,
+    private readonly wrapUp: BookingWrapUpService,
     private readonly jobs: JobsService,
     private readonly audit: AdminAuditService,
   ) {}
@@ -202,7 +200,7 @@ export class AdminBookingOpsService {
     await this.flow.move(b.id, PRE_APPROVAL, BookingStatus.REJECTED, adminId, reason, {
       rejectionReason: reason,
     });
-    await this.wrapUp(b, reason, adminId);
+    await this.wrapUp.wrapUp(b.id, reason, adminId, 'ADMIN');
     await this.notifications.send(
       b.customerId,
       'BOOKING_REJECTED',
@@ -239,27 +237,14 @@ export class AdminBookingOpsService {
       cancelledAt: new Date(),
       cancelledById: adminId,
     });
-    await this.wrapUp(b, reason, adminId);
+    const { refundDueMinor } = await this.wrapUp.wrapUp(b.id, reason, adminId, 'ADMIN');
 
     await this.notifications.send(
       b.customerId,
-      'BOOKING_REJECTED',
+      'BOOKING_CANCELLED_BY_ESKISTA',
       { reference, reason },
-      {
-        bookingReference: reference,
-      },
+      { bookingReference: reference },
     );
-    const supplier = b.vendor?.userId ?? b.talentProfile?.userId;
-    if (supplier && b.supplierResponse !== SupplierResponse.DECLINED) {
-      await this.notifications.send(
-        supplier,
-        'SUPPLIER_BOOKING_CANCELLED',
-        { reference, reason },
-        {
-          bookingReference: reference,
-        },
-      );
-    }
     await this.audit.record(
       adminId,
       'booking.cancel',
@@ -269,9 +254,6 @@ export class AdminBookingOpsService {
       undefined,
       reason,
     );
-    const refundDueMinor = b.payments
-      .filter((p) => p.status === PaymentStatus.VERIFIED)
-      .reduce((sum, p) => sum + p.amountMinor, 0);
     return { refundDueMinor };
   }
 
@@ -593,7 +575,11 @@ export class AdminBookingOpsService {
         'Engagement settled',
       );
     }
-    await this.settlements.ensureForBooking(b.id);
+    const settlement = await this.settlements.ensureForBooking(b.id);
+    // A payee who confirmed their payout before the booking reached Settlement (finance paid
+    // early) had no auto-close scheduled then; start it now so the booking still closes.
+    const confirmedAt = settlement.payeeConfirmedAt ?? b.handover?.payoutConfirmedAt;
+    if (confirmedAt) await this.settlements.scheduleAutoClose(b.id, confirmedAt);
     await this.audit.record(adminId, 'booking.settle', 'Booking', reference);
   }
 
@@ -834,31 +820,6 @@ export class AdminBookingOpsService {
       }),
     ]);
     return [...new Set([...held.map((h) => h.unitId), ...blocked.map((x) => x.unitId!)])];
-  }
-
-  /** Voids what a booking that will not go ahead leaves behind, and stops its clocks. */
-  private async wrapUp(b: OpsBooking, reason: string, adminId: string): Promise<void> {
-    await this.agreements.voidForBooking(b.id);
-    await this.jobs.cancelBookingJobs(b.id);
-    if (b.type === BookingType.TALENT) await this.hiring.cancelRequest(b.id);
-
-    const verified = b.payments.some((p) => p.status === PaymentStatus.VERIFIED);
-    if (!verified) {
-      const lines = await this.prisma.invoiceLine.findMany({
-        where: {
-          bookingId: b.id,
-          invoice: { status: { in: [InvoiceStatus.ISSUED, InvoiceStatus.DRAFT] }, combined: false },
-        },
-        select: { invoice: { select: { number: true } } },
-      });
-      for (const l of lines) {
-        await this.invoices
-          .void(adminId, l.invoice.number, reason)
-          .catch((error: unknown) =>
-            this.logger.warn(`Invoice ${l.invoice.number} not voided: ${String(error)}`),
-          );
-      }
-    }
   }
 
   private equipmentOnly(b: OpsBooking): void {

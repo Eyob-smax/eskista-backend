@@ -572,7 +572,9 @@ export class VendorBookingsService {
   ): Promise<CompletionResponse> {
     const booking = await this.requireOwnedBooking(userId, reference);
     // The design's order: Confirm Return, then Confirm Payment, then Complete.
-    if (!booking.handover?.returnConfirmedAt) {
+    // Gear Eskista kept at its hub for the next rental never reached the vendor, so there is
+    // nothing for them to confirm. Only when it was sent back must they confirm it first.
+    if (booking.handover?.returnedToVendorAt && !booking.handover.returnConfirmedAt) {
       throw new ConflictException('Confirm the equipment is back with you first');
     }
     if (booking.settlement?.status !== SettlementStatus.PAID) {

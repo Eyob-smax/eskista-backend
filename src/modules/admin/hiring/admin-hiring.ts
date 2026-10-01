@@ -25,6 +25,7 @@ import {
   BookingStatus,
   BookingType,
   InvitationStatus,
+  InvoiceStatus,
   PaymentStatus,
   Prisma,
   Role,
@@ -162,6 +163,11 @@ export class HiringRowResponse {
 }
 
 const include = {
+  invoiceLines: {
+    where: { invoice: { status: { not: InvoiceStatus.VOID } } },
+    select: { totalMinor: true, securityDepositMinor: true },
+    take: 1,
+  },
   customer: { include: { customer: true } },
   talentProfile: { select: { id: true, displayName: true, professions: true, avatarKey: true } },
   talentService: { select: { title: true, category: { select: { name: true } } } },
@@ -265,7 +271,7 @@ export class AdminHiringService {
     ids: string[],
   ): Promise<AdminBookingDetailResponse> {
     const b = await this.request(reference);
-    await this.hiring.hire(b.customerId, reference, ids);
+    await this.hiring.hire(b.customerId, reference, ids, { id: adminId, role: Role.ADMIN });
     await this.audit.record(adminId, 'hiring.hire', 'Booking', reference, undefined, {
       talentProfileIds: ids,
     });
@@ -328,7 +334,8 @@ export class AdminHiringService {
     });
     const current = timeline.find((t) => t.state === 'IN_PROGRESS');
     const profile = b.customer.customer;
-    const due = b.totalMinor + b.securityDepositMinor;
+    const line = b.invoiceLines[0];
+    const due = line ? line.totalMinor + line.securityDepositMinor : b.totalMinor + b.securityDepositMinor;
     return {
       reference: b.reference,
       createdAt: b.createdAt.toISOString(),

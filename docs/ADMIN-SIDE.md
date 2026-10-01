@@ -122,10 +122,29 @@ tier check; an admin with no profile yet counts as ADMIN, never Super Admin.
 
 ### Signing in
 
-`POST /api/auth/sign-in/email { email, password }` (Better Auth, sign-up disabled). The
-first Super Admin on a fresh database: `ADMIN_PASSWORD=… pnpm admin:create --email … --name "…"`.
+`POST /api/auth/sign-in/email { email, password }` (Better Auth, sign-up disabled). It sets
+the `eskista.session_token` cookie and returns the token in the `set-auth-token` response
+header (Better Auth's bearer plugin, signed tokens only). The dashboard sends either the
+cookie (`credentials: 'include'`) or `Authorization: Bearer <token>`; CORS exposes
+`set-auth-token` so a dashboard on another origin can read it.
+
+The first Super Admin on a fresh database: `ADMIN_PASSWORD=… pnpm admin:create --email … --name "…"`.
 Seeded: `ops@eskista.et` (Super Admin), `finance@eskista.et`, `support@eskista.et`, password
 `eskista-admin-2026` (or `SEED_ADMIN_PASSWORD`).
+
+### API documentation
+
+Outside production, Swagger serves two documents:
+
+- **`/docs/admin`** — the admin API alone: every admin route, the Better Auth sign-in /
+  sign-out / session / change-password operations, tags in sidebar order, typed responses
+  with examples, the error envelope and each route's 401 / 403 (with the tiers it needs) /
+  400 / 404 / 409. JSON at `/docs/admin-json` for client generation.
+- **`/docs`** — every endpoint. JSON at `/docs-json`.
+
+To try requests, run the **admin · auth → Sign in** operation (the browser keeps the cookie),
+or paste the `set-auth-token` value into **Authorize → bearer**. The document is cut from the
+full one by `src/config/swagger.ts` (`buildAdminDocument`).
 
 ### Endpoints, by screen
 
@@ -194,6 +213,27 @@ the talent confirms and completes.
 - **Bell** — new bookings, vendor answers, hires, uploaded scans, payment slips, handovers,
   returns, completed services, issues, payout and return disputes, new registrations and
   listing submissions notify the admins whose tier handles them (`/notifications`).
+
+### Review fixes (cross-side consistency)
+
+- **One cancel routine** (`BookingWrapUpService`): a customer's cancel and an admin's cancel or
+  reject both void agreements, reject slips still awaiting review, void unpaid invoices (a
+  combined one whole), return hub gear to the vendor, cancel jobs, close a talent request and
+  tell the supplier. A customer's cancel also rings the admin bell with the refund due.
+  The status write is guarded, so it cannot undo a step Eskista just took.
+- **Confirm Payment** refuses a slip on a booking that is no longer awaiting payment.
+- **Assign Talent** is recorded as the admin, and the customer is told to sign and pay.
+- **Mark as Paid** can be repeated for a payout the payee reported missing (clearing the
+  dispute); an undisputed one still cannot be paid twice, and two admins cannot both pay.
+- A vendor confirms the **return** before the payout only when the gear was sent back to them.
+- **Move to Settlement** starts the 24-hour auto-close if the payee had already confirmed.
+- Vendors are told of **new requests**; the **return reminder** only fires while the customer
+  holds the gear; Start Packing is disabled after a Damaged outgoing check; the talent
+  timeline stays on Contract Active until Start Engagement; payment columns use the invoice
+  (VAT-exempt aware). `POST /talent/claim` is limited to 5 tries a minute.
+
+Known and left as is: auto-hire on first accept with a headcount above one hires only the
+first talent; talents get "the client cancelled" wording when Eskista rejects a request.
 
 ### Schema
 

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -12,7 +13,14 @@ import {
   Query,
   ConflictException,
 } from '@nestjs/common';
-import { ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
+import {
+  ApiOkResponse,
+  ApiOperation,
+  ApiParam,
+  ApiProperty,
+  ApiPropertyOptional,
+  ApiTags,
+} from '@nestjs/swagger';
 import { AdminTier, FeatureTier, ListingStatus, Prisma, VerificationStatus } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
@@ -28,6 +36,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
+import { ApiStandardErrors } from '../../../common/dto/api-docs';
 import { CurrentUser } from '../../auth/auth.decorators';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -54,17 +63,33 @@ export class ContentQuery {
   q?: string;
 }
 
+export class ContentItemResponse {
+  @ApiProperty({ format: 'uuid', description: 'Listing id or talent profile id.' }) id!: string;
+  @ApiProperty({ enum: CONTENT_KINDS, example: 'EQUIPMENT' }) kind!: ContentKind;
+  @ApiProperty({ example: 'Sony FX3 Cinema Camera' }) name!: string;
+  @ApiProperty({ example: 'Cameras · Afro Studio' }) subtitle!: string;
+  @ApiPropertyOptional({ nullable: true }) imageUrl!: string | null;
+  @ApiPropertyOptional({ nullable: true, enum: FeatureTier, example: FeatureTier.FEATURED, description: 'Null is Standard.' })
+  tier!: FeatureTier | null;
+  @ApiProperty({ example: 'Featured' }) tierLabel!: string;
+  @ApiProperty({ example: 0, description: 'Pinned position; lower comes first.' }) sortOrder!: number;
+  @ApiPropertyOptional({ nullable: true }) featuredAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, description: 'Promotion ends after this.' }) featuredUntil!: string | null;
+  @ApiProperty({ example: 4.8 }) rating!: number;
+  @ApiProperty({ example: 11 }) bookings!: number;
+}
+
 export class FeatureDto {
-  @ApiProperty({ enum: FeatureTier, description: 'Featured, Highlighted or Spotlight.' })
+  @ApiProperty({ enum: FeatureTier, example: FeatureTier.SPOTLIGHT, description: 'Featured, Highlighted or Spotlight.' })
   @IsEnum(FeatureTier)
   tier!: FeatureTier;
 
-  @ApiPropertyOptional({ description: 'Stop promoting after this date.' })
+  @ApiPropertyOptional({ description: 'Stop promoting after this date.', example: '2026-10-31T21:00:00.000Z' })
   @IsOptional()
   @IsDateString()
   until?: string;
 
-  @ApiPropertyOptional({ description: '"Pin": lower comes first within the tier.' })
+  @ApiPropertyOptional({ description: '"Pin": lower comes first.', example: 0 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -77,7 +102,11 @@ export class PinOrderDto {
   @IsIn(CONTENT_KINDS)
   kind!: ContentKind;
 
-  @ApiProperty({ type: [String], description: 'Featured items in the order they should appear.' })
+  @ApiProperty({
+    type: [String],
+    description: 'Promoted items in the order they should appear.',
+    example: ['5a1b2c3d-…', '9c2d3e4f-…'],
+  })
   @IsArray()
   @ArrayUnique()
   @IsUUID('all', { each: true })
@@ -98,13 +127,13 @@ export class AdminContentService {
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
-  async featured(kind: ContentKind): Promise<Record<string, unknown>[]> {
+  async featured(kind: ContentKind): Promise<ContentItemResponse[]> {
     return kind === 'TALENT'
       ? this.talentItems({ featureTier: { not: null } })
       : this.listingItems({ featureTier: { not: null } });
   }
 
-  async candidates(kind: ContentKind, q?: string): Promise<Record<string, unknown>[]> {
+  async candidates(kind: ContentKind, q?: string): Promise<ContentItemResponse[]> {
     if (kind === 'TALENT') {
       return this.talentItems(
         {
@@ -130,7 +159,7 @@ export class AdminContentService {
     adminId: string,
     id: string,
     dto: FeatureDto,
-  ): Promise<Record<string, unknown>[]> {
+  ): Promise<ContentItemResponse[]> {
     const listing = await this.prisma.listing.findUnique({
       where: { id },
       include: { vendor: { select: { userId: true } } },
@@ -159,8 +188,8 @@ export class AdminContentService {
     return this.featured('EQUIPMENT');
   }
 
-  async unfeatureListing(adminId: string, id: string): Promise<Record<string, unknown>[]> {
-    await this.prisma.listing.update({
+  async unfeatureListing(adminId: string, id: string): Promise<ContentItemResponse[]> {
+    const { count } = await this.prisma.listing.updateMany({
       where: { id },
       data: {
         featureTier: null,
@@ -170,6 +199,7 @@ export class AdminContentService {
         featureSortOrder: 0,
       },
     });
+    if (count === 0) throw new NotFoundException('Listing not found');
     await this.audit.record(adminId, 'content.unfeature', 'Listing', id);
     return this.featured('EQUIPMENT');
   }
@@ -178,7 +208,7 @@ export class AdminContentService {
     adminId: string,
     id: string,
     dto: FeatureDto,
-  ): Promise<Record<string, unknown>[]> {
+  ): Promise<ContentItemResponse[]> {
     const talent = await this.prisma.talentProfile.findUnique({ where: { id } });
     if (!talent) throw new NotFoundException('Talent not found');
     if (talent.status !== VerificationStatus.VERIFIED)
@@ -203,17 +233,26 @@ export class AdminContentService {
     return this.featured('TALENT');
   }
 
-  async unfeatureTalent(adminId: string, id: string): Promise<Record<string, unknown>[]> {
-    await this.prisma.talentProfile.update({
+  async unfeatureTalent(adminId: string, id: string): Promise<ContentItemResponse[]> {
+    const { count } = await this.prisma.talentProfile.updateMany({
       where: { id },
       data: { featureTier: null, featuredAt: null, featuredUntil: null, featureSortOrder: 0 },
     });
+    if (count === 0) throw new NotFoundException('Talent not found');
     await this.audit.record(adminId, 'content.unfeature', 'TalentProfile', id);
     return this.featured('TALENT');
   }
 
   /** Pin: the order featured items appear in, across tiers. */
-  async pin(adminId: string, dto: PinOrderDto): Promise<Record<string, unknown>[]> {
+  async pin(adminId: string, dto: PinOrderDto): Promise<ContentItemResponse[]> {
+    // Only promoted items have a place in the pinned order.
+    const promoted =
+      dto.kind === 'TALENT'
+        ? await this.prisma.talentProfile.count({ where: { id: { in: dto.ids }, featureTier: { not: null } } })
+        : await this.prisma.listing.count({ where: { id: { in: dto.ids }, featureTier: { not: null } } });
+    if (promoted !== dto.ids.length) {
+      throw new BadRequestException('Every id must be a promoted item of this kind');
+    }
     if (dto.kind === 'TALENT') {
       await this.prisma.$transaction(
         dto.ids.map((id, index) =>
@@ -236,7 +275,7 @@ export class AdminContentService {
   private async listingItems(
     where: Prisma.ListingWhereInput,
     take = 200,
-  ): Promise<Record<string, unknown>[]> {
+  ): Promise<ContentItemResponse[]> {
     const rows = await this.prisma.listing.findMany({
       where,
       include: {
@@ -249,7 +288,7 @@ export class AdminContentService {
     });
     return rows.map((l) => ({
       id: l.id,
-      kind: 'EQUIPMENT',
+      kind: 'EQUIPMENT' as const,
       name: l.name,
       subtitle: `${l.category.name} · ${l.vendor.businessName}`,
       imageUrl: l.images[0] ? this.storage.urlFor(l.images[0].fileKey) : null,
@@ -266,7 +305,7 @@ export class AdminContentService {
   private async talentItems(
     where: Prisma.TalentProfileWhereInput,
     take = 200,
-  ): Promise<Record<string, unknown>[]> {
+  ): Promise<ContentItemResponse[]> {
     const rows = await this.prisma.talentProfile.findMany({
       where,
       include: { user: { select: { image: true } } },
@@ -275,7 +314,7 @@ export class AdminContentService {
     });
     return rows.map((t) => ({
       id: t.id,
-      kind: 'TALENT',
+      kind: 'TALENT' as const,
       name: t.displayName,
       subtitle: [t.professions[0], t.location].filter(Boolean).join(' · '),
       imageUrl: talentAvatarUrl(t, this.storage),
@@ -302,64 +341,89 @@ export class AdminContentController {
     description:
       'Featured, Highlighted and Spotlight items, in pinned order. Promoted on the website hero grid and the Telegram bot.',
   })
-  featured(@Query() query: ContentQuery): Promise<Record<string, unknown>[]> {
+  @ApiOkResponse({ type: [ContentItemResponse] })
+  @ApiStandardErrors({ badRequest: 'Unknown `kind`.' })
+  featured(@Query() query: ContentQuery): Promise<ContentItemResponse[]> {
     return this.content.featured(query.kind ?? 'EQUIPMENT');
   }
 
   @Get('candidates')
-  @ApiOperation({ summary: 'Add — live items not yet promoted' })
-  candidates(@Query() query: ContentQuery): Promise<Record<string, unknown>[]> {
+  @ApiOperation({
+    summary: 'Add — live items not yet promoted',
+    description: 'Published equipment of verified vendors, or verified talent. Up to 30; search with `q`.',
+  })
+  @ApiOkResponse({ type: [ContentItemResponse] })
+  @ApiStandardErrors({ badRequest: 'Unknown `kind`.' })
+  candidates(@Query() query: ContentQuery): Promise<ContentItemResponse[]> {
     return this.content.candidates(query.kind ?? 'EQUIPMENT', query.q);
   }
 
   @Put('featured/listings/:id')
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Promote equipment, or change its tier' })
+  @ApiOperation({
+    summary: 'Promote equipment, or change its tier',
+    description: 'The vendor is told the first time. Returns every promoted listing.',
+  })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'The listing id.' })
+  @ApiOkResponse({ type: [ContentItemResponse] })
+  @ApiStandardErrors({ notFound: 'Listing not found', conflict: 'Only a published listing can be promoted' })
   featureListing(
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: FeatureDto,
-  ): Promise<Record<string, unknown>[]> {
+  ): Promise<ContentItemResponse[]> {
     return this.content.featureListing(adminId, id, dto);
   }
 
   @Delete('featured/listings/:id')
   @AdminAccess(AdminTier.ADMIN)
   @ApiOperation({ summary: 'Remove — back to Standard' })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'The listing id.' })
+  @ApiOkResponse({ type: [ContentItemResponse] })
+  @ApiStandardErrors({ notFound: 'Listing not found' })
   unfeatureListing(
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<Record<string, unknown>[]> {
+  ): Promise<ContentItemResponse[]> {
     return this.content.unfeatureListing(adminId, id);
   }
 
   @Put('featured/talent/:id')
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Promote a talent, or change their tier' })
+  @ApiOperation({ summary: 'Promote a talent, or change their tier', description: 'Returns every promoted talent.' })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'The talent profile id.' })
+  @ApiOkResponse({ type: [ContentItemResponse] })
+  @ApiStandardErrors({ notFound: 'Talent not found', conflict: 'Only a verified talent can be promoted' })
   featureTalent(
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: FeatureDto,
-  ): Promise<Record<string, unknown>[]> {
+  ): Promise<ContentItemResponse[]> {
     return this.content.featureTalent(adminId, id, dto);
   }
 
   @Delete('featured/talent/:id')
   @AdminAccess(AdminTier.ADMIN)
+  @ApiOperation({ summary: 'Remove a talent — back to Standard' })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'The talent profile id.' })
+  @ApiOkResponse({ type: [ContentItemResponse] })
+  @ApiStandardErrors({ notFound: 'Talent not found' })
   unfeatureTalent(
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<Record<string, unknown>[]> {
+  ): Promise<ContentItemResponse[]> {
     return this.content.unfeatureTalent(adminId, id);
   }
 
   @Put('featured/order')
   @AdminAccess(AdminTier.ADMIN)
   @ApiOperation({ summary: 'Pin — the order promoted items appear in' })
+  @ApiOkResponse({ type: [ContentItemResponse] })
+  @ApiStandardErrors({ badRequest: 'Every id must be a promoted item of this kind' })
   pin(
     @CurrentUser('id') adminId: string,
     @Body() dto: PinOrderDto,
-  ): Promise<Record<string, unknown>[]> {
+  ): Promise<ContentItemResponse[]> {
     return this.content.pin(adminId, dto);
   }
 }

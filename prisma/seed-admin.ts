@@ -59,6 +59,11 @@ export async function seedAdminSide(prisma: PrismaClient): Promise<void> {
 }
 
 async function seedTeam(prisma: PrismaClient): Promise<void> {
+  // Known demo passwords never go near production: there, admins come from `admin:create`.
+  if (process.env.NODE_ENV === 'production' && !process.env.SEED_ADMIN_PASSWORD) {
+    console.warn('  admin team: skipped in production (set SEED_ADMIN_PASSWORD to seed it)');
+    return;
+  }
   const hash = await hashPassword(SEED_ADMIN_PASSWORD);
   for (const m of TEAM) {
     const user = await prisma.user.upsert({

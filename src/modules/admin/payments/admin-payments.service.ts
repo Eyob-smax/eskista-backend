@@ -1,5 +1,5 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { PaymentStatus, Prisma } from '@prisma/client';
+import { BookingStatus, PaymentStatus, Prisma } from '@prisma/client';
 import { paginate, type Paginated } from '../../../common/dto/pagination.dto';
 import {
   DOCUMENT_MIME_TYPES,
@@ -204,6 +204,15 @@ export class AdminPaymentsService {
     dto: ConfirmPaymentDto,
   ): Promise<PaymentDetailResponse> {
     const rows = this.pending(await this.group(reference));
+    // Money is only verified against a booking still waiting for it. One that was cancelled
+    // or rejected meanwhile has its slips declined; a stray one is rejected, not confirmed.
+    const closed = rows.find((r) => r.booking.status !== BookingStatus.AWAITING_PAYMENT);
+    if (closed) {
+      throw new ConflictException(
+        `${closed.booking.reference} is ${closed.booking.status.toLowerCase().replace(/_/g, ' ')}, ` +
+          'not awaiting payment. Reject this slip instead.',
+      );
+    }
     const declared = rows.reduce((sum, r) => sum + r.amountMinor, 0);
     const received = dto.receivedAmountMinor ?? declared;
     const shares = allocatePayment(

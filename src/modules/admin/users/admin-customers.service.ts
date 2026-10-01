@@ -6,7 +6,11 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../../storage/storage.interface';
 import { AdminAuditService } from '../core/admin-audit.service';
 import { humanise, minorToDecimal, toCsv } from '../core/admin-format';
-import { AdminCustomersQuery } from './admin-users.dto';
+import {
+  AdminCustomersQuery,
+  CustomerDetailResponse,
+  CustomerRowResponse,
+} from './admin-users.dto';
 
 const OPEN: BookingStatus[] = [
   BookingStatus.REQUEST_SUBMITTED,
@@ -42,7 +46,7 @@ export class AdminCustomersService {
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
-  async list(query: AdminCustomersQuery): Promise<Paginated<Record<string, unknown>>> {
+  async list(query: AdminCustomersQuery): Promise<Paginated<CustomerRowResponse>> {
     const where = this.where(query);
     const [rows, total] = await Promise.all([
       this.prisma.user.findMany({
@@ -61,7 +65,7 @@ export class AdminCustomersService {
     );
   }
 
-  async detail(id: string): Promise<Record<string, unknown>> {
+  async detail(id: string): Promise<CustomerDetailResponse> {
     const u = await this.prisma.user.findFirst({
       where: { id, roles: { some: { role: Role.CUSTOMER } } },
       include: {
@@ -149,7 +153,7 @@ export class AdminCustomersService {
   }
 
   /** The "Verified customer" badge, from the uploaded business document. */
-  async verify(adminId: string, id: string): Promise<Record<string, unknown>> {
+  async verify(adminId: string, id: string): Promise<CustomerDetailResponse> {
     const p = await this.profile(id);
     if (!p.documentKey) throw new ConflictException('The customer has not uploaded a document');
     await this.prisma.customerProfile.update({
@@ -169,7 +173,7 @@ export class AdminCustomersService {
     adminId: string,
     id: string,
     reason: string,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<CustomerDetailResponse> {
     const p = await this.profile(id);
     await this.prisma.customerProfile.update({
       where: { id: p.id },
@@ -192,7 +196,7 @@ export class AdminCustomersService {
   }
 
   /** Suspend User: blocks sign-in everywhere — the whole account, every role. */
-  async suspend(adminId: string, id: string, reason: string): Promise<Record<string, unknown>> {
+  async suspend(adminId: string, id: string, reason: string): Promise<CustomerDetailResponse> {
     const u = await this.prisma.user.findUnique({ where: { id }, include: { roles: true } });
     if (!u) throw new NotFoundException('Customer not found');
     if (u.roles.some((r) => r.role === Role.ADMIN)) {
@@ -210,7 +214,12 @@ export class AdminCustomersService {
     return this.detail(id);
   }
 
-  async reactivate(adminId: string, id: string): Promise<Record<string, unknown>> {
+  async reactivate(adminId: string, id: string): Promise<CustomerDetailResponse> {
+    const u = await this.prisma.user.findUnique({ where: { id }, include: { roles: true } });
+    if (!u) throw new NotFoundException('Customer not found');
+    if (u.roles.some((r) => r.role === Role.ADMIN)) {
+      throw new ConflictException('Admins are reactivated from the admin team screen');
+    }
     await this.prisma.user.update({
       where: { id },
       data: { isBlocked: false, blockedAt: null, blockedReason: null },
@@ -260,14 +269,14 @@ export class AdminCustomersService {
       rows.map((u) => {
         const r = this.toRow(u);
         return [
-          r.name as string,
-          r.organisation as string | null,
-          r.location as string | null,
-          r.phone as string | null,
-          r.email as string | null,
-          r.bookings as number,
-          r.verificationLabel as string,
-          r.statusLabel as string,
+          r.name,
+          r.organisation,
+          r.location,
+          r.phone,
+          r.email,
+          r.bookings,
+          r.verificationLabel,
+          r.statusLabel,
           minorToDecimal(byCustomer.get(u.id) ?? 0),
           u.createdAt.toISOString().slice(0, 10),
         ];
@@ -312,7 +321,7 @@ export class AdminCustomersService {
     return p;
   }
 
-  private toRow(u: Row): Record<string, unknown> {
+  private toRow(u: Row): CustomerRowResponse {
     const p = u.customer;
     const verification = p?.verificationStatus ?? VerificationStatus.DRAFT;
     return {

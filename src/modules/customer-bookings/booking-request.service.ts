@@ -194,6 +194,25 @@ export class BookingRequestService {
       }),
     ]);
 
+    // Approval waits for the vendor's answer, so they hear about the request now.
+    if (updated.listing) {
+      const vendor = await this.prisma.vendorProfile.findUnique({
+        where: { id: updated.listing.vendorId },
+        select: { userId: true },
+      });
+      if (vendor) {
+        await this.notifications.send(
+          vendor.userId,
+          'VENDOR_NEW_REQUEST',
+          {
+            item: updated.listing.name,
+            dates: `${updated.startDate.toISOString().slice(0, 10)} – ${updated.endDate.toISOString().slice(0, 10)}`,
+            reference: updated.reference,
+          },
+          { bookingReference: updated.reference },
+        );
+      }
+    }
     await this.notifications.notifyAdmins(
       'ADMIN_BOOKING_REQUEST',
       {

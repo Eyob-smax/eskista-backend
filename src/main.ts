@@ -2,7 +2,6 @@ import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { toNodeHandler } from 'better-auth/node';
 import compression from 'compression';
 import express from 'express';
@@ -10,6 +9,7 @@ import helmet from 'helmet';
 import { Logger as PinoLogger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { setupSwagger } from './config/swagger';
 import type { Env } from './config/env.validation';
 import { AUTH_INSTANCE } from './modules/auth/auth.constants';
 import type { Auth } from './modules/auth/auth.factory';
@@ -33,7 +33,13 @@ async function bootstrap(): Promise<void> {
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
-  app.enableCors({ origin: origins.length > 0 ? origins : false, credentials: true });
+  app.enableCors({
+    origin: origins.length > 0 ? origins : false,
+    credentials: true,
+    // The bearer plugin hands the session token back in this header on sign-in; a browser
+    // on another origin can only read it if it is exposed.
+    exposedHeaders: ['set-auth-token'],
+  });
 
   // ── Better Auth ──────────────────────────────────────────────────────────────
   // Mounted as raw middleware at its own basePath, so it bypasses the global `api`
@@ -63,17 +69,8 @@ async function bootstrap(): Promise<void> {
   // checks entitlement before streaming. See src/modules/storage/file-access.service.ts.
 
   if (config.get('NODE_ENV', { infer: true }) !== 'production') {
-    const swaggerConfig = new DocumentBuilder()
-      .setTitle('Eskista Marketplace API')
-      .setDescription(
-        'Managed rental marketplace — customer, vendor and admin surfaces. ' +
-          'Authentication lives outside this document at /api/auth/*.',
-      )
-      .setVersion('0.1.0')
-      .addBearerAuth()
-      .addCookieAuth('eskista.session_token')
-      .build();
-    SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, swaggerConfig));
+    // /docs for everything, /docs/admin for the operations dashboard.
+    setupSwagger(app, '0.1.0');
   }
 
   await app.listen(config.get('PORT', { infer: true }), '0.0.0.0');

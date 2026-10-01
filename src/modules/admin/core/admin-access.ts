@@ -54,7 +54,7 @@ export function AdminAccess(...tiers: AdminTier[]) {
     SetMetadata(ADMIN_TIERS_KEY, tiers),
     UseGuards(AdminTierGuard),
     ApiBearerAuth(),
-    ApiCookieAuth('eskista.session_token'),
+    ApiCookieAuth(),
     ApiExtraModels(ApiErrorResponse),
     ApiUnauthorizedResponse({
       description: 'No session, or it expired. Sign in again at `POST /api/auth/sign-in/email`.',

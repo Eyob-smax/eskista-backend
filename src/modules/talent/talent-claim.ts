@@ -8,10 +8,12 @@ import {
   NotFoundException,
   Post,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ApiOkResponse, ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { Matches } from 'class-validator';
+import { ApiStandardErrors } from '../../common/dto/api-docs';
 import { CurrentUser } from '../auth/auth.decorators';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -25,8 +27,8 @@ export class ClaimProfileDto {
 }
 
 export class ClaimResultResponse {
-  @ApiProperty() talentProfileId!: string;
-  @ApiProperty() displayName!: string;
+  @ApiProperty({ format: 'uuid' }) talentProfileId!: string;
+  @ApiProperty({ example: 'Dawit Bekele' }) displayName!: string;
   @ApiProperty({ description: 'Where to go next: VERIFIED profiles are live already.' })
   status!: string;
 }
@@ -91,12 +93,20 @@ export class TalentClaimController {
 
   @Post('claim')
   @HttpCode(HttpStatus.OK)
+  // A code is about 40 bits and takes over a profile, so guessing is throttled hard: five
+  // tries a minute per client.
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @ApiOperation({
     summary: 'Claim a profile Eskista registered for you',
     description:
       'Enter the code from Eskista. Any signed-in account without a talent profile can claim.',
   })
   @ApiOkResponse({ type: ClaimResultResponse })
+  @ApiStandardErrors({
+    badRequest: 'code must look like K7Q2-MX9P',
+    notFound: 'That code is not valid. Ask Eskista for a new one.',
+    conflict: 'This account already has a talent profile',
+  })
   claim(
     @CurrentUser('id') userId: string,
     @Body() dto: ClaimProfileDto,

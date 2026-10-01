@@ -18,7 +18,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { STORAGE_DRIVER, type StorageDriver } from '../../storage/storage.interface';
 import { AdminAuditService } from '../core/admin-audit.service';
 import { humanise, minorToDecimal, toCsv } from '../core/admin-format';
-import { AdminVendorsQuery, VerifyVendorDto } from './admin-users.dto';
+import {
+  AdminVendorsQuery,
+  VendorDetailResponse,
+  VendorRowResponse,
+  VerifyVendorDto,
+} from './admin-users.dto';
 
 const ACTIVE_RENTAL: BookingStatus[] = [
   BookingStatus.BOOKING_CONFIRMED,
@@ -96,7 +101,7 @@ export class AdminVendorsService {
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
-  async list(query: AdminVendorsQuery): Promise<Paginated<Record<string, unknown>>> {
+  async list(query: AdminVendorsQuery): Promise<Paginated<VendorRowResponse>> {
     const where = this.where(query);
     const [rows, total] = await Promise.all([
       this.prisma.vendorProfile.findMany({
@@ -115,7 +120,7 @@ export class AdminVendorsService {
     );
   }
 
-  async detail(id: string): Promise<Record<string, unknown>> {
+  async detail(id: string): Promise<VendorDetailResponse> {
     const v = await this.prisma.vendorProfile.findUnique({
       where: { id },
       include: {
@@ -224,7 +229,7 @@ export class AdminVendorsService {
     adminId: string,
     id: string,
     dto: VerifyVendorDto,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<VendorDetailResponse> {
     const v = await this.prisma.vendorProfile.findUnique({
       where: { id },
       include: {
@@ -277,7 +282,7 @@ export class AdminVendorsService {
     return this.detail(id);
   }
 
-  async reject(adminId: string, id: string, reason: string): Promise<Record<string, unknown>> {
+  async reject(adminId: string, id: string, reason: string): Promise<VendorDetailResponse> {
     const v = await this.require(id);
     if (v.status !== VerificationStatus.PENDING_REVIEW) {
       throw new ConflictException('Only a vendor awaiting verification can be rejected');
@@ -304,7 +309,7 @@ export class AdminVendorsService {
   }
 
   /** Suspend: the vendor's gear leaves the catalogue. Their open rentals go on. */
-  async suspend(adminId: string, id: string, reason: string): Promise<Record<string, unknown>> {
+  async suspend(adminId: string, id: string, reason: string): Promise<VendorDetailResponse> {
     const v = await this.require(id);
     if (v.status === VerificationStatus.SUSPENDED) return this.detail(id);
     await this.prisma.vendorProfile.update({
@@ -328,7 +333,7 @@ export class AdminVendorsService {
     return this.detail(id);
   }
 
-  async reactivate(adminId: string, id: string): Promise<Record<string, unknown>> {
+  async reactivate(adminId: string, id: string): Promise<VendorDetailResponse> {
     const v = await this.require(id);
     if (v.status !== VerificationStatus.SUSPENDED)
       throw new ConflictException('This vendor is not suspended');
@@ -377,11 +382,11 @@ export class AdminVendorsService {
           r.createdAt.toISOString().slice(0, 10),
           r.location,
           r.contactName,
-          row.phone as string | null,
+          row.phone,
           r.email,
-          row.inventoryUnits as number,
-          row.activeRentals as number,
-          row.statusLabel as string,
+          row.inventoryUnits,
+          row.activeRentals,
+          row.statusLabel,
           minorToDecimal(byVendor.get(r.id) ?? 0),
         ];
       }),
@@ -414,7 +419,7 @@ export class AdminVendorsService {
     return v;
   }
 
-  private toRow(v: Row): Record<string, unknown> {
+  private toRow(v: Row): VendorRowResponse {
     return {
       id: v.id,
       businessName: v.businessName,

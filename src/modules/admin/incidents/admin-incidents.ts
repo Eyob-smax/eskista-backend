@@ -12,7 +12,15 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBody,
+  ApiOkResponse,
+  ApiOperation,
+  ApiParam,
+  ApiProperty,
+  ApiPropertyOptional,
+  ApiTags,
+} from '@nestjs/swagger';
 import {
   AdminTier,
   BookingType,
@@ -31,6 +39,7 @@ import {
   MinLength,
   NotEquals,
 } from 'class-validator';
+import { ApiPaginatedResponse, ApiStandardErrors } from '../../../common/dto/api-docs';
 import { paginate, PaginationQuery, type Paginated } from '../../../common/dto/pagination.dto';
 import { formatMoney } from '../../../common/money';
 import { CurrentUser } from '../../auth/auth.decorators';
@@ -71,6 +80,61 @@ export class AdminIncidentsQuery extends PaginationQuery {
   @MaxLength(120)
   @Transform(trim)
   q?: string;
+}
+
+const OPEN_STATUSES: IncidentStatus[] = [IncidentStatus.REPORTED, IncidentStatus.UNDER_REVIEW];
+
+export class IncidentReporterResponse {
+  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({ example: 'Yoseph Alemu' }) name!: string;
+  @ApiProperty({ enum: ['CUSTOMER', 'VENDOR', 'TALENT', 'ADMIN'], example: 'CUSTOMER' }) role!: string;
+}
+
+export class IncidentPartiesResponse {
+  @ApiProperty({ example: 'Habesha Films' }) client!: string;
+  @ApiPropertyOptional({ nullable: true, example: '+251911223344' }) clientPhone!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Dawit Bekele', description: 'Vendor or talent.' })
+  supplier!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '+251911778899' }) supplierPhone!: string | null;
+}
+
+export class IncidentPhotoResponse {
+  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({ example: '/api/v1/files/bookings/ESK-10485/incidents/a1.jpg' }) url!: string;
+  @ApiPropertyOptional({ nullable: true }) caption!: string | null;
+}
+
+export class AdminIncidentResponse {
+  @ApiProperty({ example: 'ESK-INC-00042' }) reference!: string;
+  @ApiProperty({ example: 'ESK-TLT-9001' }) bookingReference!: string;
+  @ApiProperty({ enum: BookingType, example: BookingType.TALENT }) bookingType!: BookingType;
+  @ApiProperty({ example: 'IN_PROGRESS' }) bookingStatus!: string;
+  @ApiPropertyOptional({ nullable: true, example: 'Dawit Bekele' }) itemName!: string | null;
+  @ApiProperty({ enum: IncidentType, example: IncidentType.LATE_ARRIVAL }) type!: IncidentType;
+  @ApiProperty({ example: 'Late Arrival' }) typeLabel!: string;
+  @ApiProperty({ example: 'DURING_ENGAGEMENT' }) phase!: string;
+  @ApiProperty({ example: 'During Engagement' }) phaseLabel!: string;
+  @ApiProperty({ example: 'The cinematographer arrived 90 minutes after the agreed 08:00 call time.' })
+  description!: string;
+  @ApiProperty({ type: IncidentReporterResponse }) reporter!: IncidentReporterResponse;
+  @ApiProperty({ type: IncidentPartiesResponse, description: '"Client ↔ talent" on the desk.' })
+  parties!: IncidentPartiesResponse;
+  @ApiPropertyOptional({ nullable: true, example: -120_000, description: 'Money the resolution moved.' })
+  amountMinor!: number | null;
+  @ApiProperty({ enum: IncidentStatus, example: IncidentStatus.REPORTED }) status!: IncidentStatus;
+  @ApiProperty({ example: 'Logged' }) statusLabel!: string;
+  @ApiPropertyOptional({ nullable: true }) resolution!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Henok Girma' }) resolvedBy!: string | null;
+  @ApiProperty({ type: [IncidentPhotoResponse] }) photos!: IncidentPhotoResponse[];
+  @ApiProperty({ example: '2026-09-28T10:15:00.000Z' }) loggedAt!: string;
+  @ApiPropertyOptional({ nullable: true }) resolvedAt!: string | null;
+}
+
+export class IncidentSummaryResponse {
+  @ApiProperty({ example: 1 }) openEquipment!: number;
+  @ApiProperty({ example: 2, description: 'Open client ↔ talent disputes.' }) openTalent!: number;
+  @ApiProperty({ example: 3 }) open!: number;
+  @ApiProperty({ example: 1 }) resolvedToday!: number;
 }
 
 export class ResolveIncidentDto {
@@ -149,7 +213,7 @@ export class AdminIncidentsService {
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
-  async list(query: AdminIncidentsQuery): Promise<Paginated<Record<string, unknown>>> {
+  async list(query: AdminIncidentsQuery): Promise<Paginated<AdminIncidentResponse>> {
     const q = query.q;
     const where: Prisma.IncidentWhereInput = {
       ...(query.status ? { status: query.status } : {}),
@@ -184,7 +248,7 @@ export class AdminIncidentsService {
     );
   }
 
-  async summary(): Promise<Record<string, number>> {
+  async summary(): Promise<IncidentSummaryResponse> {
     const open = { status: { in: [IncidentStatus.REPORTED, IncidentStatus.UNDER_REVIEW] } };
     const [equipment, talent, today] = await Promise.all([
       this.prisma.incident.count({ where: { ...open, booking: { type: BookingType.EQUIPMENT } } }),
@@ -204,11 +268,11 @@ export class AdminIncidentsService {
     };
   }
 
-  async get(reference: string): Promise<Record<string, unknown>> {
+  async get(reference: string): Promise<AdminIncidentResponse> {
     return this.toResponse(await this.find(reference));
   }
 
-  async review(adminId: string, reference: string): Promise<Record<string, unknown>> {
+  async review(adminId: string, reference: string): Promise<AdminIncidentResponse> {
     const i = await this.find(reference);
     if (i.status !== IncidentStatus.REPORTED) return this.toResponse(i);
     await this.prisma.incident.update({
@@ -224,29 +288,23 @@ export class AdminIncidentsService {
     adminId: string,
     reference: string,
     dto: ResolveIncidentDto,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<AdminIncidentResponse> {
     const i = await this.find(reference);
-    if (i.status === IncidentStatus.RESOLVED || i.status === IncidentStatus.DISMISSED) {
-      throw new ConflictException('This issue is already closed');
-    }
+    const s = i.booking.settlement;
     if (dto.payoutAdjustmentMinor) {
-      const s = i.booking.settlement;
       if (!s) {
         throw new ConflictException(
           'The booking has no settlement yet; resolve without a payout change, or settle it first',
         );
       }
-      if (s.status === SettlementStatus.PAID)
+      if (s.status === SettlementStatus.PAID) {
         throw new ConflictException('The payout is already paid');
-      await this.settlements.addAdjustment(
-        s.id,
-        adminId,
-        dto.payoutAdjustmentMinor,
-        `Issue ${reference}`,
-      );
+      }
     }
-    await this.prisma.incident.update({
-      where: { id: i.id },
+    // Guarded on the open statuses: of two admins resolving at once, only one gets here, so
+    // the payout is adjusted once.
+    const { count } = await this.prisma.incident.updateMany({
+      where: { id: i.id, status: { in: OPEN_STATUSES } },
       data: {
         status: IncidentStatus.RESOLVED,
         resolution: dto.resolution,
@@ -255,6 +313,10 @@ export class AdminIncidentsService {
         ...(dto.payoutAdjustmentMinor ? { amountMinor: dto.payoutAdjustmentMinor } : {}),
       },
     });
+    if (count === 0) throw new ConflictException('This issue is already closed');
+    if (dto.payoutAdjustmentMinor && s) {
+      await this.settlements.addAdjustment(s.id, adminId, dto.payoutAdjustmentMinor, `Issue ${reference}`);
+    }
     await this.flow.note(
       i.booking.id,
       adminId,
@@ -269,13 +331,10 @@ export class AdminIncidentsService {
     adminId: string,
     reference: string,
     reason: string,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<AdminIncidentResponse> {
     const i = await this.find(reference);
-    if (i.status === IncidentStatus.RESOLVED || i.status === IncidentStatus.DISMISSED) {
-      throw new ConflictException('This issue is already closed');
-    }
-    await this.prisma.incident.update({
-      where: { id: i.id },
+    const { count } = await this.prisma.incident.updateMany({
+      where: { id: i.id, status: { in: OPEN_STATUSES } },
       data: {
         status: IncidentStatus.DISMISSED,
         resolution: reason,
@@ -283,6 +342,7 @@ export class AdminIncidentsService {
         resolvedByAdminId: adminId,
       },
     });
+    if (count === 0) throw new ConflictException('This issue is already closed');
     await this.tell(i, reason);
     await this.audit.record(
       adminId,
@@ -296,20 +356,19 @@ export class AdminIncidentsService {
     return this.get(reference);
   }
 
+  /**
+   * Tells whoever reported it: "Your report … has been resolved". An issue an admin raised
+   * from an inspection is Eskista's own record — the customer already heard the inspection
+   * result — so nobody is told.
+   */
   private async tell(i: Row, resolution: string): Promise<void> {
-    const recipients = new Set<string>([i.reportedById]);
-    if (i.reporterRole !== 'ADMIN') recipients.add(i.booking.customerId);
-    // An admin-raised issue (from an inspection) is Eskista's own note; the customer hears
-    // about the outcome through the inspection result instead.
-    if (i.reporterRole === 'ADMIN') recipients.delete(i.reportedById);
-    for (const userId of recipients) {
-      await this.notifications.send(
-        userId,
-        'INCIDENT_RESOLVED',
-        { reference: i.reference, resolution },
-        { bookingReference: i.booking.reference, incidentReference: i.reference },
-      );
-    }
+    if (i.reporterRole === 'ADMIN') return;
+    await this.notifications.send(
+      i.reportedById,
+      'INCIDENT_RESOLVED',
+      { reference: i.reference, resolution },
+      { bookingReference: i.booking.reference, incidentReference: i.reference },
+    );
   }
 
   private async find(reference: string): Promise<Row> {
@@ -318,7 +377,7 @@ export class AdminIncidentsService {
     return i;
   }
 
-  private toResponse(i: Row): Record<string, unknown> {
+  private toResponse(i: Row): AdminIncidentResponse {
     const b = i.booking;
     const supplier = b.vendor?.businessName ?? b.talentProfile?.displayName ?? null;
     return {
@@ -366,54 +425,95 @@ export class AdminIncidentsController {
   @ApiOperation({
     summary: 'Issues & Grievance Desk',
     description:
-      'Equipment issues and client ↔ talent disputes. `bookingType=TALENT` for the talent desk.',
+      'Equipment issues and client ↔ talent disputes, newest first. `bookingType=TALENT` for the talent desk.',
   })
-  list(@Query() query: AdminIncidentsQuery): Promise<Paginated<Record<string, unknown>>> {
+  @ApiPaginatedResponse(AdminIncidentResponse)
+  @ApiStandardErrors({ badRequest: 'A filter is not valid.' })
+  list(@Query() query: AdminIncidentsQuery): Promise<Paginated<AdminIncidentResponse>> {
     return this.incidents.list(query);
   }
 
   @Get('summary')
-  summary(): Promise<Record<string, number>> {
+  @ApiOperation({ summary: 'Counts for the desk and the sidebar' })
+  @ApiOkResponse({ type: IncidentSummaryResponse })
+  @ApiStandardErrors()
+  summary(): Promise<IncidentSummaryResponse> {
     return this.incidents.summary();
   }
 
   @Get(':reference')
   @ApiOperation({ summary: 'View Details' })
-  get(@Param('reference') reference: string): Promise<Record<string, unknown>> {
+  @ApiParam({ name: 'reference', example: 'ESK-INC-00042', description: 'The issue reference.' })
+  @ApiOkResponse({ type: AdminIncidentResponse })
+  @ApiStandardErrors({ notFound: 'Issue not found' })
+  get(@Param('reference') reference: string): Promise<AdminIncidentResponse> {
     return this.incidents.get(reference);
   }
 
   @Post(':reference/review')
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.SUPPORT, AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Take it on — Under Review' })
+  @ApiOperation({ summary: 'Take it on — Under Review', description: 'A no-op once it is past Logged.' })
+  @ApiParam({ name: 'reference', example: 'ESK-INC-00042', description: 'The issue reference.' })
+  @ApiOkResponse({ type: AdminIncidentResponse })
+  @ApiStandardErrors({ notFound: 'Issue not found' })
   review(
     @CurrentUser('id') adminId: string,
     @Param('reference') reference: string,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<AdminIncidentResponse> {
     return this.incidents.review(adminId, reference);
   }
 
   @Post(':reference/resolve')
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.SUPPORT, AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Resolve Issue — optionally adjusting the supplier payout' })
+  @ApiOperation({
+    summary: 'Resolve Issue — optionally adjusting the supplier payout',
+    description:
+      '`payoutAdjustmentMinor` (signed) is applied to the vendor’s or talent’s unpaid settlement ' +
+      'for this booking — negative for a penalty or refund. Whoever reported it is told.',
+  })
+  @ApiParam({ name: 'reference', example: 'ESK-INC-00042', description: 'The issue reference.' })
+  @ApiBody({
+    type: ResolveIncidentDto,
+    examples: {
+      noMoney: { summary: 'Resolved, no money moved', value: { resolution: 'Spoke to both parties; agreed to extend by one hour at no charge.' } },
+      penalty: {
+        summary: 'Late arrival: 10% off the talent payout',
+        value: { resolution: 'Talent arrived 90 minutes late; 10% refunded to the client.', payoutAdjustmentMinor: -120000 },
+      },
+    },
+  })
+  @ApiOkResponse({ type: AdminIncidentResponse })
+  @ApiStandardErrors({
+    badRequest: '`resolution` missing, or the adjustment is zero.',
+    notFound: 'Issue not found',
+    conflict: 'This issue is already closed',
+  })
   resolve(
     @CurrentUser('id') adminId: string,
     @Param('reference') reference: string,
     @Body() dto: ResolveIncidentDto,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<AdminIncidentResponse> {
     return this.incidents.resolve(adminId, reference, dto);
   }
 
   @Post(':reference/dismiss')
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.SUPPORT, AdminTier.ADMIN)
+  @ApiOperation({ summary: 'Dismiss — duplicate, or not an issue', description: 'The reporter is told why.' })
+  @ApiParam({ name: 'reference', example: 'ESK-INC-00042', description: 'The issue reference.' })
+  @ApiOkResponse({ type: AdminIncidentResponse })
+  @ApiStandardErrors({
+    badRequest: '`reason` missing.',
+    notFound: 'Issue not found',
+    conflict: 'This issue is already closed',
+  })
   dismiss(
     @CurrentUser('id') adminId: string,
     @Param('reference') reference: string,
     @Body() dto: DismissIncidentDto,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<AdminIncidentResponse> {
     return this.incidents.dismiss(adminId, reference, dto.reason);
   }
 }

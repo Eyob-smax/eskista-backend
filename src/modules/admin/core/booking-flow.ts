@@ -129,7 +129,9 @@ function talentStep(s: AdminFlowState): number {
       // Hired: approved and assigned; the contract is next.
       return s.talentAssigned ? 3 : 1;
     case BookingStatus.BOOKING_CONFIRMED:
-      return s.contractsApproved ? 4 : 3;
+      // Contract Active until Start Engagement is pressed — approved contracts only make
+      // starting possible.
+      return 3;
     case BookingStatus.DELIVERY_PICKUP:
     case BookingStatus.IN_PROGRESS:
       return 4;
@@ -200,6 +202,8 @@ export interface AdminActionContext extends AdminFlowState {
   unitAssigned: boolean;
   outboundStage: 'PREPARED' | 'PICKED_UP' | 'OUT_FOR_DELIVERY' | 'DELIVERED' | null;
   depositRefundDue: boolean;
+  /** The outgoing check graded the gear Damaged, so it cannot go out. */
+  outgoingDamaged: boolean;
   settlementExists: boolean;
   returnedToVendor: boolean;
 }
@@ -274,7 +278,15 @@ export function buildAdminActions(c: AdminActionContext): AdminAction[] {
       } else if (!c.hasOutgoingInspection) {
         add('OUTGOING_INSPECTION', 'Update Outgoing Inspection', true);
       } else {
-        add('DISPATCH', 'Start Packing Gear', true);
+        add(
+          'DISPATCH',
+          'Start Packing Gear',
+          true,
+          !c.outgoingDamaged,
+          c.outgoingDamaged
+            ? 'The outgoing inspection found damage; update it once the gear is fixed.'
+            : null,
+        );
       }
       add('CANCEL', 'Cancel Booking');
       break;
@@ -291,9 +303,12 @@ export function buildAdminActions(c: AdminActionContext): AdminAction[] {
     case BookingStatus.RENTAL_COMPLETED:
     case BookingStatus.RETURN_SCHEDULED:
       if (talent) {
-        if (c.status === BookingStatus.IN_PROGRESS)
+        // Talent have no return leg: it is under way, or complete and ready to settle.
+        if (c.status === BookingStatus.IN_PROGRESS) {
           add('COMPLETE_ENGAGEMENT', 'Mark Completed', true);
-        else add('SETTLE', 'Move to Settlement', true);
+        } else if (c.status === BookingStatus.RENTAL_COMPLETED) {
+          add('SETTLE', 'Move to Settlement', true);
+        }
         break;
       }
       add('MARK_RETURN_RECEIVED', 'Mark Returned to Hub', true);

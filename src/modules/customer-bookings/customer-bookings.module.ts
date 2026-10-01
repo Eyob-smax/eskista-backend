@@ -6,6 +6,7 @@ import { JobsModule } from '../jobs/jobs.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { BookingLifecycleController } from './booking-lifecycle.controller';
 import { BookingLifecycleService } from './booking-lifecycle.service';
+import { BookingWrapUpService } from './booking-wrap-up.service';
 import { BookingRequestService } from './booking-request.service';
 import { CustomerBookingsController } from './customer-bookings.controller';
 import { CustomerBookingsService } from './customer-bookings.service';
@@ -14,7 +15,12 @@ import { CustomerBookingsService } from './customer-bookings.service';
   // CustomerModule so booking readiness re-uses the profile rules rather than copying them.
   imports: [CustomerModule, AgreementsModule, NotificationsModule, JobsModule, HiringModule],
   controllers: [CustomerBookingsController, BookingLifecycleController],
-  providers: [CustomerBookingsService, BookingRequestService, BookingLifecycleService],
-  exports: [CustomerBookingsService, BookingRequestService],
+  providers: [
+    CustomerBookingsService,
+    BookingRequestService,
+    BookingLifecycleService,
+    BookingWrapUpService,
+  ],
+  exports: [CustomerBookingsService, BookingRequestService, BookingWrapUpService],
 })
 export class CustomerBookingsModule {}

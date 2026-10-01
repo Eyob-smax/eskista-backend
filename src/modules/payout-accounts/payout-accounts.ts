@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiOkResponse,
+  ApiParam,
   ApiOperation,
   ApiProperty,
   ApiPropertyOptional,
@@ -34,6 +35,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
+import { ApiStandardErrors } from '../../common/dto/api-docs';
 import { CurrentUser, Roles } from '../auth/auth.decorators';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -236,13 +238,23 @@ export class VendorPayoutAccountsController {
 
   @Get()
   @ApiOperation({ summary: 'My payout accounts', description: DESCRIPTION })
-  @ApiOkResponse({ type: [PayoutAccountResponse] })
+  @ApiOkResponse({ type: [PayoutAccountResponse], description: 'Primary first.' })
+  @ApiStandardErrors({ notFound: 'No profile for this account yet' })
   async list(@CurrentUser('id') userId: string): Promise<PayoutAccountResponse[]> {
     return this.accounts.list(await this.accounts.ownerFor(userId, 'vendor'));
   }
 
   @Post()
+  @ApiOperation({
+    summary: 'Add a payout account',
+    description: 'Telebirr (provider is set for you) or a bank. `isPrimary: true` makes it the one used. Returns every account.',
+  })
   @ApiOkResponse({ type: [PayoutAccountResponse] })
+  @ApiStandardErrors({
+    badRequest: 'provider (the bank) is required for a bank account',
+    notFound: 'No profile for this account yet',
+    conflict: 'At most 5 payout accounts',
+  })
   async create(
     @CurrentUser('id') userId: string,
     @Body() dto: PayoutAccountDto,
@@ -251,7 +263,10 @@ export class VendorPayoutAccountsController {
   }
 
   @Patch(':id')
+  @ApiOperation({ summary: 'Edit a payout account, or make it primary (`isPrimary: true`)' })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'The payout account id.' })
   @ApiOkResponse({ type: [PayoutAccountResponse] })
+  @ApiStandardErrors({ badRequest: 'A field is invalid.', notFound: 'Payout account not found' })
   async update(
     @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -262,7 +277,10 @@ export class VendorPayoutAccountsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remove a payout account', description: 'Removing the primary promotes the oldest remaining one.' })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'The payout account id.' })
   @ApiOkResponse({ type: [PayoutAccountResponse] })
+  @ApiStandardErrors({ notFound: 'Payout account not found' })
   async remove(
     @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -279,13 +297,23 @@ export class TalentPayoutAccountsController {
 
   @Get()
   @ApiOperation({ summary: 'My payout accounts', description: DESCRIPTION })
-  @ApiOkResponse({ type: [PayoutAccountResponse] })
+  @ApiOkResponse({ type: [PayoutAccountResponse], description: 'Primary first.' })
+  @ApiStandardErrors({ notFound: 'No profile for this account yet' })
   async list(@CurrentUser('id') userId: string): Promise<PayoutAccountResponse[]> {
     return this.accounts.list(await this.accounts.ownerFor(userId, 'talent'));
   }
 
   @Post()
+  @ApiOperation({
+    summary: 'Add a payout account',
+    description: 'Telebirr (provider is set for you) or a bank. `isPrimary: true` makes it the one used. Returns every account.',
+  })
   @ApiOkResponse({ type: [PayoutAccountResponse] })
+  @ApiStandardErrors({
+    badRequest: 'provider (the bank) is required for a bank account',
+    notFound: 'No profile for this account yet',
+    conflict: 'At most 5 payout accounts',
+  })
   async create(
     @CurrentUser('id') userId: string,
     @Body() dto: PayoutAccountDto,
@@ -294,7 +322,10 @@ export class TalentPayoutAccountsController {
   }
 
   @Patch(':id')
+  @ApiOperation({ summary: 'Edit a payout account, or make it primary (`isPrimary: true`)' })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'The payout account id.' })
   @ApiOkResponse({ type: [PayoutAccountResponse] })
+  @ApiStandardErrors({ badRequest: 'A field is invalid.', notFound: 'Payout account not found' })
   async update(
     @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -305,7 +336,10 @@ export class TalentPayoutAccountsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remove a payout account', description: 'Removing the primary promotes the oldest remaining one.' })
+  @ApiParam({ name: 'id', format: 'uuid', description: 'The payout account id.' })
   @ApiOkResponse({ type: [PayoutAccountResponse] })
+  @ApiStandardErrors({ notFound: 'Payout account not found' })
   async remove(
     @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,

@@ -1,5 +1,6 @@
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
+import { bearer } from 'better-auth/plugins';
 import type { PrismaClient } from '@prisma/client';
 import type { Env } from '../../config/env.validation';
 import { telegramMiniApp } from './telegram/telegram-mini-app.plugin';
@@ -65,6 +66,10 @@ export function createAuth({
     socialProviders,
 
     plugins: [
+      // `Authorization: Bearer <token>` as well as the session cookie, for the admin dashboard
+      // on its own domain and webviews that drop cookies. Sign-in returns the token in the
+      // `set-auth-token` header. Only the signed token is accepted, never a raw session id.
+      bearer({ requireSignature: true }),
       telegramMiniApp({
         botToken: env.TELEGRAM_BOT_TOKEN,
         maxAgeSeconds: env.TELEGRAM_INIT_DATA_MAX_AGE_SECONDS,

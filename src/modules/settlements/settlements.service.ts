@@ -177,9 +177,18 @@ export class SettlementsService implements OnModuleInit {
    * their details. The payee then confirms it arrived.
    */
   async markPaid(settlementId: string, adminId: string, input: MarkPaidInput): Promise<Settlement> {
-    const settlement = await this.prisma.settlement.findUnique({ where: { id: settlementId } });
+    const settlement = await this.prisma.settlement.findUnique({
+      where: { id: settlementId },
+      include: { booking: { select: { handover: { select: { payoutDisputedAt: true } } } } },
+    });
     if (!settlement) throw new NotFoundException('Settlement not found');
-    if (settlement.status === SettlementStatus.PAID) {
+
+    // A payout the payee reported as missing can be sent again; one nobody disputed cannot
+    // be paid twice. Vendors record the dispute on their handover, talents on the settlement.
+    const disputed =
+      settlement.payeeDisputedAt !== null || settlement.booking.handover?.payoutDisputedAt != null;
+    const resend = settlement.status === SettlementStatus.PAID && disputed;
+    if (settlement.status === SettlementStatus.PAID && !resend) {
       throw new ConflictException('This settlement is already paid');
     }
 
@@ -195,8 +204,9 @@ export class SettlementsService implements OnModuleInit {
       throw new NotFoundException('That payout account does not belong to this payee');
     }
 
-    return this.prisma.settlement.update({
-      where: { id: settlementId },
+    // Guarded on the status just read: of two admins paying at once, only one writes.
+    const { count } = await this.prisma.settlement.updateMany({
+      where: { id: settlementId, status: settlement.status },
       data: {
         status: SettlementStatus.PAID,
         paidAt: input.paidAt ?? new Date(),
@@ -207,11 +217,20 @@ export class SettlementsService implements OnModuleInit {
         payoutProvider: account?.provider ?? null,
         payoutAccountName: account?.accountName ?? null,
         payoutAccountNumber: account?.accountNumber ?? null,
-        // A payout re-sent after a "not received" report starts a fresh confirmation.
+        // A re-sent payout starts a fresh confirmation.
+        payeeConfirmedAt: null,
         payeeDisputedAt: null,
         payeeDisputeNote: null,
       },
     });
+    if (count === 0) throw new ConflictException('This settlement was just paid; reload it');
+    if (resend) {
+      await this.prisma.vendorHandover.updateMany({
+        where: { bookingId: settlement.bookingId },
+        data: { payoutDisputedAt: null, payoutDisputeNote: null, payoutConfirmedAt: null },
+      });
+    }
+    return this.prisma.settlement.findUniqueOrThrow({ where: { id: settlementId } });
   }
 
   /** Holds a payout, e.g. while a dispute is open, or releases it back to pending. */

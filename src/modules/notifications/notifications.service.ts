@@ -138,6 +138,10 @@ export const NOTIFICATION_TEMPLATES = {
     title: 'Booking Declined',
     body: 'Your request {{reference}} could not be confirmed. {{reason}}',
   },
+  BOOKING_CANCELLED_BY_ESKISTA: {
+    title: 'Booking Cancelled',
+    body: 'Eskista cancelled {{reference}}. {{reason}} Anything you paid will be returned.',
+  },
   PAYMENT_RESUBMIT: {
     title: 'New Payment Slip Needed',
     body: 'Please upload a new payment slip for {{reference}}. {{reason}}',
@@ -156,6 +160,10 @@ export const NOTIFICATION_TEMPLATES = {
   },
 
   // ── Vendor and talent: raised by Eskista's operations ──
+  VENDOR_NEW_REQUEST: {
+    title: 'New Booking Request',
+    body: 'A client requested {{item}} for {{dates}} ({{reference}}). Accept or decline it in the app.',
+  },
   SUPPLIER_BOOKING_APPROVED: {
     title: 'Booking Approved',
     body: 'Eskista approved {{reference}}. The customer is now signing and paying.',
@@ -202,6 +210,10 @@ export const NOTIFICATION_TEMPLATES = {
   },
 
   // ── Admin: the dashboard bell ──
+  ADMIN_BOOKING_CANCELLED: {
+    title: 'Customer Cancelled',
+    body: '{{customer}} cancelled {{reference}} ({{refund}}).',
+  },
   ADMIN_BOOKING_REQUEST: {
     title: 'New Booking Request',
     body: '{{customer}} requested {{item}} ({{reference}}).',

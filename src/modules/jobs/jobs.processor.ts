@@ -12,12 +12,12 @@ import {
   type ReturnReminderPayload,
 } from './jobs.constants';
 
-/** A reminder only makes sense while the equipment is still out. */
-const STILL_OUT: BookingStatus[] = [
-  BookingStatus.BOOKING_CONFIRMED,
-  BookingStatus.DELIVERY_PICKUP,
-  BookingStatus.IN_PROGRESS,
-];
+/**
+ * A reminder only makes sense while the customer holds the equipment and has not yet
+ * arranged the return — not before it has been delivered, when "arrange your return" would
+ * be refused.
+ */
+const STILL_OUT: BookingStatus[] = [BookingStatus.IN_PROGRESS, BookingStatus.RENTAL_COMPLETED];
 
 /**
  * Processes the scheduled notifications.

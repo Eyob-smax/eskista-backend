@@ -95,6 +95,12 @@ const METHOD_LABELS: Record<string, string> = {
 };
 
 const rowInclude = {
+  // What the customer actually owes: a VAT-exempt invoice is smaller than the booking total.
+  invoiceLines: {
+    where: { invoice: { status: { not: InvoiceStatus.VOID } } },
+    select: { totalMinor: true, securityDepositMinor: true },
+    take: 1,
+  },
   customer: { include: { customer: true } },
   listing: { select: { name: true, images: { where: { isPrimary: true }, take: 1 } } },
   vendor: { select: { id: true, businessName: true } },
@@ -238,6 +244,9 @@ export class AdminBookingsService {
       outboundStage: outbound?.stage ?? null,
       depositRefundDue:
         b.securityDepositMinor > 0 && returnInspection !== undefined && !b.depositRefundedAt,
+      outgoingDamaged: b.inspections.some(
+        (i) => i.kind === InspectionKind.OUTGOING && i.grade === 'DAMAGED',
+      ),
       settlementExists: b.settlement !== null,
       returnedToVendor: Boolean(b.handover?.returnedToVendorAt),
     });
@@ -568,7 +577,7 @@ export class AdminBookingsService {
       status: b.status,
       statusLabel: STATUS_LABELS[b.status] ?? humanise(b.status),
       paymentState: this.paymentState(b),
-      amountMinor: b.totalMinor + b.securityDepositMinor,
+      amountMinor: this.dueOf(b),
       currency: b.currency,
       supplierResponse: b.supplierResponse,
       units: b.assignedUnits
@@ -579,6 +588,11 @@ export class AdminBookingsService {
       nextAction: current?.label ?? null,
       createdAt: b.createdAt.toISOString(),
     };
+  }
+
+  private dueOf(b: RowBooking): number {
+    const line = b.invoiceLines[0];
+    return line ? line.totalMinor + line.securityDepositMinor : b.totalMinor + b.securityDepositMinor;
   }
 
   /** The Payment column: Pending Confirmation, Payment Pending, Receipt Uploaded, Payment Confirmed. */
@@ -592,7 +606,7 @@ export class AdminBookingsService {
     const paid = b.payments
       .filter((p) => p.status === PaymentStatus.VERIFIED)
       .reduce((sum, p) => sum + p.amountMinor, 0);
-    if (paid >= b.totalMinor + b.securityDepositMinor && paid > 0) return 'Payment Confirmed';
+    if (paid >= this.dueOf(b) && paid > 0) return 'Payment Confirmed';
     if (paid > 0) return 'Partly Paid';
     if (
       (

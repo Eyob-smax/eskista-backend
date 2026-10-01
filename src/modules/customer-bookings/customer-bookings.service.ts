@@ -14,7 +14,7 @@ import {
 } from '@prisma/client';
 import type { CursorPage } from '../../common/dto/pagination.dto';
 import { HiringService } from '../hiring/hiring.service';
-import { JobsService } from '../jobs/jobs.service';
+import { BookingWrapUpService } from './booking-wrap-up.service';
 import { talentAvatarUrl } from '../talent/talent-media';
 import { PrismaService } from '../prisma/prisma.service';
 import { SettingsService } from '../settings/settings.service';
@@ -132,8 +132,8 @@ export class CustomerBookingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly settings: SettingsService,
-    private readonly jobs: JobsService,
     private readonly hiring: HiringService,
+    private readonly wrapUp: BookingWrapUpService,
     @Inject(STORAGE_DRIVER) private readonly storage: StorageDriver,
   ) {}
 
@@ -342,16 +342,19 @@ export class CustomerBookingsService {
       );
     }
 
-    await this.prisma.$transaction([
-      this.prisma.booking.update({
-        where: { id: booking.id },
-        data: {
-          status: BookingStatus.CANCELLED,
-          cancelledAt: new Date(),
-          cancelledById: userId,
-        },
-      }),
-      this.prisma.bookingStatusEvent.create({
+    // Guarded on the status just read: if Eskista moved the booking on (say, to delivery)
+    // in the meantime, this must not drag it back to cancelled.
+    await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.booking.updateMany({
+        where: { id: booking.id, status: booking.status },
+        data: { status: BookingStatus.CANCELLED, cancelledAt: new Date(), cancelledById: userId },
+      });
+      if (count === 0) {
+        throw new ConflictException(
+          'This booking has just moved on and can no longer be cancelled in the app. Contact Eskista support.',
+        );
+      }
+      await tx.bookingStatusEvent.create({
         data: {
           bookingId: booking.id,
           fromStatus: booking.status,
@@ -360,15 +363,12 @@ export class CustomerBookingsService {
           actorRole: Role.CUSTOMER,
           reason: dto.reason,
         },
-      }),
-    ]);
+      });
+    });
 
-    // Nothing scheduled against a cancelled booking should still fire — a reminder to
-    // return equipment that was never collected is the clearest possible sign the app is
-    // not paying attention.
-    await this.jobs.cancelBookingJobs(booking.id);
-    // Every talent still waiting on this request hears it is off.
-    if (booking.type === BookingType.TALENT) await this.hiring.cancelRequest(booking.id);
+    // Agreements, unpaid invoices, waiting slips, jobs, the talent request, the supplier and
+    // Eskista's team — exactly what an admin cancel does.
+    await this.wrapUp.wrapUp(booking.id, dto.reason ?? 'Cancelled by the customer', userId, 'CUSTOMER');
 
     return this.getDetail(userId, reference);
   }

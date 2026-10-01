@@ -14,7 +14,16 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { ApiConsumes, ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBody,
+  ApiConsumes,
+  ApiOkResponse,
+  ApiOperation,
+  ApiParam,
+  ApiProperty,
+  ApiPropertyOptional,
+  ApiTags,
+} from '@nestjs/swagger';
 import {
   AdminTier,
   BookingStatus,
@@ -31,6 +40,7 @@ import {
   assertValidFile,
   type UploadedFile,
 } from '../../common/upload';
+import { ApiStandardErrors } from '../../common/dto/api-docs';
 import { CurrentUser, Roles } from '../auth/auth.decorators';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -53,6 +63,24 @@ export class SupplierIncidentDto {
   @MaxLength(2000)
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
   description!: string;
+}
+
+export class SupplierIncidentPhotoResponse {
+  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({ example: '/api/v1/files/bookings/ESK-TLT-9001/incidents/a1.jpg' }) url!: string;
+}
+
+export class SupplierIncidentResponse {
+  @ApiProperty({ example: 'ESK-INC-00043' }) reference!: string;
+  @ApiProperty({ enum: IncidentType, example: IncidentType.OVERTIME }) type!: IncidentType;
+  @ApiProperty({ enum: IncidentPhase, example: IncidentPhase.DURING_ENGAGEMENT }) phase!: IncidentPhase;
+  @ApiProperty({ enum: IncidentStatus, example: IncidentStatus.REPORTED }) status!: IncidentStatus;
+  @ApiProperty({ example: 'The shoot ran three hours past the agreed 18:00 finish.' }) description!: string;
+  @ApiPropertyOptional({ nullable: true, description: 'Eskista’s resolution, once resolved.' })
+  resolution!: string | null;
+  @ApiProperty({ type: [SupplierIncidentPhotoResponse] }) photos!: SupplierIncidentPhotoResponse[];
+  @ApiProperty({ example: '2026-09-28T19:30:00.000Z' }) createdAt!: string;
+  @ApiPropertyOptional({ nullable: true }) resolvedAt!: string | null;
 }
 
 /** Once there is an engagement or a rental to have gone wrong. */
@@ -87,7 +115,7 @@ export class SupplierIncidentsService {
     reference: string,
     dto: SupplierIncidentDto,
     files: UploadedFile[],
-  ) {
+  ): Promise<SupplierIncidentResponse> {
     const booking = await this.booking(userId, role, reference);
     if (!REPORTABLE.includes(booking.status)) {
       throw new ConflictException('An issue can be reported once the booking is confirmed');
@@ -147,7 +175,11 @@ export class SupplierIncidentsService {
     return this.toResponse(incident);
   }
 
-  async list(userId: string, role: 'TALENT' | 'VENDOR', reference: string) {
+  async list(
+    userId: string,
+    role: 'TALENT' | 'VENDOR',
+    reference: string,
+  ): Promise<SupplierIncidentResponse[]> {
     const booking = await this.booking(userId, role, reference);
     const rows = await this.prisma.incident.findMany({
       where: { bookingId: booking.id, reportedById: userId },
@@ -179,7 +211,7 @@ export class SupplierIncidentsService {
     createdAt: Date;
     resolvedAt: Date | null;
     photos: { id: string; fileKey: string }[];
-  }) {
+  }): SupplierIncidentResponse {
     return {
       reference: i.reference,
       type: i.type,
@@ -210,17 +242,44 @@ export class TalentIncidentsController {
     summary: 'Report an issue — late arrival, overtime, conduct…',
     description: DESCRIPTION,
   })
+  @ApiBody({
+    description: 'JSON, or multipart/form-data with up to 6 `photos` (images).',
+    schema: {
+      type: 'object',
+      required: ['type', 'phase', 'description'],
+      properties: {
+        type: { type: 'string', enum: Object.values(IncidentType), example: 'OVERTIME' },
+        phase: { type: 'string', enum: Object.values(IncidentPhase), example: 'DURING_ENGAGEMENT' },
+        description: { type: 'string', minLength: 10, example: 'The shoot ran three hours past the agreed 18:00 finish.' },
+        photos: { type: 'array', items: { type: 'string', format: 'binary' }, maxItems: 6 },
+      },
+    },
+  })
+  @ApiParam({ name: 'reference', example: 'ESK-TLT-9001' })
+  @ApiOkResponse({ type: SupplierIncidentResponse })
+  @ApiStandardErrors({
+    badRequest: 'A field is invalid, or more than 6 photos.',
+    notFound: 'Booking not found',
+    conflict: 'An issue can be reported once the booking is confirmed',
+  })
   report(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
     @Body() dto: SupplierIncidentDto,
     @UploadedFiles() photos: UploadedFile[] = [],
-  ) {
+  ): Promise<SupplierIncidentResponse> {
     return this.incidents.report(userId, 'TALENT', reference, dto, photos ?? []);
   }
 
   @Get(':reference/incidents')
-  list(@CurrentUser('id') userId: string, @Param('reference') reference: string) {
+  @ApiOperation({ summary: 'My reports on this booking, newest first' })
+  @ApiParam({ name: 'reference', example: 'ESK-TLT-9001' })
+  @ApiOkResponse({ type: [SupplierIncidentResponse] })
+  @ApiStandardErrors({ notFound: 'Booking not found' })
+  list(
+    @CurrentUser('id') userId: string,
+    @Param('reference') reference: string,
+  ): Promise<SupplierIncidentResponse[]> {
     return this.incidents.list(userId, 'TALENT', reference);
   }
 }
@@ -235,17 +294,44 @@ export class VendorIncidentsController {
   @UseInterceptors(FilesInterceptor('photos', 6))
   @ApiConsumes('multipart/form-data', 'application/json')
   @ApiOperation({ summary: 'Report an issue with this rental', description: DESCRIPTION })
+  @ApiBody({
+    description: 'JSON, or multipart/form-data with up to 6 `photos` (images).',
+    schema: {
+      type: 'object',
+      required: ['type', 'phase', 'description'],
+      properties: {
+        type: { type: 'string', enum: Object.values(IncidentType), example: 'PHYSICAL_DAMAGE' },
+        phase: { type: 'string', enum: Object.values(IncidentPhase), example: 'DURING_RETURN' },
+        description: { type: 'string', minLength: 10, example: 'The camera came back with a cracked LCD.' },
+        photos: { type: 'array', items: { type: 'string', format: 'binary' }, maxItems: 6 },
+      },
+    },
+  })
+  @ApiParam({ name: 'reference', example: 'ESK-10485' })
+  @ApiOkResponse({ type: SupplierIncidentResponse })
+  @ApiStandardErrors({
+    badRequest: 'A field is invalid, or more than 6 photos.',
+    notFound: 'Booking not found',
+    conflict: 'An issue can be reported once the booking is confirmed',
+  })
   report(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
     @Body() dto: SupplierIncidentDto,
     @UploadedFiles() photos: UploadedFile[] = [],
-  ) {
+  ): Promise<SupplierIncidentResponse> {
     return this.incidents.report(userId, 'VENDOR', reference, dto, photos ?? []);
   }
 
   @Get(':reference/incidents')
-  list(@CurrentUser('id') userId: string, @Param('reference') reference: string) {
+  @ApiOperation({ summary: 'My reports on this booking, newest first' })
+  @ApiParam({ name: 'reference', example: 'ESK-10485' })
+  @ApiOkResponse({ type: [SupplierIncidentResponse] })
+  @ApiStandardErrors({ notFound: 'Booking not found' })
+  list(
+    @CurrentUser('id') userId: string,
+    @Param('reference') reference: string,
+  ): Promise<SupplierIncidentResponse[]> {
     return this.incidents.list(userId, 'VENDOR', reference);
   }
 }

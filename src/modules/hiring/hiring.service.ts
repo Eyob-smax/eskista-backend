@@ -97,7 +97,7 @@ type PricedSnapshot = Pick<
   | 'supplierEarningsMinor'
 >;
 
-interface Actor {
+export interface Actor {
   id: string | null;
   role: Role | null;
 }
@@ -547,6 +547,9 @@ export class HiringService implements OnModuleInit {
     customerId: string,
     reference: string,
     talentProfileIds: string[],
+    // Who is deciding: the customer, or an admin choosing for them. The history credits the
+    // right person, and an admin's hire is told to the customer, who must now sign and pay.
+    actor: Actor = { id: customerId, role: Role.CUSTOMER },
   ): Promise<CustomerInvitationsResponse> {
     const first = await this.requireCustomerRequest(customerId, reference);
     await this.reconcile(first.id);
@@ -583,7 +586,7 @@ export class HiringService implements OnModuleInit {
     await this.hireInvitations(
       request.id,
       chosen.map((i) => i!.id),
-      { id: customerId, role: Role.CUSTOMER },
+      actor,
       true,
     );
     return this.listForCustomer(customerId, reference);
