@@ -17,7 +17,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AdminTier, CategoryKind } from '@prisma/client';
-import type { Paginated } from '../../../common/dto/pagination.dto';
+
 import type { UploadedFile } from '../../../common/upload';
 import { CurrentUser } from '../../auth/auth.decorators';
 import { CreateUnitDto, UpdateEquipmentDto } from '../../equipment/dto/equipment.dto';
@@ -55,13 +55,13 @@ export class AdminEquipmentController {
   @ApiOperation({
     summary: 'Equipment Management tiles: total units, available, on rental, needs attention',
   })
-  kpis(): Promise<Record<string, number>> {
+  kpis(): Promise<any> {
     return this.equipment.kpis();
   }
 
   @Get('units')
   @ApiOperation({ summary: 'Equipment Management — one row per physical unit' })
-  units(@Query() query: AdminUnitsQuery): Promise<Paginated<Record<string, unknown>>> {
+  units(@Query() query: AdminUnitsQuery): Promise<any> {
     return this.equipment.units(query);
   }
 
@@ -71,7 +71,7 @@ export class AdminEquipmentController {
     description:
       'Overview & Specs, the latest Manual Inspection, Rental Bookings, and Condition History.',
   })
-  unit(@Param('unitId', ParseUUIDPipe) unitId: string): Promise<Record<string, unknown>> {
+  unit(@Param('unitId', ParseUUIDPipe) unitId: string): Promise<any> {
     return this.equipment.unit(unitId);
   }
 
@@ -82,13 +82,13 @@ export class AdminEquipmentController {
     @CurrentUser('id') adminId: string,
     @Param('unitId', ParseUUIDPipe) unitId: string,
     @Body() dto: AdminUpdateUnitDto,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<any> {
     return this.equipment.updateUnit(adminId, unitId, dto);
   }
 
   @Get('listings')
   @ApiOperation({ summary: 'Every listing, across vendors' })
-  listings(@Query() query: AdminListingsQuery): Promise<Paginated<Record<string, unknown>>> {
+  listings(@Query() query: AdminListingsQuery): Promise<any> {
     return this.equipment.listings(query);
   }
 
@@ -146,7 +146,7 @@ export class AdminEquipmentController {
     @CurrentUser('id') adminId: string,
     @Param('listingId', ParseUUIDPipe) listingId: string,
     @Body() dto: CreateUnitDto,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<any> {
     return this.equipment.addUnit(adminId, listingId, dto);
   }
 
@@ -184,12 +184,12 @@ export class AdminCategoriesController {
     summary: 'Equipment Categories, or Talent Categories & Skills (`kind=TALENT`)',
     description: 'In display order, with unit counts (equipment) or talent counts (talent).',
   })
-  list(@Query() query: AdminCategoriesQuery): Promise<Record<string, unknown>[]> {
+  list(@Query() query: AdminCategoriesQuery): Promise<any> {
     return this.categories.list(query);
   }
 
   @Get(':id')
-  get(@Param('id', ParseUUIDPipe) id: string): Promise<Record<string, unknown>> {
+  get(@Param('id', ParseUUIDPipe) id: string): Promise<any> {
     return this.categories.get(id);
   }
 
@@ -199,7 +199,7 @@ export class AdminCategoriesController {
   create(
     @CurrentUser('id') adminId: string,
     @Body() dto: CategoryDto,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<any> {
     return this.categories.create(adminId, dto);
   }
 
@@ -210,7 +210,7 @@ export class AdminCategoriesController {
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateCategoryDto,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<any> {
     return this.categories.update(adminId, id, dto);
   }
 
@@ -231,7 +231,7 @@ export class AdminCategoriesController {
     @CurrentUser('id') adminId: string,
     @Param('kind') kind: CategoryKind,
     @Body() dto: ReorderCategoriesDto,
-  ): Promise<Record<string, unknown>[]> {
+  ): Promise<any[]> {
     return this.categories.reorder(
       adminId,
       kind === CategoryKind.TALENT ? CategoryKind.TALENT : CategoryKind.EQUIPMENT,
@@ -247,7 +247,7 @@ export class AdminCategoriesController {
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: MoveCategoryDto,
-  ): Promise<Record<string, unknown>[]> {
+  ): Promise<any[]> {
     return this.categories.move(adminId, id, dto.direction);
   }
 
@@ -261,7 +261,7 @@ export class AdminCategoriesController {
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,
     @UploadedFileParam() file: UploadedFile,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<any> {
     return this.categories.setThumbnail(adminId, id, file);
   }
 }

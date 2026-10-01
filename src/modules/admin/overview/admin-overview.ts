@@ -147,7 +147,7 @@ export class AdminOverviewService {
           kind: 'PAYMENT_VERIFICATION',
           title: 'Payment Verification',
           detail: `${p.booking.customer.name} uploaded a slip for ${p.booking.reference}`,
-          reference: p.reference,
+          reference: p.reference!,
           bookingReference: p.booking.reference,
           amountMinor: p.declaredTotalMinor ?? p.amountMinor,
           at: p.submittedAt.toISOString(),

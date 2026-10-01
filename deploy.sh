@@ -8,7 +8,7 @@ set -euo pipefail
 #   View logs:     ./deploy.sh logs
 #   SSL setup:     ./deploy.sh ssl your-domain.com your@email.com
 
-APP_DIR="/opt/eskista"
+APP_DIR="/var/www/eskista-backend"
 REPO_URL="https://github.com/Eyob-smax/eskista-backend.git"
 BRANCH="main"
 COMPOSE_FILE="docker-compose.prod.yml"

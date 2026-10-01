@@ -12,7 +12,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { PaginationQuery } from '../../../common/dto/pagination.dto';
+import { PaginationQuery } from '../../../../common/dto/pagination.dto';
 
 const trim = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.trim() : value;

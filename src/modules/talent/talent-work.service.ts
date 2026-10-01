@@ -111,6 +111,8 @@ const engagementInclude = {
       netMinor: true,
       currency: true,
       payoutReference: true,
+      payoutProvider: true,
+      payoutAccountNumber: true,
       payeeConfirmedAt: true,
       payeeDisputedAt: true,
     },

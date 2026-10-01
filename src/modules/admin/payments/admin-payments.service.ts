@@ -71,7 +71,7 @@ export class AdminPaymentsService {
       _min: { submittedAt: true },
       orderBy: { _min: { submittedAt: 'desc' } },
     });
-    const page = groups.slice(query.skip, query.skip + query.limit);
+    const page = groups.slice(query.skip ?? 0, (query.skip ?? 0) + (query.limit ?? 20));
     const refs = page.map((g) => g.reference).filter((r): r is string => r !== null);
     const rows = await this.prisma.payment.findMany({
       where: { reference: { in: refs } },
