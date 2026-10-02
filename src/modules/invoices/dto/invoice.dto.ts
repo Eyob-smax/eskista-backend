@@ -98,7 +98,11 @@ export class AdminInvoiceQuery {
   @IsEnum(InvoiceStatus)
   status?: InvoiceStatus;
 
-  @ApiPropertyOptional({ format: 'uuid', description: 'Only this customer’s invoices.' })
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Only this customer’s invoices.',
+    example: '550e8400-e29b-41d4-a716-446655440000',
+  })
   @IsOptional()
   @IsString()
   customerId?: string;
@@ -123,7 +127,7 @@ export class InvoiceLineResponse {
   amountDueMinor!: number;
   @ApiPropertyOptional({
     nullable: true,
-    example: null,
+    example: 'Download and sign agreement',
     description: 'Why this booking cannot be paid yet, e.g. its agreement is unsigned.',
   })
   paymentBlocker!: string | null;
@@ -148,7 +152,7 @@ export class BilledToResponse {
   @ApiPropertyOptional({ nullable: true, example: '+251911223344' }) phone!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 'Bole Sub-City, Woreda 03, Addis Ababa' })
   address!: string | null;
-  @ApiPropertyOptional({ nullable: true, example: null }) tin!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '0012345678' }) tin!: string | null;
 }
 
 export class InvoiceSummaryResponse {
@@ -181,7 +185,7 @@ export class InvoiceDetailResponse extends InvoiceSummaryResponse {
   @ApiProperty({ example: 412500 }) taxMinor!: number;
   @ApiProperty({ example: 1500 }) taxRateBps!: number;
   @ApiProperty({ example: false }) vatExempt!: boolean;
-  @ApiPropertyOptional({ nullable: true, example: null }) vatExemptionReason!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Registered NGO' }) vatExemptionReason!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 'Inc. 15% VAT' }) taxNote!: string | null;
   @ApiProperty({ example: 3462500, description: 'Due minus verified payments.' })
   balanceMinor!: number;
@@ -200,7 +204,7 @@ export class InvoiceDetailResponse extends InvoiceSummaryResponse {
   })
   canUngroup!: boolean;
   @ApiProperty({ example: '/api/v1/customer/invoices/ESK-INV-2026-000148/pdf' }) pdfUrl!: string;
-  @ApiPropertyOptional({ nullable: true, example: null }) voidReason!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Superseded by combined invoice' }) voidReason!: string | null;
 }
 
 export class InvoicePaymentInstructionsResponse {

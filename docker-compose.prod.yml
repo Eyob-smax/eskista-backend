@@ -42,6 +42,7 @@ services:
       target: production
     container_name: eskista-api
     restart: always
+    command: node dist/src/main
     env_file: .env
     environment:
       NODE_ENV: production

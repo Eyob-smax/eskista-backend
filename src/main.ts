@@ -68,10 +68,8 @@ async function bootstrap(): Promise<void> {
   // receipts and signed agreements, so every read goes through FilesController, which
   // checks entitlement before streaming. See src/modules/storage/file-access.service.ts.
 
-  if (config.get('NODE_ENV', { infer: true }) !== 'production') {
-    // /docs for everything, /docs/admin for the operations dashboard.
-    setupSwagger(app, '0.1.0');
-  }
+  // /docs for everything, /docs/admin for the operations dashboard.
+  setupSwagger(app, '0.1.0');
 
   await app.listen(config.get('PORT', { infer: true }), '0.0.0.0');
 }

@@ -89,7 +89,7 @@ export class CreateEquipmentDto {
   @trim()
   name!: string;
 
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({ format: 'uuid', example: '417b35e0-8278-43ec-8367-17215328e833' })
   @IsUUID()
   categoryId!: string;
 
@@ -132,7 +132,11 @@ export class CreateEquipmentDto {
   @trim()
   powerBattery?: string;
 
-  @ApiPropertyOptional({ type: [SpecItemDto], description: 'Secondary specifications table.' })
+  @ApiPropertyOptional({
+    type: [SpecItemDto],
+    description: 'Secondary specifications table.',
+    example: [{ group: 'Sensor', label: 'Resolution', value: '6K 6048 x 4032' }],
+  })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
@@ -173,7 +177,11 @@ export class CreateEquipmentDto {
   conditionNotes?: string;
 
   // What's included
-  @ApiPropertyOptional({ type: [IncludedItemDto] })
+  @ApiPropertyOptional({
+    type: [IncludedItemDto],
+    description: 'Included equipment and accessories in the box.',
+    example: [{ kind: IncludedItemKind.EQUIPMENT, name: 'Sony FX3 Body', quantity: 1 }],
+  })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
@@ -260,7 +268,10 @@ export class CreateEquipmentDto {
 export class UpdateEquipmentDto extends PartialType(CreateEquipmentDto) {}
 
 export class ReplaceSpecsDto {
-  @ApiProperty({ type: [SpecItemDto] })
+  @ApiProperty({
+    type: [SpecItemDto],
+    example: [{ group: 'Sensor', label: 'Resolution', value: '6K 6048 x 4032' }],
+  })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => SpecItemDto)
@@ -269,7 +280,10 @@ export class ReplaceSpecsDto {
 }
 
 export class ReplaceIncludedItemsDto {
-  @ApiProperty({ type: [IncludedItemDto] })
+  @ApiProperty({
+    type: [IncludedItemDto],
+    example: [{ kind: IncludedItemKind.EQUIPMENT, name: 'Sony FX3 Body', quantity: 1 }],
+  })
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => IncludedItemDto)
@@ -281,6 +295,7 @@ export class ReplaceAccessoriesDto {
   @ApiProperty({
     type: [String],
     format: 'uuid',
+    example: ['7d3a2e10-9b88-4122-bc55-e45f91223401'],
     description: 'Other listings of mine to show as "Related Accessories".',
   })
   @IsArray()
@@ -333,7 +348,7 @@ export class CreateUnitDto {
   @trim()
   serialNumber?: string;
 
-  @ApiPropertyOptional({ enum: ConditionGrade })
+  @ApiPropertyOptional({ enum: ConditionGrade, example: ConditionGrade.EXCELLENT })
   @IsOptional()
   @IsEnum(ConditionGrade)
   condition?: ConditionGrade;
@@ -349,6 +364,7 @@ export class CreateUnitDto {
 export class UpdateUnitDto extends CreateUnitDto {
   @ApiPropertyOptional({
     enum: UnitStatus,
+    example: UnitStatus.AVAILABLE,
     description: 'RETIRED units keep their booking history but stop being assignable.',
   })
   @IsOptional()
@@ -367,7 +383,11 @@ export class BlockDatesDto {
   @IsDateString()
   endDate!: string;
 
-  @ApiPropertyOptional({ format: 'uuid', description: 'Block one unit; omit to block all.' })
+  @ApiPropertyOptional({
+    format: 'uuid',
+    example: '9f2c7a30-0192-4f33-8aa3-6330058b87f5',
+    description: 'Block one unit; omit to block all.',
+  })
   @IsOptional()
   @IsUUID()
   unitId?: string;
@@ -381,11 +401,11 @@ export class BlockDatesDto {
 }
 
 export class AvailabilityQuery {
-  @ApiProperty({ example: '2026-08-01' })
+  @ApiProperty({ example: '2026-08-01', description: 'Start date in YYYY-MM-DD format (inclusive).' })
   @IsDateString()
   from!: string;
 
-  @ApiProperty({ example: '2026-08-31' })
+  @ApiProperty({ example: '2026-08-31', description: 'End date in YYYY-MM-DD format (inclusive).' })
   @IsDateString()
   to!: string;
 }
@@ -394,12 +414,16 @@ export class EquipmentListQuery extends IntersectionType(
   PaginationQuery,
   IntersectionType(SortQuery, SearchQuery),
 ) {
-  @ApiPropertyOptional({ enum: ListingStatus })
+  @ApiPropertyOptional({ enum: ListingStatus, example: ListingStatus.PUBLISHED })
   @IsOptional()
   @IsEnum(ListingStatus)
   status?: ListingStatus;
 
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiPropertyOptional({
+    format: 'uuid',
+    example: '417b35e0-8278-43ec-8367-17215328e833',
+    description: 'Filter by equipment category UUID.',
+  })
   @IsOptional()
   @IsUUID()
   categoryId?: string;
@@ -408,7 +432,7 @@ export class EquipmentListQuery extends IntersectionType(
 // ── Responses ────────────────────────────────────────────────────────────────
 
 export class EquipmentImageResponse {
-  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({ format: 'uuid', example: '550e8400-e29b-41d4-a716-446655440000' }) id!: string;
   @ApiProperty({
     example: 'https://res.cloudinary.com/eskista/image/upload/listings/fx3-front.jpg',
   })
@@ -419,19 +443,19 @@ export class EquipmentImageResponse {
 }
 
 export class EquipmentUnitResponse {
-  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({ format: 'uuid', example: '9f2c7a30-0192-4f33-8aa3-6330058b87f5' }) id!: string;
   @ApiPropertyOptional({ example: 'FX3-002', nullable: true }) label!: string | null;
   @ApiPropertyOptional({ example: 'SNY-FX3-2291', nullable: true }) serialNumber!: string | null;
-  @ApiProperty({ enum: ConditionGrade }) condition!: ConditionGrade;
+  @ApiProperty({ enum: ConditionGrade, example: ConditionGrade.EXCELLENT }) condition!: ConditionGrade;
   @ApiPropertyOptional({ example: 'Light wear on the grip; sensor clean.', nullable: true })
   conditionNotes!: string | null;
-  @ApiProperty({ enum: UnitStatus }) status!: UnitStatus;
+  @ApiProperty({ enum: UnitStatus, example: UnitStatus.AVAILABLE }) status!: UnitStatus;
   @ApiProperty({ example: 1, description: 'Bookings currently holding this unit.' })
   activeBookings!: number;
 }
 
 export class EquipmentSummaryResponse {
-  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({ format: 'uuid', example: '7d3a2e10-9b88-4122-bc55-e45f91223401' }) id!: string;
   @ApiProperty({ example: 'Sony FX3 Cinema Camera' }) name!: string;
   @ApiPropertyOptional({ example: 'Sony', nullable: true }) brand!: string | null;
   @ApiPropertyOptional({ example: 'ILME-FX3', nullable: true }) model!: string | null;
@@ -441,9 +465,9 @@ export class EquipmentSummaryResponse {
     nullable: true,
   })
   primaryImageUrl!: string | null;
-  @ApiProperty({ enum: ListingStatus }) status!: ListingStatus;
+  @ApiProperty({ enum: ListingStatus, example: ListingStatus.PUBLISHED }) status!: ListingStatus;
   @ApiProperty({ example: 345_000 }) rentalPriceMinor!: number;
-  @ApiProperty({ enum: RentalPeriodUnit }) rentalPeriodUnit!: RentalPeriodUnit;
+  @ApiProperty({ enum: RentalPeriodUnit, example: RentalPeriodUnit.DAY }) rentalPeriodUnit!: RentalPeriodUnit;
   @ApiProperty({ example: 'ETB' }) currency!: string;
   @ApiProperty({ example: 3 }) unitCount!: number;
   @ApiProperty({ example: 4.8 }) ratingAvg!: number;
@@ -452,6 +476,7 @@ export class EquipmentSummaryResponse {
   @ApiProperty({
     description: 'Derived from live bookings — never a stored flag.',
     enum: ['AVAILABLE', 'BOOKED'],
+    example: 'AVAILABLE',
   })
   availabilityLabel!: 'AVAILABLE' | 'BOOKED';
   @ApiPropertyOptional({
@@ -463,8 +488,14 @@ export class EquipmentSummaryResponse {
   @ApiProperty({ example: '2026-08-14T09:00:00.000Z' }) createdAt!: Date;
 }
 
+export class ReviewStepResponse {
+  @ApiProperty({ example: 'EQUIPMENT_ADDED' }) key!: string;
+  @ApiProperty({ example: 'Equipment Added' }) label!: string;
+  @ApiProperty({ enum: ['DONE', 'IN_PROGRESS', 'PENDING'], example: 'DONE' }) state!: string;
+}
+
 export class EquipmentDetailResponse extends EquipmentSummaryResponse {
-  @ApiProperty({ format: 'uuid' }) categoryId!: string;
+  @ApiProperty({ format: 'uuid', example: '417b35e0-8278-43ec-8367-17215328e833' }) categoryId!: string;
   @ApiProperty({
     example:
       'Full-frame cinema camera with 4K 120p, dual base ISO and a compact body for gimbal work.',
@@ -480,7 +511,7 @@ export class EquipmentDetailResponse extends EquipmentSummaryResponse {
   compatibility!: string[];
   @ApiPropertyOptional({ example: 'NP-FZ100, about 2 hours per battery', nullable: true })
   powerBattery!: string | null;
-  @ApiProperty({ enum: ConditionGrade }) condition!: ConditionGrade;
+  @ApiProperty({ enum: ConditionGrade, example: ConditionGrade.EXCELLENT }) condition!: ConditionGrade;
   @ApiPropertyOptional({ nullable: true, description: 'Stars out of ten.', example: 9 })
   conditionRating!: number | null;
   @ApiPropertyOptional({ example: 'Light wear on the grip; sensor clean.', nullable: true })
@@ -512,17 +543,9 @@ export class EquipmentDetailResponse extends EquipmentSummaryResponse {
     description:
       '"Equipment Added → Eskista Review → Published → Available for Booking" on the ' +
       'Equipment Submitted screen.',
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: {
-        key: { type: 'string' },
-        label: { type: 'string' },
-        state: { type: 'string', enum: ['DONE', 'IN_PROGRESS', 'PENDING'] },
-      },
-    },
+    type: [ReviewStepResponse],
   })
-  reviewSteps!: { key: string; label: string; state: string }[];
+  reviewSteps!: ReviewStepResponse[];
 }
 
 /** One calendar cell. Mirrors the vendor "Set Availability" legend exactly. */
@@ -530,6 +553,7 @@ export class AvailabilityDayResponse {
   @ApiProperty({ example: '2026-08-18' }) date!: string;
   @ApiProperty({
     enum: ['AVAILABLE', 'BLOCKED', 'RESERVED', 'RENTED'],
+    example: 'AVAILABLE',
     description:
       'BLOCKED is vendor-authored and stored. RESERVED (approved, upcoming) and RENTED ' +
       '(in use) are derived from bookings and cannot be set directly.',
@@ -537,5 +561,10 @@ export class AvailabilityDayResponse {
   state!: 'AVAILABLE' | 'BLOCKED' | 'RESERVED' | 'RENTED';
   @ApiProperty({ example: 2, description: 'Units free on this date.' }) unitsAvailable!: number;
   @ApiProperty({ example: 3 }) unitsTotal!: number;
-  @ApiPropertyOptional({ format: 'uuid', nullable: true }) blockId!: string | null;
+  @ApiPropertyOptional({
+    format: 'uuid',
+    example: '7d3a2e10-9b88-4122-bc55-e45f91223401',
+    nullable: true,
+  })
+  blockId!: string | null;
 }

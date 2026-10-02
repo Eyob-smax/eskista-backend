@@ -365,17 +365,336 @@ export function buildAdminDocument(full: OpenAPIObject): OpenAPIObject {
   };
 }
 
-/** Both documents, built from the app's routes without serving them. */
+export const VENDOR_PATH_PREFIX = '/api/v1/vendor';
+export const TALENT_PATH_PREFIX = '/api/v1/talent';
+export const CUSTOMER_PATH_PREFIX = '/api/v1/customer';
+export const CATALOGUE_PATH_PREFIX = '/api/v1/catalogue';
+
+export const VENDOR_TAGS: { name: string; description: string }[] = [
+  {
+    name: 'vendor · profile',
+    description:
+      'Account onboarding, business profile, verification documents (ID, business license), and the Eskista vendor agreement.',
+  },
+  {
+    name: 'vendor · equipment',
+    description:
+      'Inventory catalog management, technical specifications, included accessories, photos, and calendar availability.',
+  },
+  {
+    name: 'vendor · bookings',
+    description:
+      'Rental requests and operations: accept/decline, 7-point preparation checklist, handover method, tracking, return, QA inspection, and completion.',
+  },
+  {
+    name: 'vendor · earnings',
+    description:
+      'Earnings overview, monthly KPI totals, and payout settlement lines.',
+  },
+  {
+    name: 'vendor · payout accounts',
+    description:
+      'Receiving accounts: Telebirr and Ethiopian commercial banks (maximum 5, one primary).',
+  },
+  {
+    name: 'vendor · issues',
+    description:
+      'Filing grievances, damaged equipment reports, or rental disputes directly to Eskista mediation.',
+  },
+];
+
+const VENDOR_DESCRIPTION = `
+The API for equipment owners and rental businesses on Eskista.
+
+## Overview
+
+Eskista connects equipment suppliers with production houses, filmmakers, and creators:
+- Customers rent through Eskista, payments are held in escrow, gear passes through Eskista's hub or verified courier network, and suppliers are paid out upon successful return.
+- **Pricing & Earnings**: The price you set on an equipment listing is your net earnings. Eskista calculates platform commission and VAT on top for the customer.
+- **Money Minor Units**: All monetary amounts are integer minor units (ETB cents): \`150000\` = ETB 1,500.00.
+
+## Rental Lifecycle (10 Stages)
+
+1. **Request Submitted**: Customer initiates a rental booking.
+2. **Booking Confirmation**: Vendor accepts or declines (\`POST /api/v1/vendor/bookings/:reference/accept\`).
+3. **Payment**: Customer pays Eskista (rental fee + deposit held in escrow).
+4. **Equipment Preparation**: Vendor completes the 7-item preparation checklist and condition grading, then marks ready (\`POST .../ready\`).
+5. **Handover**: Vendor selects collection method (Delivery or Eskista Pickup), then confirms handover (\`POST .../handover/confirm\`).
+6. **Rental Active**: Equipment is with the client or courier. Real-time courier leg tracking via \`GET .../tracking\`.
+7. **Return Scheduled & Received**: Equipment is returned to Eskista's hub.
+8. **Inspection**: Hub technicians perform physical and functional QA. Vendor views inspection results at \`GET .../inspection\`.
+9. **Settlement**: Vendor confirms physical receipt (\`POST .../return/confirm\`) and payout receipt (\`POST .../payout/confirm\`).
+10. **Rental Closed**: Booking closes, and the customer is prompted for review.
+
+## Authentication & Authorization
+
+Protected endpoints require:
+- The session cookie (\`credentials: 'include'\`), or
+- A Bearer token: \`Authorization: Bearer <token>\`.
+`.trim();
+
+/**
+ * The vendor document, cut from the full one: vendor paths, vendor tags,
+ * and only the schemas those reach.
+ */
+export function buildVendorDocument(full: OpenAPIObject): OpenAPIObject {
+  const paths: OpenAPIObject['paths'] = {};
+  for (const [path, item] of Object.entries(full.paths)) {
+    if (path === VENDOR_PATH_PREFIX || path.startsWith(`${VENDOR_PATH_PREFIX}/`)) paths[path] = item;
+  }
+
+  // Schemas used by the paths, and the schemas those use, transitively.
+  const all = full.components?.schemas ?? {};
+  const needed = new Set<string>(['ApiErrorResponse']);
+  collectRefs(paths, needed);
+  let size = -1;
+  while (size !== needed.size) {
+    size = needed.size;
+    for (const name of [...needed]) collectRefs(all[name], needed);
+  }
+  const schemas = Object.fromEntries(Object.entries(all).filter(([name]) => needed.has(name)));
+
+  const used = new Set<string>();
+  for (const item of Object.values(paths)) {
+    for (const op of Object.values(item as Record<string, { tags?: string[] }>)) {
+      for (const tag of op?.tags ?? []) used.add(tag);
+    }
+  }
+
+  return {
+    ...full,
+    info: {
+      title: 'Eskista Vendor API',
+      version: full.info.version,
+      description: VENDOR_DESCRIPTION,
+    },
+    tags: VENDOR_TAGS.filter((t) => used.has(t.name)),
+    paths,
+    components: { ...full.components, schemas },
+  };
+}
+
+export const TALENT_TAGS: { name: string; description: string }[] = [
+  {
+    name: 'talent · profile',
+    description:
+      'Profile setup, creative disciplines, portfolio projects, verification documents (ID / Passport), and availability calendar.',
+  },
+  {
+    name: 'talent · work',
+    description:
+      'Engagements, client hire invitations, contracts & agreements, and payout receipt confirmations.',
+  },
+  {
+    name: 'talent · payout accounts',
+    description:
+      'Receiving accounts: Telebirr and Ethiopian commercial banks (maximum 5, one primary).',
+  },
+  {
+    name: 'talent · issues',
+    description:
+      'Filing grievances, disputes, overtime, or conduct issues directly to Eskista mediation.',
+  },
+  {
+    name: 'talent · claim',
+    description:
+      'Claiming a talent profile pre-registered by Eskista operators.',
+  },
+];
+
+const TALENT_DESCRIPTION = `
+The API for creative professionals (cinematographers, editors, sound engineers, etc.) on Eskista.
+
+## Overview
+
+Eskista connects creative talents with clients and production houses:
+- **Direct Marketplace**: Talents register profiles, showcase portfolios, set their day rates, and receive invitations.
+- **Escrow & Secure Payments**: Clients pay Eskista before the shoot. Once the engagement concludes, Eskista disburses the talent's rate in full.
+- **Day Rates & Pricing**: All rates are configured in integer minor units (ETB cents): \`300000\` = ETB 3,000.00. Platform commission is calculated on top.
+
+## Engagement Lifecycle (6 Stages)
+
+1. **Invitation Received**: Client invites talent for an engagement (\`GET /api/v1/talent/requests\`).
+2. **Talent Response**: Talent accepts or declines the invitation (\`POST .../accept\` or \`POST .../decline\`).
+3. **Client Confirmation & Payment**: Client selects the talent and pays Eskista escrow. Access instructions and location notes unlock for the talent.
+4. **Contract Execution**: Eskista issues the talent agreement. Talent downloads PDF, signs, and uploads scan (\`POST .../agreement/signed-copy\`).
+5. **Project Execution**: Talent completes the shoot/project. Grievances or overtime can be reported to mediation (\`POST /api/v1/talent/bookings/:ref/incidents\`).
+6. **Settlement & Payout**: Hub initiates payout. Talent confirms receipt (\`POST .../payout/confirm\`) and engagement closes.
+
+## Authentication & Authorization
+
+All talent endpoints require:
+- The session cookie (\`credentials: 'include'\`), or
+- A Bearer token: \`Authorization: Bearer <token>\`.
+`.trim();
+
+/**
+ * The talent document, cut from the full one: talent paths, talent tags,
+ * and only the schemas those reach.
+ */
+export function buildTalentDocument(full: OpenAPIObject): OpenAPIObject {
+  const paths: OpenAPIObject['paths'] = {};
+  for (const [path, item] of Object.entries(full.paths)) {
+    if (path === TALENT_PATH_PREFIX || path.startsWith(`${TALENT_PATH_PREFIX}/`)) paths[path] = item;
+  }
+
+  // Schemas used by the paths, and the schemas those use, transitively.
+  const all = full.components?.schemas ?? {};
+  const needed = new Set<string>(['ApiErrorResponse']);
+  collectRefs(paths, needed);
+  let size = -1;
+  while (size !== needed.size) {
+    size = needed.size;
+    for (const name of [...needed]) collectRefs(all[name], needed);
+  }
+  const schemas = Object.fromEntries(Object.entries(all).filter(([name]) => needed.has(name)));
+
+  const used = new Set<string>();
+  for (const item of Object.values(paths)) {
+    for (const op of Object.values(item as Record<string, { tags?: string[] }>)) {
+      for (const tag of op?.tags ?? []) used.add(tag);
+    }
+  }
+
+  return {
+    ...full,
+    info: {
+      title: 'Eskista Talent API',
+      version: full.info.version,
+      description: TALENT_DESCRIPTION,
+    },
+    tags: TALENT_TAGS.filter((t) => used.has(t.name)),
+    paths,
+    components: { ...full.components, schemas },
+  };
+}
+
+export const CUSTOMER_TAGS: { name: string; description: string }[] = [
+  {
+    name: 'catalogue · equipment',
+    description:
+      'Explore cinema gear, categories, verified vendor equipment details, pricing quotes, and real-time availability.',
+  },
+  {
+    name: 'catalogue · talent',
+    description:
+      'Search verified creative professionals (cinematographers, editors, sound engineers), view portfolios, rates, and check calendar availability.',
+  },
+  {
+    name: 'customer · profile',
+    description:
+      'Account management, personal and company profile details, identity verification documents, and rental statistics.',
+  },
+  {
+    name: 'customer · bookings',
+    description:
+      'Booking drafts (equipment and creative talent), submission, hiring invitations, and cancellation.',
+  },
+  {
+    name: 'customer · booking lifecycle',
+    description:
+      'End-to-end booking execution: contract signing, payment verification, delivery tracking, check-in handover PINs, condition inspections, incident reporting, and reviews.',
+  },
+  {
+    name: 'customer · invoices',
+    description:
+      'Billing & Escrow Payments: viewing invoices, payment instructions (Telebirr & Ethiopian commercial banks), payment slip uploads, combined invoices, and official receipt downloads.',
+  },
+];
+
+const CUSTOMER_DESCRIPTION = `
+The API behind the Eskista Customer Mini App and Web Marketplace.
+
+## Overview
+
+Eskista connects filmmakers, agencies, production houses, and event creators with verified cinema equipment suppliers and creative talent across Ethiopia:
+- **Equipment Catalogue & Instant Quotes**: Browse gear, inspect specifications and condition grades, check calendar availability, and get instant quotes including Ethiopian VAT (15%), platform commission, and refundable security deposits.
+- **Creative Talent Directory**: Hire verified cinematographers, directors, gaffers, and sound recordists with fixed transparent day rates and verified portfolios.
+- **Managed Escrow**: Eskista acts as the trusted escrow intermediary. Customers transfer funds to Eskista via Telebirr or Ethiopian commercial bank transfer. Funds are held in escrow until rentals and projects are completed satisfactorily.
+
+## Booking & Rental Lifecycle (7 Stages)
+
+1. **Cart & Drafting**: Customer adds equipment or configures talent project requirements into a draft (\`POST /api/v1/customer/bookings/drafts/*\`).
+2. **Submission & Matching**: Customer submits the draft (\`POST .../drafts/:id/submit\`). For talent requests, customer reviews bids/invitations and hires the selected professional (\`POST .../bookings/:ref/hire\`).
+3. **Invoicing & Escrow Payment**: Eskista issues an invoice. Customer accesses bank payment instructions (\`GET /api/v1/customer/invoices/:number/instructions\`), transfers funds, and uploads the bank deposit slip (\`POST .../invoices/:number/pay\`).
+4. **Agreements & KYC**: Customer downloads the digital rental agreement, signs, and uploads the signed scan (\`POST .../bookings/:ref/agreement/signed-copy\`).
+5. **Dispatch & Check-In Handover**: Gear passes through the Eskista Hub for inspection, then is dispatched for delivery or hub pickup. Customer confirms custody with the handover PIN (\`POST .../bookings/:ref/check-in/confirm\`).
+6. **Return & Incident Mediation**: Customer returns gear. Post-rental check-out inspection determines if the deposit is refunded in full or applied to damage/incidents (\`POST .../bookings/:ref/incidents\`).
+7. **Wrap-up & Reviews**: Customer rates and reviews equipment and talent (\`POST .../bookings/:ref/reviews\`).
+
+## Monetary Values
+
+All monetary amounts (\`totalMinor\`, \`subtotalMinor\`, \`vatMinor\`, \`securityDepositMinor\`, \`dayRateMinor\`) are represented as integer minor units (ETB cents):
+- \`10000\` = ETB 100.00
+- \`450000\` = ETB 4,500.00
+All catalogue prices and quote summaries include Ethiopian VAT (15%).
+`.trim();
+
+/**
+ * The customer document, cut from the full one: customer and catalogue paths,
+ * customer tags, and only the schemas those reach.
+ */
+export function buildCustomerDocument(full: OpenAPIObject): OpenAPIObject {
+  const paths: OpenAPIObject['paths'] = {};
+  for (const [path, item] of Object.entries(full.paths)) {
+    if (
+      path === CUSTOMER_PATH_PREFIX ||
+      path.startsWith(`${CUSTOMER_PATH_PREFIX}/`) ||
+      path === CATALOGUE_PATH_PREFIX ||
+      path.startsWith(`${CATALOGUE_PATH_PREFIX}/`)
+    ) {
+      paths[path] = item;
+    }
+  }
+
+  // Schemas used by the paths, and the schemas those use, transitively.
+  const all = full.components?.schemas ?? {};
+  const needed = new Set<string>(['ApiErrorResponse']);
+  collectRefs(paths, needed);
+  let size = -1;
+  while (size !== needed.size) {
+    size = needed.size;
+    for (const name of [...needed]) collectRefs(all[name], needed);
+  }
+  const schemas = Object.fromEntries(Object.entries(all).filter(([name]) => needed.has(name)));
+
+  const used = new Set<string>();
+  for (const item of Object.values(paths)) {
+    for (const op of Object.values(item as Record<string, { tags?: string[] }>)) {
+      for (const tag of op?.tags ?? []) used.add(tag);
+    }
+  }
+
+  return {
+    ...full,
+    info: {
+      title: 'Eskista Customer API',
+      version: full.info.version,
+      description: CUSTOMER_DESCRIPTION,
+    },
+    tags: CUSTOMER_TAGS.filter((t) => used.has(t.name)),
+    paths,
+    components: { ...full.components, schemas },
+  };
+}
+
+/** Documents built from the app's routes without serving them. */
 export function buildDocuments(
   app: INestApplication,
   version: string,
-): { full: OpenAPIObject; admin: OpenAPIObject } {
+): {
+  full: OpenAPIObject;
+  admin: OpenAPIObject;
+  vendor: OpenAPIObject;
+  talent: OpenAPIObject;
+  customer: OpenAPIObject;
+} {
   const config = new DocumentBuilder()
     .setTitle('Eskista Marketplace API')
     .setDescription(
       'Managed rental and talent marketplace — customer, vendor, talent and admin surfaces. ' +
-        'Sign-in lives in Better Auth at /api/auth/*. The admin dashboard has its own, ' +
-        'narrower document at /docs/admin.',
+        'Sign-in lives in Better Auth at /api/auth/*. Role-specific portals: ' +
+        '/docs/admin (operations dashboard), /docs/vendor (equipment suppliers), /docs/talent (creative professionals), and /docs/customer (clients and productions).',
     )
     .setVersion(version)
     .addBearerAuth(
@@ -390,11 +709,17 @@ export function buildDocuments(
     .build();
 
   const full = SwaggerModule.createDocument(app, config);
-  return { full, admin: buildAdminDocument(full) };
+  return {
+    full,
+    admin: buildAdminDocument(full),
+    vendor: buildVendorDocument(full),
+    talent: buildTalentDocument(full),
+    customer: buildCustomerDocument(full),
+  };
 }
 
 export function setupSwagger(app: INestApplication, version: string): void {
-  const { full, admin } = buildDocuments(app, version);
+  const { full, admin, vendor, talent, customer } = buildDocuments(app, version);
   const uiOptions = {
     swaggerOptions: {
       persistAuthorization: true,
@@ -410,6 +735,21 @@ export function setupSwagger(app: INestApplication, version: string): void {
     ...uiOptions,
     customSiteTitle: 'Eskista Admin API',
     jsonDocumentUrl: 'docs/admin-json',
+  });
+  SwaggerModule.setup('docs/vendor', app, vendor, {
+    ...uiOptions,
+    customSiteTitle: 'Eskista Vendor API',
+    jsonDocumentUrl: 'docs/vendor-json',
+  });
+  SwaggerModule.setup('docs/talent', app, talent, {
+    ...uiOptions,
+    customSiteTitle: 'Eskista Talent API',
+    jsonDocumentUrl: 'docs/talent-json',
+  });
+  SwaggerModule.setup('docs/customer', app, customer, {
+    ...uiOptions,
+    customSiteTitle: 'Eskista Customer API',
+    jsonDocumentUrl: 'docs/customer-json',
   });
   SwaggerModule.setup('docs', app, full, {
     ...uiOptions,

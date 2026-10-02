@@ -189,7 +189,10 @@ export class BookingSubjectResponse {
   })
   supplierName!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'https://cdn.eskista.et/listings/sony-fx3.jpg',
+  })
   imageUrl!: string | null;
 
   @ApiProperty({ example: 320000, description: 'Rate at the time of booking, snapshotted.' })
@@ -339,10 +342,15 @@ export class BookingPaymentResponse {
   @ApiPropertyOptional({
     nullable: true,
     description: 'Authorised download URL for the receipt. Parties and Eskista only.',
+    example: '/api/v1/files/bookings/ESK-10482/payments/receipt.jpg',
   })
   receiptUrl!: string | null;
 
-  @ApiPropertyOptional({ nullable: true, description: 'Set when Eskista rejected the payment.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Set when Eskista rejected the payment.',
+    example: 'Payment slip unreadable',
+  })
   rejectionReason!: string | null;
 
   @ApiProperty({ example: '2026-08-16T14:15:00.000Z' })
@@ -423,10 +431,15 @@ export class BookingInspectionResponse {
   @ApiPropertyOptional({
     nullable: true,
     description: 'When Eskista sent the deposit back. Null while it is still to be refunded.',
+    example: '2026-08-23T10:00:00.000Z',
   })
   depositRefundedAt!: string | null;
 
-  @ApiPropertyOptional({ nullable: true, description: 'The refund transfer reference.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'The refund transfer reference.',
+    example: 'REF-9928172',
+  })
   depositRefundReference!: string | null;
 }
 
@@ -474,6 +487,7 @@ export class TalentRequestDetailResponse {
   @ApiPropertyOptional({
     nullable: true,
     description: 'Access notes. Shown back to the customer who wrote them.',
+    example: 'Building 4, Studio B',
   })
   locationNotes!: string | null;
 
@@ -531,7 +545,7 @@ export class BookingDetailResponse extends BookingCardResponse {
   @ApiProperty({ example: '+251911234567' })
   contactPhone!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ nullable: true, example: '+251911765432' })
   additionalPhone!: string | null;
 
   @ApiPropertyOptional({

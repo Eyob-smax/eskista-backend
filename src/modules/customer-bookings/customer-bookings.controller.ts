@@ -12,7 +12,6 @@ import {
   Query,
 } from '@nestjs/common';
 import {
-  ApiBadRequestResponse,
   ApiBearerAuth,
   ApiConflictResponse,
   ApiCreatedResponse,
@@ -20,12 +19,11 @@ import {
   ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
-  ApiOperation,
   ApiParam,
   ApiTags,
-  ApiUnauthorizedResponse,
   getSchemaPath,
 } from '@nestjs/swagger';
+import { ApiEndpoint, ApiStandardErrors } from '../../common/dto/api-docs';
 import type { CursorPage } from '../../common/dto/pagination.dto';
 import { CurrentUser } from '../auth/auth.decorators';
 import {
@@ -48,9 +46,28 @@ import {
   UpsertTalentRequestDto,
 } from './dto/request.dto';
 
+const DRAFT_ID_PARAM = {
+  name: 'id',
+  format: 'uuid',
+  description: 'Draft ID (UUID).',
+  example: '550e8400-e29b-41d4-a716-446655440000',
+};
+
+const BOOKING_REF_PARAM = {
+  name: 'reference',
+  description: 'Human-readable booking reference.',
+  example: 'ESK-10482',
+};
+
+const TALENT_REQUEST_REF_PARAM = {
+  name: 'reference',
+  description: 'Human-readable talent request reference.',
+  example: 'ESK-TLT-1004',
+};
+
 @ApiTags('customer · bookings')
 @ApiBearerAuth()
-@ApiUnauthorizedResponse({ description: 'No valid session.' })
+@ApiStandardErrors()
 @ApiExtraModels(BookingCardResponse)
 @Controller({ path: 'customer/bookings', version: '1' })
 export class CustomerBookingsController {
@@ -63,28 +80,22 @@ export class CustomerBookingsController {
   // ── Drafts ─────────────────────────────────────────────────────────────────
 
   @Post('equipment/draft')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Start an equipment booking draft',
-    description: `
-Backs **Save Draft** on the two-step equipment wizard.
-
-Every field is optional, so the wizard can be saved at any point — including immediately,
-with nothing filled in. What a *submission* requires is checked at submit time; validating
-a draft as if it were final would make "Save Draft" impossible.
-
-The draft is the same row the booking becomes, so the \`reference\` returned here
-(\`ESK-10482\`) is the one the customer keeps for the whole rental. Drafts are excluded
-from every availability calculation — an unsubmitted enquiry must never block another
-customer.
-
-Nothing is priced yet. Call \`GET /catalogue/equipment/{id}/quote\` for live totals while
-the customer is choosing dates.
-
-Use \`outstandingRequirements\` to drive the wizard: it names exactly what is still missing,
-including gaps in the customer's own profile, prefixed \`customer.\` (e.g.
-\`customer.phone\`). Verification documents are never among them — verification is a
-badge, not a gate.
-`.trim(),
+    does: 'Initializes a new equipment rental booking draft from the two-step equipment wizard.',
+    behind: [
+      'Creates a new Booking record in DRAFT status with a human-readable reference like ESK-10482.',
+      'Saves optional wizard inputs (listingId, dates, quantity, collection method, delivery address).',
+      'Computes wizard completion readiness checklist (outstandingRequirements).',
+      'Excludes unsubmitted drafts from calendar availability calculations and avoids freezing prices.',
+    ],
+    seenBy: [
+      'Customer receives the draft reference, pre-filled wizard fields, and outstanding requirements checklist.',
+    ],
+    rules: [
+      '401 if not authenticated with an active session token.',
+      'All request fields are optional to allow saving at any point in the wizard.',
+    ],
   })
   @ApiCreatedResponse({ type: DraftResponse })
   createEquipmentDraft(
@@ -95,13 +106,24 @@ badge, not a gate.
   }
 
   @Patch('equipment/draft/:id')
-  @ApiOperation({
+  @ApiParam(DRAFT_ID_PARAM)
+  @ApiEndpoint({
     summary: 'Update an equipment draft',
-    description:
-      'Partial update — send only what changed. Call it on each wizard step to keep the ' +
-      'draft current. Returns 409 once the request has been submitted.',
+    does: 'Partially updates an existing equipment rental draft across wizard steps.',
+    behind: [
+      'Updates fields on the existing DRAFT Booking record belonging to this customer.',
+      'Re-evaluates outstandingRequirements to guide remaining wizard steps.',
+    ],
+    seenBy: [
+      'Customer sees updated draft state in the equipment rental wizard.',
+    ],
+    rules: [
+      '400 if validation fails on dates or quantities.',
+      '401 if not authenticated.',
+      '404 if draft ID does not exist or belongs to another user.',
+      '409 if the booking has already been submitted.',
+    ],
   })
-  @ApiParam({ name: 'id', format: 'uuid', description: 'The draft id, not the reference.' })
   @ApiOkResponse({ type: DraftResponse })
   @ApiConflictResponse({ description: 'Already submitted; drafts are no longer editable.' })
   @ApiNotFoundResponse({ description: 'No draft with that id belongs to you.' })
@@ -114,36 +136,21 @@ badge, not a gate.
   }
 
   @Post('talent/draft')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Start a talent hire draft',
-    description: `
-Backs the five-step hire wizard: **Project → Schedule → Location → References → Budget**,
-then Review.
-
-(The design sheet labels three consecutive screens "Step 3 of 5"; the order above is the one
-their content implies.)
-
-All five steps post to this one body. Reference files are uploaded separately through
-\`POST /customer/bookings/{reference}/attachments\`, so this stays JSON.
-
-**Invite 1–5 talents** with \`talentProfileIds\` (the limit is an admin setting). On
-submission each gets **48 hours** to accept or decline. From the first acceptance the
-customer has **72 hours** to choose in \`POST /customer/bookings/{reference}/hire\` — or sets
-\`autoHireFirstAccept: true\` to hire whoever accepts first. Those hired see **HIRED**,
-everyone else still in the running sees **REJECTED**.
-
-**Talent rates are fixed.** Nothing is priced until the hire: each talent has their own rate,
-so the booking is priced from whoever is chosen — the chosen service's price if it is theirs,
-otherwise their base rate — plus Eskista's commission plus VAT, the same way equipment is.
-\`GET …/invitations\` shows each talent's price for this request beside their answer. There is
-no negotiation. \`budgetBand\` / \`budgetMinor\` are optional, shown to the invited talents,
-and never price anything.
-
-\`headcount\` > 1 lets the customer hire that many; each hire becomes its own booking with its
-own agreement and payment (siblings of this one).
-
-The reference is \`ESK-TLT-8847\` style, distinct from equipment's \`ESK-10482\`.
-`.trim(),
+    does: 'Initializes a new creative talent hiring draft from the five-step hiring wizard.',
+    behind: [
+      'Creates a new Booking record of type TALENT in DRAFT status with an ESK-TLT-xxxx reference.',
+      'Stores project description, schedule, venue, headcount, budget, and invited talent profile IDs.',
+      'Excludes unsubmitted drafts from talent calendars.',
+    ],
+    seenBy: [
+      'Customer receives the talent draft ID and reference to continue the wizard.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      'Body fields are optional to permit partial progress saving.',
+    ],
   })
   @ApiCreatedResponse({ type: DraftResponse })
   createTalentDraft(
@@ -154,11 +161,24 @@ The reference is \`ESK-TLT-8847\` style, distinct from equipment's \`ESK-10482\`
   }
 
   @Patch('talent/draft/:id')
-  @ApiOperation({
+  @ApiParam(DRAFT_ID_PARAM)
+  @ApiEndpoint({
     summary: 'Update a talent hire draft',
-    description: 'Partial update. Call it at the end of each wizard step.',
+    does: 'Partially updates an existing creative talent hiring draft.',
+    behind: [
+      'Updates fields on the draft Booking record for this customer.',
+      'Recomputes outstanding requirements.',
+    ],
+    seenBy: [
+      'Customer sees updated draft steps in the talent hire wizard.',
+    ],
+    rules: [
+      '400 if validation fails.',
+      '401 if not authenticated.',
+      '404 if draft ID is not found.',
+      '409 if already submitted.',
+    ],
   })
-  @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: DraftResponse })
   @ApiConflictResponse({ description: 'Already submitted.' })
   updateTalentDraft(
@@ -171,40 +191,27 @@ The reference is \`ESK-TLT-8847\` style, distinct from equipment's \`ESK-10482\`
 
   @Post('draft/:id/submit')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiParam(DRAFT_ID_PARAM)
+  @ApiEndpoint({
     summary: 'Submit a draft to Eskista',
-    description: `
-Turns a draft into a real request. Works for both equipment and talent drafts.
-
-For **equipment** this is the moment pricing is frozen: the vendor's price plus commission
-plus VAT, and the deposit, are computed once with the same function the quote endpoint uses,
-and snapshotted onto the booking — including the commission rate, so an admin changing it
-later never reprices this booking. A later price change on the listing can never rewrite what the customer
-agreed to.
-
-Availability is re-checked here, not just at quote time. Between drafting and submitting,
-someone else may have taken the dates — that returns **409**, not a silent double-booking.
-
-For **talent** nothing is priced here. Submission sends the request to every invited talent,
-starts their 48-hour clocks and moves the request to \`ESKISTA_REVIEW\` ("Talent
-Confirmation"). A talent who stopped taking work since the draft was saved returns **409**
-naming them. The booking is priced when a talent is hired.
-
-A **400** carries \`outstandingRequirements\` naming every remaining gap, so the client can
-send the customer back to the right step.
-`.trim(),
+    does: 'Submits a completed equipment or talent draft into an active marketplace request.',
+    behind: [
+      'Validates that all outstandingRequirements are met.',
+      'For equipment: verifies calendar availability, freezes rental rate, platform commission, and VAT snapshot, moves status to SUBMITTED / UNDER_REVIEW, and notifies the vendor.',
+      'For talent: verifies invited talents are available, starts 48-hour response countdowns, sets status to ESKISTA_REVIEW, and dispatches invitation notifications to each talent.',
+    ],
+    seenBy: [
+      'Customer sees the request transition from draft to active in the upcoming tab.',
+      'Suppliers receive notifications of new rental requests or invitations.',
+    ],
+    rules: [
+      '400 with outstandingRequirements if required fields or contact details are missing.',
+      '401 if not authenticated.',
+      '404 if draft ID not found.',
+      '409 if already submitted or if equipment dates became unavailable while drafting.',
+    ],
   })
-  @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: DraftResponse })
-  @ApiBadRequestResponse({
-    description: 'Not ready to submit. The body carries `outstandingRequirements`.',
-    schema: {
-      example: {
-        message: 'This request is not ready to submit',
-        outstandingRequirements: ['deliveryAddress', 'customer.phone'],
-      },
-    },
-  })
   @ApiConflictResponse({
     description: 'Already submitted, or the dates stopped being available while drafting.',
   })
@@ -217,11 +224,22 @@ send the customer back to the right step.
 
   @Delete('draft/:id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({
+  @ApiParam(DRAFT_ID_PARAM)
+  @ApiEndpoint({
     summary: 'Discard a draft',
-    description: 'Only an unsubmitted draft can be deleted. A submitted request is cancelled.',
+    does: 'Permanently discards an unsubmitted booking draft.',
+    behind: [
+      'Deletes the Booking row in DRAFT status from the database.',
+    ],
+    seenBy: [
+      'Customer no longer sees the draft in their drafts list or wizard.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if draft ID not found.',
+      '409 if the booking has already been submitted (must use cancel instead).',
+    ],
   })
-  @ApiParam({ name: 'id', format: 'uuid' })
   @ApiNoContentResponse({ description: 'Deleted.' })
   @ApiConflictResponse({ description: 'Already submitted — cancel it instead.' })
   deleteDraft(
@@ -234,24 +252,19 @@ send the customer back to the right step.
   // ── Read ───────────────────────────────────────────────────────────────────
 
   @Get()
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'List my bookings',
-    description: `
-The **My Bookings** tabs. Equipment and talent come back together, as the designs show
-them; pass \`type\` to separate them.
-
-Every booking carries an \`actions\` array — render the entry with \`primary: true\` as the
-filled button. That is how one list renders *Complete Payment*, *Track Booking*, *Arrange
-Return*, *Complete Service* and *Book Again* without the client re-deriving the rules. A
-disabled action carries \`disabledReason\`, safe to show verbatim.
-
-\`badge\` gives the coloured chip, already worded.
-
-**Two totals per booking**, and they differ: \`totalMinor\` excludes the refundable deposit,
-\`amountDueMinor\` includes it. Show the second only on payment screens.
-
-Ordering is soonest-first for upcoming and active, most-recent-first for completed.
-`.trim(),
+    does: 'Retrieves a paginated list of bookings for the customer filtered by tab (upcoming, active, completed, drafts) and type.',
+    behind: [
+      'Queries bookings for the customer filtered by status bucket and type.',
+      'Computes primary action buttons and badge chips for each card.',
+    ],
+    seenBy: [
+      'Customer sees their booking list on the My Bookings screen.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+    ],
   })
   @ApiOkResponse({
     schema: {
@@ -277,35 +290,22 @@ Ordering is soonest-first for upcoming and active, most-recent-first for complet
   }
 
   @Get(':reference')
-  @ApiOperation({
+  @ApiParam(BOOKING_REF_PARAM)
+  @ApiEndpoint({
     summary: 'Get one booking in full',
-    description: `
-Everything on the **Booking Details** screen, in one call: the collapsible Equipment,
-Payment, Fulfilment and Inspection panels, Documents & Records, the progress tracker, and
-the activity feed.
-
-**\`timeline\`** is computed server-side — 8 steps for an equipment rental, 6 for a talent
-engagement. Render whatever comes back rather than hardcoding either list, and a new status
-will never need a frontend release.
-
-**\`delivery\`** and **\`return\`** each carry their own sub-tracker: 4 steps for delivery
-(Prepared → Picked Up → Out for Delivery → Delivered), 5 for the return. \`courierPhone\`
-is exposed; the vendor's number never is, because Eskista mediates all contact.
-
-**\`inspection\`** is always present. Until the equipment is back, \`isComplete\` is false
-and every field is null — render dashes, as the design does, so the customer knows an
-inspection is still coming.
-
-**\`documents\`** lists only files that actually exist. A row that 404s on tap reads as a
-broken app rather than a document that is not ready yet.
-
-**\`activity\`** is an allow-list projection of the status history. Vendor decline reasons
-and internal admin notes are never included.
-
-Another customer's reference returns **404**, not 403.
-`.trim(),
+    does: 'Returns complete details for a booking including equipment/talent info, payment breakdown, fulfilment tracking, inspection, documents, and activity timeline.',
+    behind: [
+      'Fetches booking record with all relations (subject, payments, delivery/return fulfilment, agreements, inspection).',
+      'Generates timeline steps, fulfilment sub-trackers, and available client actions.',
+    ],
+    seenBy: [
+      'Customer sees the comprehensive Booking Details screen in the Mini App.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if booking reference does not exist or belongs to another customer.',
+    ],
   })
-  @ApiParam({ name: 'reference', example: 'ESK-10482', description: 'Not the uuid.' })
   @ApiOkResponse({ type: BookingDetailResponse })
   @ApiNotFoundResponse({ description: 'No booking with that reference belongs to you.' })
   getOne(
@@ -318,29 +318,23 @@ Another customer's reference returns **404**, not 403.
   // ── Talent hire ────────────────────────────────────────────────────────────
 
   @Get(':reference/invitations')
-  @ApiOperation({
+  @ApiParam(TALENT_REQUEST_REF_PARAM)
+  @ApiEndpoint({
     summary: 'See who has answered a talent request',
-    description: `
-Backs **Choose Talent**: every invited talent, their answer, and what hiring them for this
-request would cost.
-
-\`phase\` tells the screen what to show:
-
-| phase | Meaning |
-|---|---|
-| \`WAITING_FOR_REPLIES\` | Nobody has accepted yet |
-| \`READY_TO_CHOOSE\` | At least one accepted — enable **Hire** on those with \`canHire\` |
-| \`HIRED\` | Decided. \`hiredBookingReference\` on each hire is the booking to pay |
-| \`CLOSED\` | Expired or cancelled |
-
-\`price.totalMinor\` is each talent's own rate for these dates, with commission and VAT —
-exactly what the booking will be priced at if they are hired.
-
-Reading this settles anything whose time is up, so an invitation past its 48 hours reads
-\`EXPIRED\` even if the background job has not run.
-`.trim(),
+    does: 'Returns all invited talents for a talent request, their response status, individual quotes, and the selection countdown deadline.',
+    behind: [
+      'Queries invitations for the talent request reference.',
+      'Settles expired invitations (48h reply window).',
+      'Computes each talent rate, commission, and VAT totals.',
+    ],
+    seenBy: [
+      'Customer sees the "Choose Talent" card list with prices and accept/decline badges.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if talent request reference is not found.',
+    ],
   })
-  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
   @ApiOkResponse({ type: CustomerInvitationsResponse })
   @ApiNotFoundResponse({ description: 'No talent request with that reference belongs to you.' })
   listInvitations(
@@ -352,17 +346,26 @@ Reading this settles anything whose time is up, so an invitation past its 48 hou
 
   @Post(':reference/invitations')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiParam(TALENT_REQUEST_REF_PARAM)
+  @ApiEndpoint({
     summary: 'Invite more talents to an open request',
-    description: `
-For when some of the invited talents declined. Allowed while the request is in
-\`ESKISTA_REVIEW\` and nobody has been hired, up to the admin limit in total (5 by default).
-Each new talent gets their own 48 hours.
-`.trim(),
+    does: 'Sends invitations to additional creative professionals on an open talent request.',
+    behind: [
+      'Validates total invited count is within the platform limit (max 5).',
+      'Creates invitation rows and starts new 48-hour response countdowns.',
+      'Dispatches notifications to the newly invited talents.',
+    ],
+    seenBy: [
+      'Customer sees the newly invited talents in the invitation roster.',
+    ],
+    rules: [
+      '400 if exceeding the invitation limit.',
+      '401 if not authenticated.',
+      '404 if request reference not found.',
+      '409 if someone is already hired, request is closed, or talents were already invited.',
+    ],
   })
-  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
   @ApiOkResponse({ type: CustomerInvitationsResponse })
-  @ApiBadRequestResponse({ description: 'Over the invitation limit.' })
   @ApiConflictResponse({ description: 'Already hired, closed, or those talents are invited.' })
   inviteMore(
     @CurrentUser('id') userId: string,
@@ -374,26 +377,28 @@ Each new talent gets their own 48 hours.
 
   @Post(':reference/hire')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiParam(TALENT_REQUEST_REF_PARAM)
+  @ApiEndpoint({
     summary: 'Hire from the talents who accepted',
-    description: `
-The customer's choice. Send one talent, or up to the request's \`headcount\`.
-
-- Each chosen talent becomes **HIRED**. Everyone else who was still in the running —
-  accepted, or not yet answered — becomes **REJECTED** and is told.
-- The first hire takes over this booking, priced from that talent's rate, and moves it to
-  \`AWAITING_PAYMENT\`. Each further hire gets a **sibling booking** (its own reference,
-  agreement, payment and payout) — see \`hiredBookingReference\`.
-- Two agreements are issued per hire: the customer's (Customer ↔ Eskista) and the
-  talent's (Eskista ↔ Talent). The customer then signs and pays as for any booking.
-
-**409** when a picked talent has not accepted, the request is closed, or a talent has since
-been booked elsewhere on those dates.
-`.trim(),
+    does: 'Hires one or more accepted talents for the booking, freezing their price and issuing agreements.',
+    behind: [
+      'Moves selected talent invitation(s) to HIRED; marks remaining active invitations as REJECTED.',
+      'Prices the booking from the chosen talent service or base rate plus commission and VAT.',
+      'Generates legal agreements (Customer ↔ Eskista and Eskista ↔ Talent).',
+      'Transitions booking to AWAITING_PAYMENT.',
+    ],
+    seenBy: [
+      'Customer sees the booking advance to the agreement and payment stage.',
+      'Hired talent sees the engagement confirmed; rejected talents are notified.',
+    ],
+    rules: [
+      '400 if hiring more talents than the request headcount.',
+      '401 if not authenticated.',
+      '404 if request reference not found.',
+      '409 if a picked talent has not accepted, is no longer available, or request is closed.',
+    ],
   })
-  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
   @ApiOkResponse({ type: CustomerInvitationsResponse })
-  @ApiBadRequestResponse({ description: 'More talents than the headcount.' })
   @ApiConflictResponse({ description: 'Not accepted, already hired, or closed.' })
   hire(
     @CurrentUser('id') userId: string,
@@ -405,19 +410,26 @@ been booked elsewhere on those dates.
 
   @Post(':reference/cancel')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiParam(BOOKING_REF_PARAM)
+  @ApiEndpoint({
     summary: 'Cancel a booking',
-    description: `
-Backs **Cancel Request**.
-
-Allowed while the booking is a draft, under review, awaiting payment, or confirmed. Once
-the equipment is out for delivery it is too late to cancel unilaterally — a courier may
-already be carrying it — so that returns **409** directing the customer to support.
-
-The reason is recorded on the status event and shown to Eskista.
-`.trim(),
+    does: 'Cancels an in-flight booking request or confirmed rental before courier dispatch.',
+    behind: [
+      'Transitions the Booking to CANCELLED status.',
+      'Records cancellation reason in the audit activity log.',
+      'Releases reserved equipment inventory or talent calendar locks.',
+      'Notifies the supplier and Eskista operations.',
+    ],
+    seenBy: [
+      'Customer sees booking status change to Cancelled with full activity history.',
+      'Vendor or talent is notified of the cancellation.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if booking reference not found.',
+      '409 if the booking is already out for delivery or completed (cancellation disallowed via app).',
+    ],
   })
-  @ApiParam({ name: 'reference', example: 'ESK-10482' })
   @ApiOkResponse({ type: BookingDetailResponse, description: 'The booking, now cancelled.' })
   @ApiConflictResponse({ description: 'Too far along to cancel in the app.' })
   @ApiNotFoundResponse({ description: 'No booking with that reference belongs to you.' })
@@ -429,3 +441,4 @@ The reason is recorded on the status event and shown to Eskista.
     return this.bookings.cancel(userId, reference, dto);
   }
 }
+

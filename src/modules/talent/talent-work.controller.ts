@@ -17,16 +17,14 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiBody,
-  ApiConflictResponse,
   ApiConsumes,
-  ApiNotFoundResponse,
   ApiOkResponse,
-  ApiOperation,
   ApiParam,
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import type { Response } from 'express';
+import { ApiEndpoint, ApiStandardErrors } from '../../common/dto/api-docs';
 import type { UploadedFile } from '../../common/upload';
 import { CurrentUser, Roles } from '../auth/auth.decorators';
 import {
@@ -59,6 +57,19 @@ const PDF_HEADERS = (filename: string) => ({
   'Cache-Control': 'private, no-store',
 });
 
+const INVITATION_ID_PARAM = {
+  name: 'id',
+  format: 'uuid',
+  description: 'The hire invitation UUID.',
+  example: '550e8400-e29b-41d4-a716-446655440010',
+};
+
+const TALENT_BOOKING_REF_PARAM = {
+  name: 'reference',
+  example: 'ESK-TLT-1004',
+  description: 'The talent booking reference (e.g. ESK-TLT-1004).',
+};
+
 @ApiTags('talent · work')
 @ApiBearerAuth()
 @ApiUnauthorizedResponse({ description: 'No valid session.' })
@@ -70,63 +81,89 @@ export class TalentWorkController {
   // ── Home ───────────────────────────────────────────────────────────────────
 
   @Get('me/dashboard')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Talent home screen',
-    description: `
-Everything on **Home**: the greeting, **This month** earnings, **Profile views**,
-**Pending Requests**, the **N new opportunities** banner, **Profile completion** with
-Complete Profile, and the **Hire Requests** list.
-
-- *Pending* = requests waiting on the talent's answer. *New opportunities* = the subset not
-  yet opened. Opening one (\`GET /talent/requests/{id}\`) makes it no longer new.
-- *This month* = the talent's own earnings from confirmed engagements starting this month.
-- *Profile views* counts clients opening the public profile, never the talent's own views.
-`.trim(),
+    does: 'Assembles dashboard home data: current month earnings, profile views, pending requests, new opportunities count, and upcoming engagements.',
+    behind: [
+      'Read only: aggregates earnings for current month, profile pageviews count, and pending hire invitations.',
+      'Filters out self-views and resolves upcoming confirmed engagements.',
+    ],
+    seenBy: [
+      'Talent app Home tab: KPI tiles, actionable banners, and pending requests strip.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+    ],
   })
   @ApiOkResponse({ type: TalentDashboardResponse })
+  @ApiStandardErrors()
   dashboard(@CurrentUser('id') userId: string): Promise<TalentDashboardResponse> {
     return this.work.dashboard(userId);
   }
 
   @Get('me/earnings')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'My earnings',
-    description: `
-The **Earnings** tab. Every amount is what the talent is paid — their own rate in full.
-
-| status | Meaning |
-|---|---|
-| \`UPCOMING\` | Confirmed (client has paid), not yet done |
-| \`PENDING\` | Done, waiting for Eskista to pay out |
-| \`PAID\` | Paid out |
-
-Engagements still awaiting the client's payment are not counted: nobody has committed that
-money yet.
-`.trim(),
+    does: 'Returns earnings breakdown (total revenue, today, upcoming, pending payout) and itemized earnings history.',
+    behind: [
+      'Read only: aggregates confirmed bookings and settlement payout lines for this talent.',
+      'Computes net earnings at talent rates in integer minor units (ETB cents).',
+    ],
+    seenBy: [
+      'Earnings tab: overview cards and itemized engagement payouts.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+    ],
   })
   @ApiOkResponse({ type: TalentEarningsResponse })
+  @ApiStandardErrors()
   earnings(@CurrentUser('id') userId: string): Promise<TalentEarningsResponse> {
     return this.work.earnings(userId);
   }
 
   @Get('me/cv')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'My CV (preview)',
-    description:
-      'The auto-generated CV, "built from what you entered", in the chosen `cvTemplate`. ' +
-      'Includes contact details because it is the talent’s own copy; the client-facing CV ' +
-      'never does.',
+    does: 'Returns formatted CV content including verified work history, education, portfolio highlights, and contact information for preview.',
+    behind: [
+      'Read only: formats talent profile data according to selected CvTemplate.',
+    ],
+    seenBy: [
+      'CV Preview screen in talent settings.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+    ],
   })
   @ApiOkResponse({ type: TalentCvResponse })
+  @ApiStandardErrors()
   cv(@CurrentUser('id') userId: string): Promise<TalentCvResponse> {
     return this.work.cv(userId);
   }
 
   @Get('me/cv.pdf')
-  @ApiOperation({ summary: 'Download my CV as PDF', description: 'In the chosen template.' })
+  @ApiEndpoint({
+    summary: 'Download my CV as PDF',
+    does: 'Generates and streams a professional PDF document of the talent CV formatted using the active CV template.',
+    behind: [
+      'Renders HTML CV template with talent data and converts to PDF binary stream.',
+    ],
+    seenBy: [
+      'Triggers browser PDF download.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+    ],
+  })
   @ApiOkResponse({
     content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } },
   })
+  @ApiStandardErrors()
   async cvPdf(
     @CurrentUser('id') userId: string,
     @Res({ passthrough: true }) res: Response,
@@ -139,27 +176,23 @@ money yet.
   // ── Hire requests ──────────────────────────────────────────────────────────
 
   @Get('requests')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'My hire requests',
-    description: `
-The **Requests** tab: every client request the talent was invited to.
-
-A request shows the brief, project type, dates and times, city, headcount, the client's
-budget and \`yourEarningsMinor\` — exactly what the talent would be paid at their own rate.
-**It never shows who the client is**: talents and clients each deal with Eskista.
-
-\`status\` is the talent's side of it:
-
-| status | Label | Next |
-|---|---|---|
-| \`INVITED\` | Request Received | Accept or Decline within \`hoursToRespond\` (48 h) |
-| \`ACCEPTED\` | Accepted — waiting for the client | Withdraw, or wait |
-| \`HIRED\` | Hired | Open \`engagementReference\` under Bookings |
-| \`REJECTED\` | Not selected | — the client hired someone else |
-| \`DECLINED\` / \`EXPIRED\` / \`WITHDRAWN\` / \`CANCELLED\` | | — |
-`.trim(),
+    does: 'Lists all incoming booking invitations from clients, filterable by status tab.',
+    behind: [
+      'Read only: queries HireRequest records where talent was invited.',
+      'Hides client identity to protect marketplace mediation.',
+    ],
+    seenBy: [
+      'Requests tab: displays invitation cards with response countdown.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+    ],
   })
   @ApiOkResponse({ type: [HireRequestResponse] })
+  @ApiStandardErrors()
   listRequests(
     @CurrentUser('id') userId: string,
     @Query() query: ListHireRequestsQuery,
@@ -168,13 +201,24 @@ budget and \`yourEarningsMinor\` — exactly what the talent would be paid at th
   }
 
   @Get('requests/:id')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Open a hire request',
-    description: 'The request detail. The first open marks it seen (`isNew: false`).',
+    does: 'Returns details of an invitation (dates, shoot location, budget, role) and marks request as seen (isNew: false).',
+    behind: [
+      'Queries HireRequest row and marks isNew = false on first access.',
+    ],
+    seenBy: [
+      'Request detail screen.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+      '404 if request not found.',
+    ],
   })
-  @ApiParam({ name: 'id', format: 'uuid', description: 'The invitation id.' })
+  @ApiParam(INVITATION_ID_PARAM)
   @ApiOkResponse({ type: HireRequestResponse })
-  @ApiNotFoundResponse()
+  @ApiStandardErrors({ notFound: 'Hire request not found.' })
   getRequest(
     @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -184,20 +228,32 @@ budget and \`yourEarningsMinor\` — exactly what the talent would be paid at th
 
   @Post('requests/:id/accept')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Accept a hire request',
-    description: `
-Says yes. The client is told and chooses among everyone who accepted (they have 72 hours
-from the first acceptance). If the client asked to hire the first to accept, this hires
-the talent immediately and \`status\` comes back \`HIRED\`.
-
-**409** if it has expired, was already answered, the request closed, or the talent is
-booked or has blocked any of those dates.
-`.trim(),
+    does: 'Accepts client hire invitation. If request was configured as instant hire for first responder, status immediately moves to HIRED.',
+    behind: [
+      'Validates request is unexpired and unclosed.',
+      'Checks talent calendar for date clashes with confirmed bookings or blocked dates.',
+      'Updates invitation status to ACCEPTED (or HIRED if first-accept auto-hire is active).',
+      'Notifies client of acceptance.',
+    ],
+    seenBy: [
+      'Updates request status to Accepted or Hired.',
+      'Client hiring dashboard: talent appears in accepted candidates list.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+      '404 if request not found.',
+      '409 if invitation expired, closed, or date conflict exists.',
+    ],
   })
-  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiParam(INVITATION_ID_PARAM)
   @ApiOkResponse({ type: HireRequestResponse })
-  @ApiConflictResponse({ description: 'Expired, answered, closed, or a date clash.' })
+  @ApiStandardErrors({
+    notFound: 'Hire request not found.',
+    conflict: 'Expired, answered, closed, or a date clash.',
+  })
   accept(
     @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -207,13 +263,29 @@ booked or has blocked any of those dates.
 
   @Post('requests/:id/decline')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Decline a hire request',
-    description: 'The reason is optional and shown to Eskista only.',
+    does: 'Declines an invitation with an optional reason shown to Eskista mediation only.',
+    behind: [
+      'Updates invitation status to DECLINED and records optional feedback note.',
+      'Removes reservation from candidate shortlist.',
+    ],
+    seenBy: [
+      'Removes request from active list.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+      '404 if request not found.',
+      '409 if request already answered or closed.',
+    ],
   })
-  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiParam(INVITATION_ID_PARAM)
   @ApiOkResponse({ type: HireRequestResponse })
-  @ApiConflictResponse({ description: 'Expired, already answered, or closed.' })
+  @ApiStandardErrors({
+    notFound: 'Hire request not found.',
+    conflict: 'Expired, already answered, or closed.',
+  })
   decline(
     @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -224,15 +296,29 @@ booked or has blocked any of those dates.
 
   @Post('requests/:id/withdraw')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Withdraw an acceptance',
-    description:
-      'Before the client has chosen. Once hired, pulling out is a cancellation and goes ' +
-      'through Eskista (**409**).',
+    does: 'Withdraws a previously accepted request before client makes a hiring decision.',
+    behind: [
+      'Verifies status is ACCEPTED and booking has not yet been confirmed by client.',
+      'Updates invitation status to WITHDRAWN.',
+    ],
+    seenBy: [
+      'Removes talent from client shortlist.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+      '404 if request not found.',
+      '409 if candidate was already hired or status is not ACCEPTED.',
+    ],
   })
-  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiParam(INVITATION_ID_PARAM)
   @ApiOkResponse({ type: HireRequestResponse })
-  @ApiConflictResponse({ description: 'Not accepted, or already hired.' })
+  @ApiStandardErrors({
+    notFound: 'Hire request not found.',
+    conflict: 'Not accepted, or already hired.',
+  })
   withdraw(
     @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -244,13 +330,22 @@ booked or has blocked any of those dates.
   // ── Engagements ────────────────────────────────────────────────────────────
 
   @Get('bookings')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'My engagements',
-    description:
-      'The **Bookings** tab: requests the talent was hired for. Each is its own booking ' +
-      'with its own reference.',
+    does: 'Lists bookings where this talent was hired, filterable by engagement stage.',
+    behind: [
+      'Read only: queries Booking records matching talent profile.',
+    ],
+    seenBy: [
+      'Bookings tab: shows cards with reference, dates, and payment status.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+    ],
   })
   @ApiOkResponse({ type: [EngagementCardResponse] })
+  @ApiStandardErrors()
   listEngagements(
     @CurrentUser('id') userId: string,
     @Query() query: ListEngagementsQuery,
@@ -259,20 +354,25 @@ booked or has blocked any of those dates.
   }
 
   @Get('bookings/:reference')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'One engagement',
-    description: `
-The engagement detail with the same six-step timeline the client sees (Request Submitted →
-Talent Confirmation → Payment → Booking Confirmed → Project / Hire → Completed), the client's
-reference files, the talent's agreement and what they are paid.
-
-The venue shows once hired; **access notes unlock once the client has paid**
-(\`locationNotesLocked\`). The client's identity is never included — use **Contact Eskista**.
-`.trim(),
+    does: 'Returns booking details including 6-step timeline, client reference files, location instructions (unlocked after payment), and agreement status.',
+    behind: [
+      'Read only: resolves booking by human reference (ESK-TLT-1004).',
+      'Enforces location access privacy: locationNotes locked until booking is paid.',
+    ],
+    seenBy: [
+      'Booking Detail screen.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+      '404 if engagement not found.',
+    ],
   })
-  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
+  @ApiParam(TALENT_BOOKING_REF_PARAM)
   @ApiOkResponse({ type: EngagementDetailResponse })
-  @ApiNotFoundResponse()
+  @ApiStandardErrors({ notFound: 'Engagement booking not found.' })
   getEngagement(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -282,16 +382,30 @@ The venue shows once hired; **access notes unlock once the client has paid**
 
   @Post('bookings/:reference/payout/confirm')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Confirm Payment',
-    description:
-      '"Could you please confirm that you’ve received your payment?" `confirmed: true`: ' +
-      '**Payment Received!** — complete the booking now, or it closes automatically in 24 ' +
-      'hours. `false` (Not-Confirmed) alerts Eskista. Open once Eskista has paid out.',
+    does: 'Talent confirms or disputes receipt of engagement payout disbursed by Eskista.',
+    behind: [
+      'Validates booking is at SETTLED phase with a disbursed payout.',
+      'If confirmed = true, marks payout as confirmed and initiates 24h automatic closure.',
+      'If confirmed = false, raises escalation flag for Eskista finance support.',
+    ],
+    seenBy: [
+      'Displays Payment Received celebration screen and unlocks Complete Booking.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+      '404 if booking not found.',
+      '409 if payout has not been sent or was already confirmed.',
+    ],
   })
-  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
+  @ApiParam(TALENT_BOOKING_REF_PARAM)
   @ApiOkResponse({ type: TalentCompletionResponse })
-  @ApiConflictResponse({ description: 'Not paid out yet, or already confirmed.' })
+  @ApiStandardErrors({
+    notFound: 'Engagement booking not found.',
+    conflict: 'Not paid out yet, or already confirmed.',
+  })
   confirmPayout(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -302,13 +416,29 @@ The venue shows once hired; **access notes unlock once the client has paid**
 
   @Post('bookings/:reference/complete')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Complete the booking',
-    description: 'Closes a settled engagement once the payout is confirmed.',
+    does: 'Closes a settled engagement once payout has been confirmed.',
+    behind: [
+      'Transitions Booking status to COMPLETED.',
+      'Triggers customer review prompt.',
+    ],
+    seenBy: [
+      'Moves booking to Completed tab.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+      '404 if booking not found.',
+      '409 if payout is not yet confirmed.',
+    ],
   })
-  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
+  @ApiParam(TALENT_BOOKING_REF_PARAM)
   @ApiOkResponse({ type: EngagementDetailResponse })
-  @ApiConflictResponse({ description: 'Payout not confirmed, or not settled.' })
+  @ApiStandardErrors({
+    notFound: 'Engagement booking not found.',
+    conflict: 'Payout not confirmed, or not settled.',
+  })
   complete(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -317,11 +447,26 @@ The venue shows once hired; **access notes unlock once the client has paid**
   }
 
   @Get('bookings/:reference/settlement-record.pdf')
-  @ApiOperation({ summary: 'Settlement Record (PDF)', description: 'What you were paid for it.' })
-  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
+  @ApiEndpoint({
+    summary: 'Settlement Record (PDF)',
+    does: 'Streams PDF settlement statement summarizing earned amount, dates, and payout disbursement details.',
+    behind: [
+      'Generates settlement record PDF binary.',
+    ],
+    seenBy: [
+      'Triggers browser PDF download.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+      '404 if booking not found.',
+    ],
+  })
+  @ApiParam(TALENT_BOOKING_REF_PARAM)
   @ApiOkResponse({
     content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } },
   })
+  @ApiStandardErrors({ notFound: 'Engagement booking not found.' })
   async settlementPdf(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -333,19 +478,24 @@ The venue shows once hired; **access notes unlock once the client has paid**
   }
 
   @Get('bookings/:reference/agreement')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'My agreement for an engagement',
-    description: `
-The Eskista ↔ Talent agreement, issued when the talent is hired, with its frozen text.
-
-Signed on paper: **Download Agreement (PDF)**, sign by hand, **Upload Scanned Agreement**.
-\`AWAITING_UPLOAD → UNDER_REVIEW → APPROVED\`, exactly as on the client side. It names the
-project and the talent's fee — never the client.
-`.trim(),
+    does: 'Returns the frozen text of the Eskista ↔ Talent contract issued for this engagement.',
+    behind: [
+      'Read only: fetches Agreement row for this booking and talent.',
+    ],
+    seenBy: [
+      'Agreement preview and signing workflow screen.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+      '404 if agreement not found.',
+    ],
   })
-  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
+  @ApiParam(TALENT_BOOKING_REF_PARAM)
   @ApiOkResponse({ type: CustomerAgreementBodyResponse })
-  @ApiNotFoundResponse()
+  @ApiStandardErrors({ notFound: 'Agreement not found.' })
   getAgreement(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -354,11 +504,26 @@ project and the talent's fee — never the client.
   }
 
   @Get('bookings/:reference/agreement/pdf')
-  @ApiOperation({ summary: 'Download my agreement as a PDF' })
-  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
+  @ApiEndpoint({
+    summary: 'Download my agreement as a PDF',
+    does: 'Streams PDF of the contract for printing and physical signing.',
+    behind: [
+      'Generates and streams agreement PDF binary.',
+    ],
+    seenBy: [
+      'Downloads contract PDF to user device.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+      '404 if agreement not found.',
+    ],
+  })
+  @ApiParam(TALENT_BOOKING_REF_PARAM)
   @ApiOkResponse({
     content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } },
   })
+  @ApiStandardErrors({ notFound: 'Agreement not found.' })
   async agreementPdf(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -373,11 +538,24 @@ project and the talent's fee — never the client.
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Upload my signed agreement',
-    description:
-      'The scan of the hand-signed agreement. PNG, JPEG, WebP or PDF, up to 10 MB. Moves it ' +
-      'to `UNDER_REVIEW`; re-uploading over a rejected scan is expected.',
+    does: 'Uploads a scan or photo of the hand-signed contract (PNG, JPEG, WebP, PDF up to 10 MB).',
+    behind: [
+      'Validates document upload and stores in private agreement storage.',
+      'Updates Agreement status to UNDER_REVIEW and records signer details.',
+      'Alerts Eskista agreement review operators.',
+    ],
+    seenBy: [
+      'Updates agreement status badge to Under Review.',
+    ],
+    rules: [
+      '400 if file missing, invalid format, or over 10 MB.',
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+      '404 if agreement not found.',
+      '409 if agreement is already approved.',
+    ],
   })
   @ApiBody({
     schema: {
@@ -390,9 +568,13 @@ project and the talent's fee — never the client.
       },
     },
   })
-  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
+  @ApiParam(TALENT_BOOKING_REF_PARAM)
   @ApiOkResponse({ type: CustomerAgreementResponse })
-  @ApiConflictResponse({ description: 'Already approved, or under review.' })
+  @ApiStandardErrors({
+    badRequest: 'Missing file, invalid format, or over 10 MB.',
+    notFound: 'Agreement not found.',
+    conflict: 'Already approved, or under review.',
+  })
   uploadSignedAgreement(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -404,12 +586,25 @@ project and the talent's fee — never the client.
 
   @Post('bookings/:reference/agreement/decline')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Decline my agreement',
-    description: 'Tells Eskista the talent will not sign. Eskista follows up.',
+    does: 'Notifies Eskista operations that the talent declines the terms of the issued contract.',
+    behind: [
+      'Records decline status and feedback reason.',
+      'Flags booking for urgent operator mediation.',
+    ],
+    seenBy: [
+      'Shows contract declined banner.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '403 if user lacks TALENT role.',
+      '404 if agreement not found.',
+    ],
   })
-  @ApiParam({ name: 'reference', example: 'ESK-TLT-1004' })
+  @ApiParam(TALENT_BOOKING_REF_PARAM)
   @ApiOkResponse({ type: CustomerAgreementResponse })
+  @ApiStandardErrors({ notFound: 'Agreement not found.' })
   declineAgreement(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,

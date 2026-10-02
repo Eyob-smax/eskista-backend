@@ -18,7 +18,6 @@ import {
   ApiBody,
   ApiConsumes,
   ApiOkResponse,
-  ApiOperation,
   ApiParam,
   ApiProperty,
   ApiPropertyOptional,
@@ -40,7 +39,7 @@ import {
   assertValidFile,
   type UploadedFile,
 } from '../../common/upload';
-import { ApiStandardErrors } from '../../common/dto/api-docs';
+import { ApiEndpoint, ApiStandardErrors } from '../../common/dto/api-docs';
 import { CurrentUser, Roles } from '../auth/auth.decorators';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -66,7 +65,7 @@ export class SupplierIncidentDto {
 }
 
 export class SupplierIncidentPhotoResponse {
-  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({ format: 'uuid', example: '550e8400-e29b-41d4-a716-446655440000' }) id!: string;
   @ApiProperty({ example: '/api/v1/files/bookings/ESK-TLT-9001/incidents/a1.jpg' }) url!: string;
 }
 
@@ -232,10 +231,13 @@ export class SupplierIncidentsService {
   }
 }
 
-const DESCRIPTION =
-  'Goes to Eskista, which mediates — never to the client. Multipart, with up to 6 `photos`.';
+const TALENT_INCIDENT_REF_PARAM = {
+  name: 'reference',
+  example: 'ESK-TLT-9001',
+  description: 'The talent booking reference (e.g. ESK-TLT-9001).',
+};
 
-@ApiTags('talent')
+@ApiTags('talent · issues')
 @Roles('TALENT')
 @Controller({ path: 'talent/bookings', version: '1' })
 export class TalentIncidentsController {
@@ -244,9 +246,25 @@ export class TalentIncidentsController {
   @Post(':reference/incidents')
   @UseInterceptors(FilesInterceptor('photos', 6))
   @ApiConsumes('multipart/form-data', 'application/json')
-  @ApiOperation({
-    summary: 'Report an issue — late arrival, overtime, conduct…',
-    description: DESCRIPTION,
+  @ApiEndpoint({
+    summary: 'Report an issue on this booking',
+    does: 'Submits a formal grievance, overtime claim, or conduct report to Eskista operations for mediation. Dispatched to Eskista admins, never sent to the client.',
+    behind: [
+      'Validates booking belongs to this talent and status allows incident reporting.',
+      'Uploads up to 6 photo attachments to secure private storage.',
+      'Creates Incident ticket with status OPEN and priority determined by incident type.',
+      'Alerts Eskista support staff on duty for immediate dispute resolution.',
+    ],
+    seenBy: [
+      'Eskista admin desk: appears under active incident triage.',
+      'Talent booking details: incident timeline reflects submission.',
+    ],
+    rules: [
+      '400 if validation fails or more than 6 photos attached.',
+      '401 if unauthenticated.',
+      '404 if booking not found.',
+      '409 if booking is not in a reportable phase (must be confirmed or underway).',
+    ],
   })
   @ApiBody({
     description: 'JSON, or multipart/form-data with up to 6 `photos` (images).',
@@ -265,7 +283,7 @@ export class TalentIncidentsController {
       },
     },
   })
-  @ApiParam({ name: 'reference', example: 'ESK-TLT-9001' })
+  @ApiParam(TALENT_INCIDENT_REF_PARAM)
   @ApiOkResponse({ type: SupplierIncidentResponse })
   @ApiStandardErrors({
     badRequest: 'A field is invalid, or more than 6 photos.',
@@ -282,8 +300,22 @@ export class TalentIncidentsController {
   }
 
   @Get(':reference/incidents')
-  @ApiOperation({ summary: 'My reports on this booking, newest first' })
-  @ApiParam({ name: 'reference', example: 'ESK-TLT-9001' })
+  @ApiEndpoint({
+    summary: 'My reports on this booking',
+    does: 'Returns all incidents and grievances filed by this talent for the specified booking, ordered by newest first.',
+    behind: [
+      'Read only: queries Incident rows where counterparty is this talent and reference matches.',
+      'Includes current resolution status and Eskista notes.',
+    ],
+    seenBy: [
+      'Talent booking detail: displays past and active disputes and their resolutions.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '404 if booking not found.',
+    ],
+  })
+  @ApiParam(TALENT_INCIDENT_REF_PARAM)
   @ApiOkResponse({ type: [SupplierIncidentResponse] })
   @ApiStandardErrors({ notFound: 'Booking not found' })
   list(
@@ -294,7 +326,13 @@ export class TalentIncidentsController {
   }
 }
 
-@ApiTags('vendor · bookings')
+const INCIDENT_REF_PARAM = {
+  name: 'reference',
+  example: 'ESK-10485',
+  description: 'The booking reference (e.g. ESK-10485).',
+};
+
+@ApiTags('vendor · issues')
 @Roles('VENDOR')
 @Controller({ path: 'vendor/bookings', version: '1' })
 export class VendorIncidentsController {
@@ -303,7 +341,26 @@ export class VendorIncidentsController {
   @Post(':reference/incidents')
   @UseInterceptors(FilesInterceptor('photos', 6))
   @ApiConsumes('multipart/form-data', 'application/json')
-  @ApiOperation({ summary: 'Report an issue with this rental', description: DESCRIPTION })
+  @ApiEndpoint({
+    summary: 'Report an issue with this rental',
+    does: 'Files an incident report (damage, late return, missing pieces, equipment malfunction) directly to Eskista operations with optional photo evidence.',
+    behind: [
+      'Verifies booking belongs to calling vendor.',
+      'Checks booking state: requires confirmed booking (after accepted/payment).',
+      'Uploads attached photos (up to 6) to Cloudinary.',
+      'Creates Incident report and notifies Eskista resolution team and the customer.',
+    ],
+    seenBy: [
+      'Customer: receives notification that an incident has been reported on their rental.',
+      'Admin dashboard: appears in the Operations Incident queue with priority review.',
+    ],
+    rules: [
+      '400 if type, phase, description is invalid, or more than 6 photos.',
+      '401 if unauthenticated.',
+      '404 if booking reference not found.',
+      '409 if booking is not yet confirmed.',
+    ],
+  })
   @ApiBody({
     description: 'JSON, or multipart/form-data with up to 6 `photos` (images).',
     schema: {
@@ -321,12 +378,12 @@ export class VendorIncidentsController {
       },
     },
   })
-  @ApiParam({ name: 'reference', example: 'ESK-10485' })
+  @ApiParam(INCIDENT_REF_PARAM)
   @ApiOkResponse({ type: SupplierIncidentResponse })
   @ApiStandardErrors({
     badRequest: 'A field is invalid, or more than 6 photos.',
-    notFound: 'Booking not found',
-    conflict: 'An issue can be reported once the booking is confirmed',
+    notFound: 'Booking not found.',
+    conflict: 'An issue can be reported once the booking is confirmed.',
   })
   report(
     @CurrentUser('id') userId: string,
@@ -338,10 +395,24 @@ export class VendorIncidentsController {
   }
 
   @Get(':reference/incidents')
-  @ApiOperation({ summary: 'My reports on this booking, newest first' })
-  @ApiParam({ name: 'reference', example: 'ESK-10485' })
+  @ApiEndpoint({
+    summary: 'List reports on this booking',
+    does: 'Returns all incident reports filed for this specific rental booking, ordered newest first.',
+    behind: [
+      'Read only: queries Incident records associated with booking reference and vendor account.',
+      'Includes photo URLs, status (OPEN, UNDER_REVIEW, RESOLVED, DISMISSED), and Eskista resolution notes.',
+    ],
+    seenBy: [
+      'Vendor booking details: populates the Issues & Incidents timeline section.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '404 if booking not found.',
+    ],
+  })
+  @ApiParam(INCIDENT_REF_PARAM)
   @ApiOkResponse({ type: [SupplierIncidentResponse] })
-  @ApiStandardErrors({ notFound: 'Booking not found' })
+  @ApiStandardErrors({ notFound: 'Booking not found.' })
   list(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,

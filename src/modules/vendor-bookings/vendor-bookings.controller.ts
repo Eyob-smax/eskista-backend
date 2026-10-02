@@ -17,18 +17,19 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
-  ApiBadRequestResponse,
   ApiBearerAuth,
   ApiBody,
-  ApiConflictResponse,
   ApiConsumes,
-  ApiNotFoundResponse,
   ApiOkResponse,
-  ApiOperation,
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
 import type { Response } from 'express';
+import {
+  ApiEndpoint,
+  ApiPaginatedResponse,
+  ApiStandardErrors,
+} from '../../common/dto/api-docs';
 import type { Paginated } from '../../common/dto/pagination.dto';
 import type { UploadedFile } from '../../common/upload';
 import { CurrentUser, Roles } from '../auth/auth.decorators';
@@ -53,7 +54,13 @@ import {
 } from './dto/vendor-booking.dto';
 import { VendorBookingsService } from './vendor-bookings.service';
 
-const REF = { name: 'reference', example: 'ESK-10482' };
+const REF = {
+  name: 'reference',
+  example: 'ESK-10482',
+  description: 'The booking reference (e.g. ESK-10482).',
+};
+
+const NOT_FOUND_BOOKING = 'Booking not found or does not belong to your account.';
 
 @ApiTags('vendor · bookings')
 @ApiBearerAuth()
@@ -65,20 +72,19 @@ export class VendorBookingsController {
   // ── Requests ───────────────────────────────────────────────────────────────
 
   @Get('bookings')
-  @ApiOperation({
-    summary: 'Booking Requests',
-    description: `
-The **Booking Requests** tabs: \`pending\`, \`upcoming\`, \`active\`, \`completed\`.
-
-Each card: product, \`badge\` (Pending, Accepted, Active Rental, In-Progress, Completed…),
-dates, Total Days (\`periods\`), Location, Purpose, and **Your earnings**, which is exactly
-the price the vendor listed. Eskista adds its commission and VAT on the client's side.
-
-The client appears only as \`customerOrganisation\` ("Habesha Films"). Contact details
-are never shared; all communication goes through Eskista.
-`.trim(),
+  @ApiEndpoint({
+    summary: 'Booking Requests & Rentals',
+    does: 'Filterable list of equipment rentals: pending requests, upcoming preparation, active rentals, and completed bookings.',
+    behind: [
+      'Read only: queries bookings where the rented item belongs to this vendor.',
+      'Filters by tab: pending = REQUEST_SUBMITTED / ESKISTA_REVIEW; upcoming = AWAITING_PAYMENT / BOOKING_CONFIRMED; active = DELIVERY_PICKUP through INSPECTION; completed = SETTLEMENT / CLOSED / REJECTED / CANCELLED.',
+      'Masks customer identity: returns customerOrganisation only ("Habesha Films"), never phone or email.',
+    ],
+    seenBy: ['Vendor app: populates the 4 tabs of the Booking Requests screen.'],
+    rules: ['401 if unauthenticated.', '400 if tab parameter is invalid.'],
   })
-  @ApiOkResponse({ type: [VendorBookingSummaryResponse] })
+  @ApiPaginatedResponse(VendorBookingSummaryResponse)
+  @ApiStandardErrors({ badRequest: 'Invalid filter or tab parameter.' })
   list(
     @CurrentUser('id') userId: string,
     @Query() query: VendorBookingListQuery,
@@ -87,27 +93,22 @@ are never shared; all communication goes through Eskista.
   }
 
   @Get('bookings/:reference')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Booking detail',
-    description: `
-Every vendor booking screen reads this: **Booking Request #ESK-…**, **Rental Accepted**,
-**Booking Detail** at each stage, and the completed booking.
-
-- \`money\`: Gross rental, Eskista commission, **Your estimated earnings**, Rented Item
-  Quantity, and the client's Estimated total. Gross = earnings + commission, so it always
-  reconciles.
-- \`timeline\`: the ten steps, from Request Submitted to Rental Closed.
-- \`actions\`: the buttons for this stage, with \`primary\` for the filled one.
-- \`nextStep\`: "Your next step: Prepare the equipment before Aug 27."
-- \`preparation\`, \`handover\`, \`equipmentIdentification\`, \`inspection\`,
-  \`equipmentReturn\`, \`payment\`: the accordions on the completed booking.
-- \`documents\`: Rental Agreement (the vendor's Eskista agreement), Settlement Record and
-  Payment Evidence once they exist.
-`.trim(),
+    does: 'Complete detail for all 10 rental stages: timeline progress, financial breakdown, next steps, preparation checklist, and documents.',
+    behind: [
+      'Read only: aggregates booking row, equipment units, vendor handover state, inspection logs, agreement, and settlement lines.',
+      'Reconciles finances: Gross rental = earnings + Eskista commission.',
+      'Calculates active lifecycle buttons and disabled reasons in real time.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '404 if booking reference is not found or does not belong to this vendor.',
+    ],
   })
   @ApiParam(REF)
   @ApiOkResponse({ type: VendorBookingDetailResponse })
-  @ApiNotFoundResponse({ description: 'Not one of your bookings.' })
+  @ApiStandardErrors({ notFound: NOT_FOUND_BOOKING })
   findOne(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -117,16 +118,30 @@ Every vendor booking screen reads this: **Booking Request #ESK-…**, **Rental A
 
   @Post('bookings/:reference/accept')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Accept Booking',
-    description:
-      '"By accepting, you confirm that this equipment will be available for the requested ' +
-      'rental period." Eskista then coordinates the customer, payment and delivery. The ' +
-      'response is the Rental Accepted screen: `nextStep` says to prepare the equipment.',
+  @ApiEndpoint({
+    summary: 'Accept Booking Request',
+    does: 'Vendor accepts the rental request, committing the gear for the specified dates and advancing the booking toward customer payment.',
+    behind: [
+      'Records vendor acceptance in VendorHandover table (acceptedByVendor = true, acceptedAt).',
+      'Notifies Eskista operations team to issue customer agreement and invoice.',
+      'Generates nextStep instructing vendor to prepare equipment before the start date.',
+    ],
+    seenBy: [
+      'Customer Mini App: booking updates to payment prompt.',
+      'Admin dashboard: marked as vendor-accepted, ready for admin approval / invoice.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '404 if booking reference not found.',
+      '409 if already accepted, declined, or past expiration deadline.',
+    ],
   })
   @ApiParam(REF)
   @ApiOkResponse({ type: VendorBookingDetailResponse })
-  @ApiConflictResponse({ description: 'Already answered, or no longer open.' })
+  @ApiStandardErrors({
+    notFound: NOT_FOUND_BOOKING,
+    conflict: 'Booking is no longer open for acceptance or has already been answered.',
+  })
   accept(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -137,12 +152,31 @@ Every vendor booking screen reads this: **Booking Request #ESK-…**, **Rental A
 
   @Post('bookings/:reference/decline')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Decline Request',
-    description: 'The reason goes to Eskista, which may offer the client an alternative.',
+  @ApiEndpoint({
+    summary: 'Decline Booking Request',
+    does: 'Vendor declines the rental request with an auditable reason for Eskista staff.',
+    behind: [
+      'Records decline reason in VendorHandover and marks booking as declined by supplier.',
+      'Alerts Eskista operations team so they can source an alternative or notify the customer.',
+    ],
+    seenBy: [
+      'Admin dashboard: alerted of decline with vendor note.',
+      'Customer app: booking status updates to declined/finding alternative.',
+    ],
+    rules: [
+      '400 if reason is shorter than 5 characters.',
+      '401 if unauthenticated.',
+      '404 if booking not found.',
+      '409 if booking is no longer open for responses.',
+    ],
   })
   @ApiParam(REF)
   @ApiOkResponse({ type: VendorBookingDetailResponse })
+  @ApiStandardErrors({
+    badRequest: 'Decline reason must be at least 5 characters.',
+    notFound: NOT_FOUND_BOOKING,
+    conflict: 'Booking has already been answered or is no longer open.',
+  })
   decline(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -154,19 +188,18 @@ Every vendor booking screen reads this: **Booking Request #ESK-…**, **Rental A
   // ── Prepare Equipment ──────────────────────────────────────────────────────
 
   @Get('bookings/:reference/preparation')
-  @ApiOperation({
-    summary: 'Prepare Equipment',
-    description: `
-The **Preparation checklist** ("2/7"): the equipment itself, each included item, then
-Original accessories, Equipment tested, Equipment cleaned. Also the pre-handover condition
-photos and the **Equipment condition** choice.
-
-\`canMarkReady\` is true once every item is ticked and a condition is chosen; \`blockers\`
-says what is missing. Open from accepting the booking until it is marked ready.
-`.trim(),
+  @ApiEndpoint({
+    summary: 'Get Preparation Checklist',
+    does: '7-item preparation checklist, condition rating (1-10), and pre-handover photo documentation.',
+    behind: [
+      'Read only: generates checklist items for equipment base unit, each included accessory, and standard QA checks (Original accessories, Equipment tested, Equipment cleaned).',
+      'Calculates doneCount/totalCount, canMarkReady flag, and blockers list.',
+    ],
+    rules: ['401 if unauthenticated.', '404 if booking not found.'],
   })
   @ApiParam(REF)
   @ApiOkResponse({ type: PreparationResponse })
+  @ApiStandardErrors({ notFound: NOT_FOUND_BOOKING })
   getPreparation(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -175,14 +208,28 @@ says what is missing. Open from accepting the booking until it is marked ready.
   }
 
   @Put('bookings/:reference/preparation')
-  @ApiOperation({
-    summary: 'Tick checklist items / set condition',
-    description: 'Send only the items that changed. Saves immediately.',
+  @ApiEndpoint({
+    summary: 'Update Preparation Checklist & Condition',
+    does: 'Ticks/unticks checklist items and records physical condition rating before handover.',
+    behind: [
+      'Updates checklist JSON and condition rating in VendorHandover record.',
+      'Recalculates preparation completion percentage.',
+    ],
+    seenBy: ['Vendor app: updates checklist progress counter ("2/7").'],
+    rules: [
+      '400 if invalid checklist key is supplied.',
+      '401 if unauthenticated.',
+      '404 if booking not found.',
+      '409 if equipment has already been marked ready.',
+    ],
   })
   @ApiParam(REF)
   @ApiOkResponse({ type: PreparationResponse })
-  @ApiBadRequestResponse({ description: 'An unknown checklist key.' })
-  @ApiConflictResponse({ description: 'Not accepted yet, or already marked ready.' })
+  @ApiStandardErrors({
+    badRequest: 'An unknown checklist key was provided.',
+    notFound: NOT_FOUND_BOOKING,
+    conflict: 'Booking not accepted yet, or equipment has already been marked ready.',
+  })
   updatePreparation(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -194,11 +241,20 @@ says what is missing. Open from accepting the booking until it is marked ready.
   @Post('bookings/:reference/preparation/photos')
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({
-    summary: 'Upload a pre-handover condition photo',
-    description:
-      '"Document the equipment condition for your records." PNG, JPEG or WebP, 5 MB, up to ' +
-      'six. Kept under the booking, so Eskista can compare them with the return.',
+  @ApiEndpoint({
+    summary: 'Upload Pre-Handover Condition Photo',
+    does: 'Uploads timestamped photo documenting gear condition prior to customer or courier handover.',
+    behind: [
+      'Validates image file: JPEG, PNG, WebP up to 5 MB.',
+      'Stores file under booking directory, links photo to VendorHandover (max 6 photos).',
+    ],
+    seenBy: ['Admin dashboard: visible for comparison against return QA inspection photos.'],
+    rules: [
+      '400 if file is not an image or over 5 MB.',
+      '401 if unauthenticated.',
+      '404 if booking not found.',
+      '409 if 6 photos already uploaded.',
+    ],
   })
   @ApiParam(REF)
   @ApiBody({
@@ -209,6 +265,11 @@ says what is missing. Open from accepting the booking until it is marked ready.
     },
   })
   @ApiOkResponse({ type: PreparationResponse })
+  @ApiStandardErrors({
+    badRequest: 'File must be an image (JPEG, PNG, WebP) up to 5 MB.',
+    notFound: NOT_FOUND_BOOKING,
+    conflict: 'Maximum of 6 pre-handover condition photos reached.',
+  })
   addPhoto(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -218,10 +279,28 @@ says what is missing. Open from accepting the booking until it is marked ready.
   }
 
   @Delete('bookings/:reference/preparation/photos/:photoId')
-  @ApiOperation({ summary: 'Remove a condition photo' })
+  @ApiEndpoint({
+    summary: 'Remove Condition Photo',
+    does: 'Deletes a pre-handover condition photo.',
+    behind: ['Deletes image file from storage and removes database link.'],
+    rules: [
+      '401 if unauthenticated.',
+      '404 if photo not found.',
+      '409 if equipment already handed over.',
+    ],
+  })
   @ApiParam(REF)
-  @ApiParam({ name: 'photoId', format: 'uuid' })
+  @ApiParam({
+    name: 'photoId',
+    format: 'uuid',
+    description: 'The photo ID to delete.',
+    example: 'c3eebc99-9c0b-4ef8-bb6d-6bb9bd380a44',
+  })
   @ApiOkResponse({ type: PreparationResponse })
+  @ApiStandardErrors({
+    notFound: 'Photo not found.',
+    conflict: 'Cannot remove photos after equipment has been handed over.',
+  })
   removePhoto(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -232,14 +311,33 @@ says what is missing. Open from accepting the booking until it is marked ready.
 
   @Post('bookings/:reference/preparation/ready')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Mark as Ready',
-    description:
-      '**400** with `outstandingRequirements` until every item is ticked and a condition ' +
-      'is chosen. Moves the tracker to **Handover**.',
+  @ApiEndpoint({
+    summary: 'Mark Equipment as Ready',
+    does: 'Declares equipment prepped, tested, and ready for pickup or delivery.',
+    behind: [
+      'Verifies that all checklist items are ticked and condition rating is provided.',
+      'Sets VendorHandover.prepared = true, preparedAt timestamp.',
+      'Advances booking operational tracker to Handover stage.',
+      'Notifies Eskista courier coordination team.',
+    ],
+    seenBy: [
+      'Vendor app: enables Choose Handover Options / Confirm Handover.',
+      'Admin dashboard: booking shows gear ready for dispatch.',
+    ],
+    rules: [
+      '400 with blockers if checklist is incomplete or condition is missing.',
+      '401 if unauthenticated.',
+      '404 if booking not found.',
+      '409 if booking is not in an approved/confirmed stage.',
+    ],
   })
   @ApiParam(REF)
   @ApiOkResponse({ type: VendorBookingDetailResponse })
+  @ApiStandardErrors({
+    badRequest: 'All checklist items must be ticked and condition selected.',
+    notFound: NOT_FOUND_BOOKING,
+    conflict: 'Booking is not at the preparation stage.',
+  })
   markReady(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -250,17 +348,28 @@ says what is missing. Open from accepting the booking until it is marked ready.
   // ── Handover ───────────────────────────────────────────────────────────────
 
   @Put('bookings/:reference/handover-method')
-  @ApiOperation({
-    summary: 'Select Collection Method',
-    description: `
-**Choose Handover Options.** \`DELIVERY\`: the vendor brings the equipment to the address,
-pre-filled from the booking. \`PICKUP\`: Eskista collects it and calls \`contactPhone\`
-("We will use this to confirm your Pickup from Eskista"). Can be changed until handed over.
-`.trim(),
+  @ApiEndpoint({
+    summary: 'Select Handover Collection Method',
+    does: 'Chooses DELIVERY (vendor delivers to address) or PICKUP (Eskista courier collects from vendor).',
+    behind: [
+      'Updates CollectionMethod and delivery address or contact phone in VendorHandover.',
+      'Saves courier coordination details.',
+    ],
+    seenBy: ['Admin dashboard: dispatchers see collection preference.'],
+    rules: [
+      '400 if required address (for DELIVERY) or phone (for PICKUP) is missing.',
+      '401 if unauthenticated.',
+      '404 if booking not found.',
+      '409 if already handed over.',
+    ],
   })
   @ApiParam(REF)
   @ApiOkResponse({ type: VendorBookingDetailResponse })
-  @ApiConflictResponse({ description: 'Not marked ready, or already handed over.' })
+  @ApiStandardErrors({
+    badRequest: 'Required delivery address or contact phone is missing.',
+    notFound: NOT_FOUND_BOOKING,
+    conflict: 'Equipment is not marked ready, or has already been handed over.',
+  })
   setHandoverMethod(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -271,16 +380,30 @@ pre-filled from the booking. \`PICKUP\`: Eskista collects it and calls \`contact
 
   @Post('bookings/:reference/handover/confirm')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Confirm Handover',
-    description:
-      '"Equipment Handed Over. Handover record submitted. Eskista will confirm receipt and ' +
-      'begin the active rental." Allowed once Eskista has confirmed the booking (the client ' +
-      'has paid), the equipment is ready and a handover option is chosen.',
+  @ApiEndpoint({
+    summary: 'Confirm Equipment Handed Over',
+    does: 'Vendor confirms equipment has been handed over to Eskista hub or courier.',
+    behind: [
+      'Requires booking to be confirmed (client payment verified in escrow).',
+      'Sets VendorHandover.handedOverAt timestamp.',
+      'Notifies Eskista hub receiving staff.',
+    ],
+    seenBy: [
+      'Customer app: tracking updates to equipment dispatched.',
+      'Admin dashboard: active leg moves to transit.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '404 if booking not found.',
+      '409 if customer has not paid, gear is not marked ready, or handover method is unset.',
+    ],
   })
   @ApiParam(REF)
   @ApiOkResponse({ type: CompletionResponse })
-  @ApiConflictResponse({ description: 'Not paid yet, not ready, or no option chosen.' })
+  @ApiStandardErrors({
+    notFound: NOT_FOUND_BOOKING,
+    conflict: 'Customer has not paid, equipment is not ready, or method is unset.',
+  })
   confirmHandover(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -291,15 +414,17 @@ pre-filled from the booking. \`PICKUP\`: Eskista collects it and calls \`contact
   // ── Tracking & return ──────────────────────────────────────────────────────
 
   @Get('bookings/:reference/tracking')
-  @ApiOperation({
-    summary: 'Track Your Equipment',
-    description:
-      'The courier leg that is live: out to the client, then back. Courier, vehicle, ETA ' +
-      'and the four-step tracker. "Only the admin will be updating this status." ' +
-      '`canConfirmReceipt` enables **Confirm Delivery** once the equipment is back.',
+  @ApiEndpoint({
+    summary: 'Track Delivery / Return Leg',
+    does: 'Live courier status: outbound leg to customer, or inbound return leg to vendor.',
+    behind: [
+      'Read only: reads active DeliveryLeg record, courier vehicle, driver phone, status, and ETA.',
+    ],
+    rules: ['401 if unauthenticated.', '404 if no tracking leg active for this booking.'],
   })
   @ApiParam(REF)
   @ApiOkResponse({ type: VendorTrackingResponse })
+  @ApiStandardErrors({ notFound: 'No tracking active for this booking.' })
   tracking(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -309,16 +434,26 @@ pre-filled from the booking. \`PICKUP\`: Eskista collects it and calls \`contact
 
   @Post('bookings/:reference/return/confirm')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Confirm Delivery / Confirm Return',
-    description:
-      '`confirmed: true`: the equipment is back with the vendor. `confirmed: false` ' +
-      '(**Not-Confirmed**) records a dispute with the vendor’s note for Eskista to follow ' +
-      'up. Open once Eskista has the equipment back.',
+  @ApiEndpoint({
+    summary: 'Confirm Return / Report Discrepancy',
+    does: 'Vendor confirms equipment has returned safely, or reports missing/damaged items.',
+    behind: [
+      'If confirmed: true -> sets returnConfirmedAt. Unlocks settlement verification.',
+      'If confirmed: false -> sets returnDisputedAt, opens an incident record with vendor note, and alerts Eskista support.',
+    ],
+    seenBy: ['Admin dashboard: marks return verified or triggers dispute investigation.'],
+    rules: [
+      '401 if unauthenticated.',
+      '404 if booking not found.',
+      '409 if equipment has not been returned by customer yet, or already confirmed.',
+    ],
   })
   @ApiParam(REF)
   @ApiOkResponse({ type: CompletionResponse })
-  @ApiConflictResponse({ description: 'Not returned yet, or already confirmed.' })
+  @ApiStandardErrors({
+    notFound: NOT_FOUND_BOOKING,
+    conflict: 'Return has not been received by Eskista yet, or was already confirmed.',
+  })
   confirmReturn(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -328,15 +463,18 @@ pre-filled from the booking. \`PICKUP\`: Eskista collects it and calls \`contact
   }
 
   @Get('bookings/:reference/inspection')
-  @ApiOperation({
-    summary: 'Inspection Results',
-    description:
-      '"Inspection results conducted by Eskista": photos, Physical condition, Functional ' +
-      'test, Missing accessories, Damage, Inspection result, Overall condition, and the ' +
-      'inspector’s declaration. **404** until Eskista has inspected.',
+  @ApiEndpoint({
+    summary: 'View Return Inspection Results',
+    does: 'QA report conducted by Eskista technicians: physical grade, functional testing, missing accessories, damage notes, and deposit deductions.',
+    behind: ['Read only: reads Inspection record and photos taken at the Eskista hub.'],
+    rules: [
+      '401 if unauthenticated.',
+      '404 if inspection has not yet been conducted by Eskista.',
+    ],
   })
   @ApiParam(REF)
   @ApiOkResponse({ type: VendorInspectionResponse })
+  @ApiStandardErrors({ notFound: 'Inspection results not available yet.' })
   inspection(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -348,16 +486,26 @@ pre-filled from the booking. \`PICKUP\`: Eskista collects it and calls \`contact
 
   @Post('bookings/:reference/payout/confirm')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Confirm Payment',
-    description:
-      '"Could you please confirm that you’ve received your payment?" `true`: **Payment ' +
-      'Received!**, and the booking closes automatically in 24 hours unless completed ' +
-      'first. `false` (Not-Confirmed) alerts Eskista. Open once Eskista has paid out.',
+  @ApiEndpoint({
+    summary: 'Confirm Payout Received',
+    does: 'Vendor confirms payment has landed in their Telebirr or bank account.',
+    behind: [
+      'If confirmed: true -> sets payoutConfirmedAt, schedules auto-close job in 24 hours.',
+      'If confirmed: false -> alerts Eskista finance team with vendor dispute note.',
+    ],
+    seenBy: ['Admin dashboard: finance team sees payment confirmation verified.'],
+    rules: [
+      '401 if unauthenticated.',
+      '404 if booking not found.',
+      '409 if settlement has not been marked as paid by Eskista, or already confirmed.',
+    ],
   })
   @ApiParam(REF)
   @ApiOkResponse({ type: CompletionResponse })
-  @ApiConflictResponse({ description: 'Not paid out yet, or already confirmed.' })
+  @ApiStandardErrors({
+    notFound: NOT_FOUND_BOOKING,
+    conflict: 'Settlement has not been paid out yet, or was already confirmed.',
+  })
   confirmPayout(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -368,15 +516,30 @@ pre-filled from the booking. \`PICKUP\`: Eskista collects it and calls \`contact
 
   @Post('bookings/:reference/complete')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Complete the booking',
-    description:
-      'Closes a settled booking once the vendor has confirmed the payout. The client is ' +
-      'then asked for a review.',
+  @ApiEndpoint({
+    summary: 'Complete & Close Booking',
+    does: 'Closes a settled booking after payout confirmation, releasing all records and prompting customer review.',
+    behind: [
+      'Transitions Booking status to CLOSED.',
+      'Sends review prompt notification to customer.',
+      'Records booking completion in vendor lifetime earnings stats.',
+    ],
+    seenBy: [
+      'Customer app: review prompt appears.',
+      'Vendor app: moves booking to Completed tab.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '404 if booking not found.',
+      '409 unless return and payout are both confirmed and settled.',
+    ],
   })
   @ApiParam(REF)
   @ApiOkResponse({ type: VendorBookingDetailResponse })
-  @ApiConflictResponse({ description: 'Payout not confirmed, or not settled.' })
+  @ApiStandardErrors({
+    notFound: NOT_FOUND_BOOKING,
+    conflict: 'Payout must be confirmed and settlement completed before closing.',
+  })
   complete(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -385,14 +548,19 @@ pre-filled from the booking. \`PICKUP\`: Eskista collects it and calls \`contact
   }
 
   @Get('bookings/:reference/settlement-record.pdf')
-  @ApiOperation({
-    summary: 'Settlement Record (PDF)',
-    description: 'What the vendor was paid for this booking, and any deductions.',
+  @ApiEndpoint({
+    summary: 'Download Settlement Record (PDF)',
+    does: 'Generates official PDF statement of earnings, platform commission breakdown, damage deductions, and bank/Telebirr payout reference.',
+    behind: [
+      'Generates PDF in-memory using PDFKit, streams with attachment headers.',
+    ],
+    rules: ['401 if unauthenticated.', '404 if booking has not reached settlement.'],
   })
   @ApiParam(REF)
   @ApiOkResponse({
     content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } },
   })
+  @ApiStandardErrors({ notFound: 'Settlement record not generated yet.' })
   async settlementPdf(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -411,16 +579,17 @@ pre-filled from the booking. \`PICKUP\`: Eskista collects it and calls \`contact
   // ── Earnings ───────────────────────────────────────────────────────────────
 
   @Get('earnings')
-  @ApiOperation({
-    summary: 'Earnings',
-    description: `
-The **Earnings** screen: Total Revenue, Today's Earning, Upcoming, and the list for the tab.
-\`overview\`: everything. \`upcoming\`: earned, not yet paid out. \`completed\`: paid.
-Each row: product, "ESK-10482 · Aug 24, 2026" (or "Expected Aug 24"), your earnings,
-Paid / Pending.
-`.trim(),
+  @ApiTags('vendor · earnings')
+  @ApiEndpoint({
+    summary: 'Earnings Dashboard',
+    does: 'Overview of total lifetime revenue, today’s earnings, upcoming payouts, and itemized booking earnings.',
+    behind: [
+      'Read only: aggregates settled payout amounts, pending earnings, and filters by tab (overview, upcoming, completed).',
+    ],
+    rules: ['401 if unauthenticated.'],
   })
   @ApiOkResponse({ type: VendorEarningsResponse })
+  @ApiStandardErrors()
   earnings(
     @CurrentUser('id') userId: string,
     @Query() query: VendorEarningsQuery,
@@ -429,18 +598,29 @@ Paid / Pending.
   }
 
   @Get('earnings/summary')
-  @ApiOperation({ summary: 'Earnings totals only' })
+  @ApiTags('vendor · earnings')
+  @ApiEndpoint({
+    summary: 'Earnings Summary KPI Totals',
+    does: 'Header statistics: Total Revenue, Today’s Earning, and Upcoming Payouts in minor units.',
+    behind: ['Read only: computes lifetime and period aggregates.'],
+    rules: ['401 if unauthenticated.'],
+  })
   @ApiOkResponse({ type: VendorEarningsSummaryResponse })
+  @ApiStandardErrors()
   summary(@CurrentUser('id') userId: string): Promise<VendorEarningsSummaryResponse> {
     return this.bookings.earningsSummary(userId);
   }
 
   @Get('earnings/settlements')
-  @ApiOperation({
-    summary: 'Settlement lines',
-    description: 'The **Settlements** tab: one line per booking, with any batch it was paid in.',
+  @ApiTags('vendor · earnings')
+  @ApiEndpoint({
+    summary: 'Payout Settlement Lines',
+    does: 'Paginated list of settlement payout records with bank/Telebirr batch references and dates.',
+    behind: ['Read only: queries Settlement lines for this vendor.'],
+    rules: ['401 if unauthenticated.'],
   })
-  @ApiOkResponse({ type: [VendorSettlementResponse] })
+  @ApiPaginatedResponse(VendorSettlementResponse)
+  @ApiStandardErrors()
   settlements(
     @CurrentUser('id') userId: string,
     @Query() query: VendorSettlementListQuery,

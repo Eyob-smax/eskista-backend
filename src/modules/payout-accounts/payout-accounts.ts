@@ -18,7 +18,6 @@ import {
 import {
   ApiOkResponse,
   ApiParam,
-  ApiOperation,
   ApiProperty,
   ApiPropertyOptional,
   ApiTags,
@@ -35,7 +34,7 @@ import {
   MaxLength,
   MinLength,
 } from 'class-validator';
-import { ApiStandardErrors } from '../../common/dto/api-docs';
+import { ApiEndpoint, ApiStandardErrors } from '../../common/dto/api-docs';
 import { CurrentUser, Roles } from '../auth/auth.decorators';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -82,8 +81,8 @@ export class PayoutAccountDto {
 export class UpdatePayoutAccountDto extends PartialType(PayoutAccountDto) {}
 
 export class PayoutAccountResponse {
-  @ApiProperty({ format: 'uuid' }) id!: string;
-  @ApiProperty({ enum: AccountChannel }) channel!: AccountChannel;
+  @ApiProperty({ format: 'uuid', example: '417b35e0-8278-43ec-8367-17215328e833' }) id!: string;
+  @ApiProperty({ enum: AccountChannel, example: AccountChannel.TELEBIRR }) channel!: AccountChannel;
   @ApiProperty({ example: 'Telebirr' }) provider!: string;
   @ApiProperty({ example: 'Afro Studio' }) accountName!: string;
   @ApiProperty({ example: '0911000002' }) accountNumber!: string;
@@ -226,9 +225,13 @@ export class PayoutAccountsService {
   }
 }
 
-const DESCRIPTION =
-  'Where Eskista sends your payouts. The primary account is used; keep an alternative in ' +
-  'case it fails. The first one added becomes primary.';
+
+const PAYOUT_ID_PARAM = {
+  name: 'id',
+  format: 'uuid',
+  example: '417b35e0-8278-43ec-8367-17215328e833',
+  description: 'The payout account UUID.',
+};
 
 @ApiTags('vendor · payout accounts')
 @Roles('VENDOR')
@@ -237,24 +240,52 @@ export class VendorPayoutAccountsController {
   constructor(private readonly accounts: PayoutAccountsService) {}
 
   @Get()
-  @ApiOperation({ summary: 'My payout accounts', description: DESCRIPTION })
+  @ApiEndpoint({
+    summary: 'My payout accounts',
+    does: 'Returns all receiving accounts (Telebirr and commercial banks) configured for vendor rental payouts, with primary accounts ordered first.',
+    behind: [
+      'Read only: resolves vendor profile from signed-in user and fetches accounts ordered by isPrimary desc, createdAt asc.',
+      'Masks account numbers (e.g. •••• 6789) for secure presentation in lists.',
+    ],
+    seenBy: [
+      'Vendor settings: populates the Payout Methods screen.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '404 if no vendor profile found.',
+    ],
+  })
   @ApiOkResponse({ type: [PayoutAccountResponse], description: 'Primary first.' })
-  @ApiStandardErrors({ notFound: 'No profile for this account yet' })
+  @ApiStandardErrors({ notFound: 'No profile for this account yet.' })
   async list(@CurrentUser('id') userId: string): Promise<PayoutAccountResponse[]> {
     return this.accounts.list(await this.accounts.ownerFor(userId, 'vendor'));
   }
 
   @Post()
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Add a payout account',
-    description:
-      'Telebirr (provider is set for you) or a bank. `isPrimary: true` makes it the one used. Returns every account.',
+    does: 'Registers a new Telebirr or commercial bank account for payout disbursement. Vendors can register up to 5 accounts.',
+    behind: [
+      'Verifies vendor profile exists and current count is below 5.',
+      'Sets provider = Telebirr automatically if channel is TELEBIRR.',
+      'If isPrimary is true or this is the first account added, sets isPrimary = true and demotes existing primary.',
+      'Returns all active payout accounts ordered by primary.',
+    ],
+    seenBy: [
+      'Vendor settings: adds new payout card and sets default destination.',
+    ],
+    rules: [
+      '400 if channel is BANK but provider is missing, or account number invalid.',
+      '401 if unauthenticated.',
+      '404 if vendor profile not found.',
+      '409 if maximum 5 accounts reached.',
+    ],
   })
   @ApiOkResponse({ type: [PayoutAccountResponse] })
   @ApiStandardErrors({
-    badRequest: 'provider (the bank) is required for a bank account',
-    notFound: 'No profile for this account yet',
-    conflict: 'At most 5 payout accounts',
+    badRequest: 'Provider (the bank) is required for a bank account.',
+    notFound: 'No profile for this account yet.',
+    conflict: 'At most 5 payout accounts allowed.',
   })
   async create(
     @CurrentUser('id') userId: string,
@@ -264,10 +295,26 @@ export class VendorPayoutAccountsController {
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Edit a payout account, or make it primary (`isPrimary: true`)' })
-  @ApiParam({ name: 'id', format: 'uuid', description: 'The payout account id.' })
+  @ApiEndpoint({
+    summary: 'Edit a payout account',
+    does: 'Updates payout account holder name, account number, or promotes this account to primary.',
+    behind: [
+      'Verifies account belongs to this vendor.',
+      'If updating isPrimary to true, resets previous primary account in the same transaction.',
+      'Updates PayoutAccount record and returns all accounts.',
+    ],
+    seenBy: [
+      'Vendor settings: updates account details and primary badge.',
+    ],
+    rules: [
+      '400 if payload fails validation.',
+      '401 if unauthenticated.',
+      '404 if payout account not found.',
+    ],
+  })
+  @ApiParam(PAYOUT_ID_PARAM)
   @ApiOkResponse({ type: [PayoutAccountResponse] })
-  @ApiStandardErrors({ badRequest: 'A field is invalid.', notFound: 'Payout account not found' })
+  @ApiStandardErrors({ badRequest: 'A field is invalid.', notFound: 'Payout account not found.' })
   async update(
     @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -278,13 +325,26 @@ export class VendorPayoutAccountsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Remove a payout account',
-    description: 'Removing the primary promotes the oldest remaining one.',
+    does: 'Deletes a payout receiving account. If the removed account was primary, promotes the oldest remaining account.',
+    behind: [
+      'Verifies account belongs to this vendor.',
+      'Deletes PayoutAccount row.',
+      'If deleted account was primary, promotes the oldest remaining account to primary.',
+      'Returns updated list of remaining payout accounts.',
+    ],
+    seenBy: [
+      'Vendor settings: removes account card from list.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '404 if payout account not found.',
+    ],
   })
-  @ApiParam({ name: 'id', format: 'uuid', description: 'The payout account id.' })
+  @ApiParam(PAYOUT_ID_PARAM)
   @ApiOkResponse({ type: [PayoutAccountResponse] })
-  @ApiStandardErrors({ notFound: 'Payout account not found' })
+  @ApiStandardErrors({ notFound: 'Payout account not found.' })
   async remove(
     @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -300,24 +360,52 @@ export class TalentPayoutAccountsController {
   constructor(private readonly accounts: PayoutAccountsService) {}
 
   @Get()
-  @ApiOperation({ summary: 'My payout accounts', description: DESCRIPTION })
+  @ApiEndpoint({
+    summary: 'My payout accounts',
+    does: 'Returns all receiving accounts (Telebirr and commercial banks) configured for creative talent engagement payouts, with primary accounts ordered first.',
+    behind: [
+      'Read only: resolves talent profile from signed-in user and fetches accounts ordered by isPrimary desc, createdAt asc.',
+      'Masks account numbers (e.g. •••• 6789) for secure presentation in lists.',
+    ],
+    seenBy: [
+      'Talent settings: populates the Payout Methods screen.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '404 if no talent profile found.',
+    ],
+  })
   @ApiOkResponse({ type: [PayoutAccountResponse], description: 'Primary first.' })
-  @ApiStandardErrors({ notFound: 'No profile for this account yet' })
+  @ApiStandardErrors({ notFound: 'No profile for this account yet.' })
   async list(@CurrentUser('id') userId: string): Promise<PayoutAccountResponse[]> {
     return this.accounts.list(await this.accounts.ownerFor(userId, 'talent'));
   }
 
   @Post()
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Add a payout account',
-    description:
-      'Telebirr (provider is set for you) or a bank. `isPrimary: true` makes it the one used. Returns every account.',
+    does: 'Registers a new Telebirr or commercial bank account for payout disbursement. Talents can register up to 5 accounts.',
+    behind: [
+      'Verifies talent profile exists and current count is below 5.',
+      'Sets provider = Telebirr automatically if channel is TELEBIRR.',
+      'If isPrimary is true or this is the first account added, sets isPrimary = true and demotes existing primary.',
+      'Returns all active payout accounts ordered by primary.',
+    ],
+    seenBy: [
+      'Talent settings: adds new payout card and sets default destination.',
+    ],
+    rules: [
+      '400 if channel is BANK but provider is missing, or account number invalid.',
+      '401 if unauthenticated.',
+      '404 if talent profile not found.',
+      '409 if maximum 5 accounts reached.',
+    ],
   })
   @ApiOkResponse({ type: [PayoutAccountResponse] })
   @ApiStandardErrors({
-    badRequest: 'provider (the bank) is required for a bank account',
-    notFound: 'No profile for this account yet',
-    conflict: 'At most 5 payout accounts',
+    badRequest: 'Provider (the bank) is required for a bank account.',
+    notFound: 'No profile for this account yet.',
+    conflict: 'At most 5 payout accounts allowed.',
   })
   async create(
     @CurrentUser('id') userId: string,
@@ -327,10 +415,26 @@ export class TalentPayoutAccountsController {
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Edit a payout account, or make it primary (`isPrimary: true`)' })
-  @ApiParam({ name: 'id', format: 'uuid', description: 'The payout account id.' })
+  @ApiEndpoint({
+    summary: 'Edit a payout account',
+    does: 'Updates payout account holder name, account number, or promotes this account to primary.',
+    behind: [
+      'Verifies account belongs to this talent.',
+      'If updating isPrimary to true, resets previous primary account in the same transaction.',
+      'Updates PayoutAccount record and returns all accounts.',
+    ],
+    seenBy: [
+      'Talent settings: updates account details and primary badge.',
+    ],
+    rules: [
+      '400 if payload fails validation.',
+      '401 if unauthenticated.',
+      '404 if payout account not found.',
+    ],
+  })
+  @ApiParam(PAYOUT_ID_PARAM)
   @ApiOkResponse({ type: [PayoutAccountResponse] })
-  @ApiStandardErrors({ badRequest: 'A field is invalid.', notFound: 'Payout account not found' })
+  @ApiStandardErrors({ badRequest: 'A field is invalid.', notFound: 'Payout account not found.' })
   async update(
     @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -341,13 +445,26 @@ export class TalentPayoutAccountsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Remove a payout account',
-    description: 'Removing the primary promotes the oldest remaining one.',
+    does: 'Deletes a payout receiving account. If the removed account was primary, promotes the oldest remaining account.',
+    behind: [
+      'Verifies account belongs to this talent.',
+      'Deletes PayoutAccount row.',
+      'If deleted account was primary, promotes the oldest remaining account to primary.',
+      'Returns updated list of remaining payout accounts.',
+    ],
+    seenBy: [
+      'Talent settings: removes account card from list.',
+    ],
+    rules: [
+      '401 if unauthenticated.',
+      '404 if payout account not found.',
+    ],
   })
-  @ApiParam({ name: 'id', format: 'uuid', description: 'The payout account id.' })
+  @ApiParam(PAYOUT_ID_PARAM)
   @ApiOkResponse({ type: [PayoutAccountResponse] })
-  @ApiStandardErrors({ notFound: 'Payout account not found' })
+  @ApiStandardErrors({ notFound: 'Payout account not found.' })
   async remove(
     @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,

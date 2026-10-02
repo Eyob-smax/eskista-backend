@@ -52,7 +52,10 @@ export class DeclineBookingDto {
 }
 
 export class AcceptBookingDto {
-  @ApiPropertyOptional({ description: 'Optional note for the Eskista team.' })
+  @ApiPropertyOptional({
+    example: 'Gear has been cleaned and ready for handover.',
+    description: 'Optional note for the Eskista team.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -73,6 +76,10 @@ export class ChecklistTickDto {
 export class UpdatePreparationDto {
   @ApiPropertyOptional({
     type: [ChecklistTickDto],
+    example: [
+      { key: 'tested', done: true },
+      { key: 'cleaned', done: true },
+    ],
     description: 'Items to tick or untick. Items not sent keep their state.',
   })
   @IsOptional()
@@ -84,6 +91,7 @@ export class UpdatePreparationDto {
 
   @ApiPropertyOptional({
     enum: HandoverCondition,
+    example: HandoverCondition.EXCELLENT,
     description: '"Equipment condition": Excellent · Good · Fair · Needs Attention.',
   })
   @IsOptional()
@@ -126,12 +134,17 @@ export class HandoverMethodDto {
 
 export class ConfirmReceiptDto {
   @ApiProperty({
+    example: true,
     description: '`true` — Confirm. `false` — Not-Confirmed: Eskista is alerted and follows up.',
   })
   @IsBoolean()
   confirmed!: boolean;
 
-  @ApiPropertyOptional({ description: 'What is wrong, when not confirming.', maxLength: 500 })
+  @ApiPropertyOptional({
+    example: 'Gear returned in good condition.',
+    description: 'What is wrong, when not confirming.',
+    maxLength: 500,
+  })
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -145,18 +158,24 @@ export class ConfirmReceiptDto {
 
 export class BadgeResponse {
   @ApiProperty({ example: 'Pending' }) label!: string;
-  @ApiProperty({ enum: ['WARNING', 'INFO', 'SUCCESS', 'DANGER', 'NEUTRAL'] }) tone!: string;
+  @ApiProperty({ enum: ['WARNING', 'INFO', 'SUCCESS', 'DANGER', 'NEUTRAL'], example: 'WARNING' })
+  tone!: string;
 }
 
 export class VendorBookingSummaryResponse {
   @ApiProperty({ example: 'ESK-10482' }) reference!: string;
-  @ApiProperty({ enum: BookingStatus }) status!: BookingStatus;
+  @ApiProperty({ enum: BookingStatus, example: BookingStatus.ESKISTA_REVIEW }) status!: BookingStatus;
   @ApiProperty({ type: BadgeResponse }) badge!: BadgeResponse;
-  @ApiProperty({ description: 'PENDING | ACCEPTED | DECLINED' }) supplierResponse!: string;
+  @ApiProperty({ description: 'PENDING | ACCEPTED | DECLINED', example: 'PENDING' })
+  supplierResponse!: string;
   @ApiProperty({ example: 'Canon EOS R5' }) productName!: string;
   @ApiPropertyOptional({ nullable: true, example: 'Digital Cinema' })
   productCategory!: string | null;
-  @ApiPropertyOptional({ nullable: true }) productImageUrl!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: '/api/v1/files/equipment/images/canon-r5.jpg',
+  })
+  productImageUrl!: string | null;
   @ApiPropertyOptional({
     nullable: true,
     description:
@@ -169,29 +188,29 @@ export class VendorBookingSummaryResponse {
   @ApiProperty({ example: '2026-08-31' }) endDate!: string;
   @ApiProperty({ description: '"Total Days".', example: 3 }) periods!: number;
   @ApiProperty({ example: 1 }) quantity!: number;
-  @ApiPropertyOptional({ nullable: true, enum: CollectionMethod })
+  @ApiPropertyOptional({ nullable: true, enum: CollectionMethod, example: CollectionMethod.PICKUP })
   collectionMethod!: CollectionMethod | null;
   @ApiPropertyOptional({ nullable: true, example: 'Bole, Addis Ababa' }) location!: string | null;
-  @ApiPropertyOptional({ nullable: true, description: '"Purpose".' })
+  @ApiPropertyOptional({ nullable: true, description: '"Purpose".', example: 'Music video shoot' })
   projectDescription!: string | null;
-  @ApiProperty({ description: '"Your earnings" — exactly what the vendor listed.' })
+  @ApiProperty({ description: '"Your earnings" — exactly what the vendor listed.', example: 750000 })
   earningsMinor!: number;
-  @ApiProperty() currency!: string;
-  @ApiProperty() createdAt!: string;
+  @ApiProperty({ example: 'ETB' }) currency!: string;
+  @ApiProperty({ example: '2026-08-25T11:00:00.000Z' }) createdAt!: string;
 }
 
 export class VendorTimelineStepResponse {
   @ApiProperty({ example: 'HANDOVER' }) key!: string;
   @ApiProperty({ example: 'Handover' }) label!: string;
-  @ApiProperty({ enum: ['DONE', 'IN_PROGRESS', 'PENDING'] }) state!: string;
+  @ApiProperty({ enum: ['DONE', 'IN_PROGRESS', 'PENDING'], example: 'DONE' }) state!: string;
 }
 
 export class VendorActionResponse {
   @ApiProperty({ example: 'CONFIRM_HANDOVER' }) key!: string;
   @ApiProperty({ example: 'Confirm Handover' }) label!: string;
-  @ApiProperty() primary!: boolean;
-  @ApiProperty() enabled!: boolean;
-  @ApiPropertyOptional({ nullable: true }) disabledReason!: string | null;
+  @ApiProperty({ example: true }) primary!: boolean;
+  @ApiProperty({ example: true }) enabled!: boolean;
+  @ApiPropertyOptional({ nullable: true, example: null }) disabledReason!: string | null;
 }
 
 export class NextStepResponse {
@@ -209,61 +228,71 @@ export class VendorMoneyResponse {
     example: 1035000,
   })
   grossRentalMinor!: number;
-  @ApiProperty({ description: '"Eskista commission", shown negative.' }) commissionMinor!: number;
-  @ApiProperty() commissionRateBps!: number;
-  @ApiProperty({ description: '"Your estimated earnings".' }) earningsMinor!: number;
-  @ApiProperty({ description: '"Rented Item Quantity".' }) quantity!: number;
-  @ApiProperty({ description: '"Estimated total" — what the client pays, VAT included.' })
+  @ApiProperty({ description: '"Eskista commission", shown negative.', example: -150000 })
+  commissionMinor!: number;
+  @ApiProperty({ example: 1500, description: 'Commission in basis points (1500 = 15%).' })
+  commissionRateBps!: number;
+  @ApiProperty({ description: '"Your estimated earnings".', example: 885000 })
+  earningsMinor!: number;
+  @ApiProperty({ description: '"Rented Item Quantity".', example: 1 }) quantity!: number;
+  @ApiProperty({ description: '"Estimated total" — what the client pays, VAT included.', example: 1190250 })
   customerTotalMinor!: number;
   @ApiProperty({ example: 'Payment is managed by Eskista.' }) note!: string;
-  @ApiProperty() currency!: string;
+  @ApiProperty({ example: 'ETB' }) currency!: string;
 }
 
 export class ChecklistItemResponse {
   @ApiProperty({ example: 'tested' }) key!: string;
   @ApiProperty({ example: 'Equipment tested' }) label!: string;
-  @ApiProperty() done!: boolean;
+  @ApiProperty({ example: true }) done!: boolean;
 }
 
 export class HandoverPhotoResponse {
-  @ApiProperty({ format: 'uuid' }) id!: string;
-  @ApiProperty() url!: string;
-  @ApiProperty() fileName!: string;
+  @ApiProperty({ format: 'uuid', example: 'c3eebc99-9c0b-4ef8-bb6d-6bb9bd380a44' }) id!: string;
+  @ApiProperty({ example: '/api/v1/files/bookings/ESK-10482/photos/p1.jpg' }) url!: string;
+  @ApiProperty({ example: 'sensor-clean.jpg' }) fileName!: string;
 }
 
 export class PreparationResponse {
   @ApiProperty({ type: [ChecklistItemResponse] }) checklist!: ChecklistItemResponse[];
-  @ApiProperty({ description: '"2/7".', example: 2 }) doneCount!: number;
+  @ApiProperty({ description: '"2/7".', example: 7 }) doneCount!: number;
   @ApiProperty({ example: 7 }) totalCount!: number;
-  @ApiPropertyOptional({ enum: HandoverCondition, nullable: true })
+  @ApiPropertyOptional({ enum: HandoverCondition, nullable: true, example: HandoverCondition.EXCELLENT })
   condition!: HandoverCondition | null;
   @ApiProperty({ type: [HandoverPhotoResponse] }) photos!: HandoverPhotoResponse[];
-  @ApiPropertyOptional({ nullable: true }) preparedAt!: string | null;
-  @ApiProperty({ description: 'Mark as Ready is available.' }) canMarkReady!: boolean;
-  @ApiProperty({ type: [String], description: 'What still blocks Mark as Ready.' })
+  @ApiPropertyOptional({ nullable: true, example: '2026-08-27T15:00:00.000Z' })
+  preparedAt!: string | null;
+  @ApiProperty({ description: 'Mark as Ready is available.', example: true }) canMarkReady!: boolean;
+  @ApiProperty({ type: [String], description: 'What still blocks Mark as Ready.', example: [] })
   blockers!: string[];
 }
 
 export class HandoverResponse {
-  @ApiPropertyOptional({ enum: CollectionMethod, nullable: true })
+  @ApiPropertyOptional({ enum: CollectionMethod, nullable: true, example: CollectionMethod.PICKUP })
   method!: CollectionMethod | null;
-  @ApiPropertyOptional({ nullable: true }) address!: string | null;
-  @ApiPropertyOptional({ nullable: true }) contactPhone!: string | null;
-  @ApiPropertyOptional({ nullable: true }) handedOverAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) returnConfirmedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) returnDisputedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) payoutConfirmedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) payoutDisputedAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Bole, Addis Ababa' }) address!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '+251912345678' }) contactPhone!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-08-28T09:00:00.000Z' })
+  handedOverAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: null }) returnConfirmedAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: null }) returnDisputedAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: null }) payoutConfirmedAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: null }) payoutDisputedAt!: string | null;
 }
 
 export class InspectionRowResponse {
   @ApiProperty({ example: 'Physical condition' }) label!: string;
   @ApiProperty({ example: 'Passed' }) value!: string;
-  @ApiProperty({ enum: ['GOOD', 'BAD'] }) tone!: string;
+  @ApiProperty({ enum: ['GOOD', 'BAD'], example: 'GOOD' }) tone!: string;
 }
 
 export class VendorInspectionResponse {
-  @ApiProperty({ type: [String], description: 'Inspection photos.' }) photoUrls!: string[];
+  @ApiProperty({
+    type: [String],
+    description: 'Inspection photos.',
+    example: ['/api/v1/files/inspections/i1.jpg'],
+  })
+  photoUrls!: string[];
   @ApiProperty({
     type: [InspectionRowResponse],
     description:
@@ -277,20 +306,24 @@ export class VendorInspectionResponse {
       'final and submitted to Eskista for review.',
   })
   declaration!: string;
-  @ApiProperty({ description: 'Withheld for damage or late return.' }) deductionMinor!: number;
-  @ApiProperty() inspectedAt!: string;
+  @ApiProperty({ description: 'Withheld for damage or late return.', example: 0 })
+  deductionMinor!: number;
+  @ApiProperty({ example: '2026-08-31T17:00:00.000Z' }) inspectedAt!: string;
 }
 
 export class EquipmentUnitRefResponse {
-  @ApiPropertyOptional({ nullable: true }) label!: string | null;
-  @ApiPropertyOptional({ nullable: true }) serialNumber!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Unit #1' }) label!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'SN-FX3-99482' }) serialNumber!: string | null;
 }
 
 export class EquipmentReturnResponse {
-  @ApiPropertyOptional({ nullable: true }) scheduledAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) method!: string | null;
-  @ApiPropertyOptional({ nullable: true }) receivedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) confirmedByYouAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-08-31T16:00:00.000Z' })
+  scheduledAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'HUB_DROP_OFF' }) method!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-08-31T16:45:00.000Z' })
+  receivedAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-08-31T17:15:00.000Z' })
+  confirmedByYouAt!: string | null;
 }
 
 export class VendorPaymentDetailsResponse {
@@ -301,12 +334,13 @@ export class VendorPaymentDetailsResponse {
   })
   paymentMethod!: string | null;
   @ApiProperty({ example: 'Released on return' }) depositHeld!: string;
-  @ApiPropertyOptional({ enum: SettlementStatus, nullable: true })
+  @ApiPropertyOptional({ enum: SettlementStatus, nullable: true, example: SettlementStatus.PAID })
   settlementStatus!: SettlementStatus | null;
   @ApiPropertyOptional({ nullable: true, example: 'Paid' }) settlementStatusLabel!: string | null;
-  @ApiPropertyOptional({ nullable: true }) settlementDate!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-09-01T10:00:00.000Z' })
+  settlementDate!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 'Approved' }) approvalStatus!: string | null;
-  @ApiPropertyOptional({ nullable: true }) payoutReference!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'STL-0012' }) payoutReference!: string | null;
   @ApiPropertyOptional({
     nullable: true,
     example: 'Telebirr •••• 3344',
@@ -321,17 +355,17 @@ export class VendorPaymentDetailsResponse {
 }
 
 export class VendorDocumentLinkResponse {
-  @ApiProperty({ enum: ['RENTAL_AGREEMENT', 'PAYMENT_EVIDENCE', 'SETTLEMENT_RECORD'] })
+  @ApiProperty({ enum: ['RENTAL_AGREEMENT', 'PAYMENT_EVIDENCE', 'SETTLEMENT_RECORD'], example: 'SETTLEMENT_RECORD' })
   kind!: string;
   @ApiProperty({ example: 'Settlement Record' }) label!: string;
-  @ApiProperty() url!: string;
+  @ApiProperty({ example: '/api/v1/vendor/bookings/ESK-10482/settlement-record.pdf' }) url!: string;
   @ApiProperty({ example: 'PDF' }) format!: string;
 }
 
 export class VendorActivityResponse {
-  @ApiProperty() toStatus!: string;
-  @ApiPropertyOptional({ nullable: true }) actorRole!: string | null;
-  @ApiProperty() createdAt!: string;
+  @ApiProperty({ example: 'BOOKING_CONFIRMED' }) toStatus!: string;
+  @ApiPropertyOptional({ nullable: true, example: 'VENDOR' }) actorRole!: string | null;
+  @ApiProperty({ example: '2026-08-25T11:30:00.000Z' }) createdAt!: string;
 }
 
 export class VendorBookingDetailResponse extends VendorBookingSummaryResponse {
@@ -342,10 +376,11 @@ export class VendorBookingDetailResponse extends VendorBookingSummaryResponse {
   vendorName!: string;
   @ApiPropertyOptional({ nullable: true, example: 'Company' })
   customerOrganisationType!: string | null;
-  @ApiPropertyOptional({ nullable: true, description: '"Delivery To".' })
+  @ApiPropertyOptional({ nullable: true, description: '"Delivery To".', example: 'Bole, Addis Ababa' })
   deliveryAddress!: string | null;
-  @ApiPropertyOptional({ nullable: true }) dueAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) supplierDeclineReason!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-08-31T17:00:00.000Z' })
+  dueAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: null }) supplierDeclineReason!: string | null;
 
   @ApiProperty({ type: VendorMoneyResponse }) money!: VendorMoneyResponse;
   @ApiProperty({ type: [VendorTimelineStepResponse], description: 'The ten-step tracker.' })
@@ -375,19 +410,19 @@ export class VendorBookingDetailResponse extends VendorBookingSummaryResponse {
 }
 
 export class TrackingStepResponse {
-  @ApiProperty() key!: string;
-  @ApiProperty() label!: string;
-  @ApiProperty({ enum: ['DONE', 'IN_PROGRESS', 'PENDING'] }) state!: string;
+  @ApiProperty({ example: 'COURIER_PICKUP' }) key!: string;
+  @ApiProperty({ example: 'Courier Picked Up' }) label!: string;
+  @ApiProperty({ enum: ['DONE', 'IN_PROGRESS', 'PENDING'], example: 'DONE' }) state!: string;
 }
 
 export class VendorTrackingResponse {
   @ApiProperty({ example: 'ESK-10482' }) reference!: string;
-  @ApiProperty({ enum: ['OUTBOUND', 'RETURN'] }) direction!: 'OUTBOUND' | 'RETURN';
+  @ApiProperty({ enum: ['OUTBOUND', 'RETURN'], example: 'OUTBOUND' }) direction!: 'OUTBOUND' | 'RETURN';
   @ApiProperty({ example: 'Out for Delivery' }) stageLabel!: string;
   @ApiProperty({ example: 'Your equipment is on the way.' }) headline!: string;
-  @ApiPropertyOptional({ nullable: true }) etaAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-08-28T14:00:00.000Z' }) etaAt!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 'Dawit Bekele' }) courierName!: string | null;
-  @ApiPropertyOptional({ nullable: true }) courierPhone!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '+251911998877' }) courierPhone!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 'Motorbike · AA 3-1024' })
   vehicle!: string | null;
   @ApiProperty({ example: 'Sigma 24-70mm f/2.8 Art' }) productName!: string;
@@ -397,6 +432,7 @@ export class VendorTrackingResponse {
     description:
       'Confirm Delivery is available: the equipment has come back and is waiting for you to ' +
       'confirm you have it.',
+    example: false,
   })
   canConfirmReceipt!: boolean;
 }
@@ -404,18 +440,23 @@ export class VendorTrackingResponse {
 export class CompletionResponse {
   @ApiProperty({ example: 'ESK-10482' }) reference!: string;
   @ApiProperty({ example: 'Payment Received!' }) title!: string;
-  @ApiProperty() message!: string;
+  @ApiProperty({
+    example:
+      'Your payment confirmation has been recorded. This booking will automatically close in 24 hours.',
+  })
+  message!: string;
   @ApiProperty({ type: VendorBookingDetailResponse }) booking!: VendorBookingDetailResponse;
 }
 
 // ── Earnings ─────────────────────────────────────────────────────────────────
 
 export class VendorEarningsSummaryResponse {
-  @ApiProperty({ description: 'Lifetime paid earnings, in minor units.' })
+  @ApiProperty({ description: 'Lifetime paid earnings, in minor units.', example: 8500000 })
   totalRevenueMinor!: number;
-  @ApiProperty() todayEarningsMinor!: number;
-  @ApiProperty({ description: 'Approved but not yet paid.' }) upcomingMinor!: number;
-  @ApiProperty() currency!: string;
+  @ApiProperty({ example: 1500000 }) todayEarningsMinor!: number;
+  @ApiProperty({ description: 'Approved but not yet paid.', example: 3200000 })
+  upcomingMinor!: number;
+  @ApiProperty({ example: 'ETB' }) currency!: string;
 }
 
 export const EARNINGS_TABS = ['overview', 'upcoming', 'completed'] as const;
@@ -430,12 +471,16 @@ export class VendorEarningsQuery {
 export class VendorEarningItemResponse {
   @ApiProperty({ example: 'ESK-10482' }) reference!: string;
   @ApiProperty({ example: 'Aputure LS 600d Pro' }) productName!: string;
-  @ApiPropertyOptional({ nullable: true }) productImageUrl!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: '/api/v1/files/equipment/images/aputure-600d.jpg',
+  })
+  productImageUrl!: string | null;
   @ApiProperty({ example: '2026-08-24', description: 'Paid date, or the expected date.' })
   date!: string;
   @ApiProperty({ example: 'ESK-10482 · Aug 24, 2026' }) subtitle!: string;
-  @ApiProperty() earningsMinor!: number;
-  @ApiProperty({ enum: ['PAID', 'PENDING'] }) status!: 'PAID' | 'PENDING';
+  @ApiProperty({ example: 850000 }) earningsMinor!: number;
+  @ApiProperty({ enum: ['PAID', 'PENDING'], example: 'PAID' }) status!: 'PAID' | 'PENDING';
 }
 
 export class VendorEarningsResponse extends VendorEarningsSummaryResponse {
@@ -443,20 +488,28 @@ export class VendorEarningsResponse extends VendorEarningsSummaryResponse {
 }
 
 export class VendorSettlementResponse {
-  @ApiProperty() id!: string;
+  @ApiProperty({ format: 'uuid', example: 'd4eebc99-9c0b-4ef8-bb6d-6bb9bd380a55' }) id!: string;
   @ApiProperty({ example: 'ESK-10482' }) bookingReference!: string;
-  @ApiProperty() productName!: string;
-  @ApiPropertyOptional({ nullable: true }) productImageUrl!: string | null;
-  @ApiProperty() grossMinor!: number;
-  @ApiProperty() commissionMinor!: number;
-  @ApiProperty({ description: 'Withheld for damage or late return.' }) deductionMinor!: number;
-  @ApiProperty() netMinor!: number;
-  @ApiProperty() currency!: string;
-  @ApiProperty({ enum: SettlementStatus }) status!: SettlementStatus;
-  @ApiPropertyOptional({ nullable: true }) expectedAt!: Date | null;
-  @ApiPropertyOptional({ nullable: true }) paidAt!: Date | null;
+  @ApiProperty({ example: 'Sony FX3 Cinema Camera' }) productName!: string;
   @ApiPropertyOptional({
     nullable: true,
+    example: '/api/v1/files/equipment/images/sony-fx3.jpg',
+  })
+  productImageUrl!: string | null;
+  @ApiProperty({ example: 1000000 }) grossMinor!: number;
+  @ApiProperty({ example: 150000 }) commissionMinor!: number;
+  @ApiProperty({ description: 'Withheld for damage or late return.', example: 0 })
+  deductionMinor!: number;
+  @ApiProperty({ example: 850000 }) netMinor!: number;
+  @ApiProperty({ example: 'ETB' }) currency!: string;
+  @ApiProperty({ enum: SettlementStatus, example: SettlementStatus.PAID }) status!: SettlementStatus;
+  @ApiPropertyOptional({ nullable: true, example: '2026-08-31T18:00:00.000Z' })
+  expectedAt!: Date | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-09-01T10:00:00.000Z' })
+  paidAt!: Date | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'STL-BATCH-0042',
     description: 'Set when this line was rolled into a multi-booking payout.',
   })
   batchReference!: string | null;

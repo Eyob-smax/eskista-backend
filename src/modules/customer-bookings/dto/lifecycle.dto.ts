@@ -79,6 +79,7 @@ export class CustomerAgreementResponse {
   @ApiPropertyOptional({
     nullable: true,
     description: 'The scan the customer uploaded, once there is one.',
+    example: '/api/v1/files/bookings/ESK-10482/agreements/signed-copy.pdf',
   })
   signedCopyUrl!: string | null;
 
@@ -115,6 +116,7 @@ export class CustomerAgreementBodyResponse extends CustomerAgreementResponse {
     description:
       'The rendered contract text, exactly as frozen when issued. Display this — ' +
       're-rendering from the template would not match `contentHash`.',
+    example: '# Master Creative Talent Agreement\n\nThis agreement is made between Eskista and...',
   })
   body!: string;
 }
@@ -174,7 +176,11 @@ export class BankInstructionsResponse {
 }
 
 export class CollectionAccountResponse {
-  @ApiPropertyOptional({ nullable: true, description: 'Send as `collectionAccountId`.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Send as `collectionAccountId`.',
+    example: '550e8400-e29b-41d4-a716-446655440000',
+  })
   id!: string | null;
 
   @ApiProperty({ enum: ['TELEBIRR', 'BANK'] })
@@ -241,10 +247,6 @@ export class PaymentInstructionsResponse {
   })
   accounts!: CollectionAccountResponse[];
 
-  @ApiProperty({
-    description: 'False while an earlier submission is still being verified.',
-    example: true,
-  })
   @ApiPropertyOptional({
     nullable: true,
     example: 'ESK-INV-2026-000201',
@@ -254,9 +256,16 @@ export class PaymentInstructionsResponse {
   })
   invoiceNumber!: string | null;
 
-  @ApiProperty({ description: 'This booking is paid together with others on one invoice.' })
+  @ApiProperty({
+    description: 'This booking is paid together with others on one invoice.',
+    example: false,
+  })
   combinedInvoice!: boolean;
 
+  @ApiProperty({
+    description: 'False while an earlier submission is still being verified.',
+    example: true,
+  })
   canSubmit!: boolean;
 
   @ApiPropertyOptional({
@@ -425,7 +434,10 @@ export class IncidentPhotoResponse {
   @ApiProperty({ format: 'uuid' })
   id!: string;
 
-  @ApiProperty({ description: 'Authorised URL — parties to the booking and Eskista only.' })
+  @ApiProperty({
+    description: 'Authorised URL — parties to the booking and Eskista only.',
+    example: '/api/v1/files/bookings/ESK-10482/incidents/photo1.jpg',
+  })
   url!: string;
 }
 
@@ -445,12 +457,15 @@ export class IncidentResponse {
   @ApiProperty({ example: 'Reported', description: 'Ready-made status pill text.' })
   statusLabel!: string;
 
-  @ApiProperty()
+  @ApiProperty({
+    example: 'The lens hood cracked when the tripod tipped over on the second day.',
+  })
   description!: string;
 
   @ApiPropertyOptional({
     nullable: true,
     description: 'How Eskista resolved it. Null until they have.',
+    example: 'Repair covered by deposit deduction.',
   })
   resolution!: string | null;
 
@@ -460,7 +475,7 @@ export class IncidentResponse {
   @ApiProperty({ example: '2026-08-20T14:30:00.000Z' })
   createdAt!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ nullable: true, example: '2026-08-22T16:00:00.000Z' })
   resolvedAt!: string | null;
 }
 
@@ -495,7 +510,10 @@ export class ReviewResponse {
   @ApiProperty({ example: 5 })
   rating!: number;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Delivered on time and in perfect condition.',
+  })
   comment!: string | null;
 
   @ApiProperty({ example: '2026-08-23T09:00:00.000Z' })
@@ -595,6 +613,7 @@ export class AttachmentResponse {
 
   @ApiProperty({
     description: 'Authorised URL — the customer, the talent on the booking, and Eskista only.',
+    example: '/api/v1/files/attachments/moodboard.pdf',
   })
   url!: string;
 

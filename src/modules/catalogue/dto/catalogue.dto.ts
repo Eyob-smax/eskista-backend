@@ -62,6 +62,7 @@ export class BrowseEquipmentQuery extends CursorPaginationQuery {
   @ApiPropertyOptional({
     description: 'Filter by category id. Take these from `GET /catalogue/categories`.',
     format: 'uuid',
+    example: '550e8400-e29b-41d4-a716-446655440000',
   })
   @IsOptional()
   @IsUUID()
@@ -151,7 +152,11 @@ export class BrowseTalentQuery extends CursorPaginationQuery {
   @Transform(trim)
   q?: string;
 
-  @ApiPropertyOptional({ format: 'uuid', description: 'Talent category id.' })
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Talent category id.',
+    example: '550e8400-e29b-41d4-a716-446655440001',
+  })
   @IsOptional()
   @IsUUID()
   categoryId?: string;
@@ -177,7 +182,7 @@ export class BrowseTalentQuery extends CursorPaginationQuery {
   )
   professions?: string[];
 
-  @ApiPropertyOptional({ enum: ExperienceLevel })
+  @ApiPropertyOptional({ enum: ExperienceLevel, example: ExperienceLevel.SENIOR })
   @IsOptional()
   @IsEnum(ExperienceLevel)
   experienceLevel?: ExperienceLevel;
@@ -273,7 +278,11 @@ export class CategoryResponse {
   })
   itemCount!: number;
 
-  @ApiPropertyOptional({ nullable: true, description: 'Set for a subcategory.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Set for a subcategory.',
+    example: '550e8400-e29b-41d4-a716-446655440000',
+  })
   parentId!: string | null;
 
   @ApiProperty({
@@ -299,7 +308,10 @@ export class CatalogueVendorResponse {
   @ApiProperty({ example: 'Ethiopian Visuals' })
   businessName!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'https://cdn.eskista.et/logos/ethiopian-visuals.jpg',
+  })
   logoUrl!: string | null;
 
   @ApiProperty({ example: 'Addis Ababa' })
@@ -364,7 +376,10 @@ export class EquipmentCardResponse {
   @ApiProperty({ example: 'Cameras' })
   categoryName!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'https://cdn.eskista.et/listings/sony-fx3.jpg',
+  })
   imageUrl!: string | null;
 
   @ApiProperty({
@@ -452,7 +467,7 @@ export class EquipmentDetailResponse extends EquipmentCardResponse {
   @ApiProperty({ type: [String], example: ['E-mount', 'EF via adapter'] })
   compatibility!: string[];
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({ nullable: true, example: 'Sony NP-FZ100' })
   powerBattery!: string | null;
 
   @ApiProperty({ enum: ConditionGrade })
@@ -624,7 +639,10 @@ export class TalentServiceResponse {
   @ApiProperty({ example: 'Full Day Commercial' })
   title!: string;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: '10-hour shoot with sound & lighting kit',
+  })
   description!: string | null;
 
   @ApiProperty({ enum: PricingModel, example: PricingModel.PER_DAY })
@@ -654,13 +672,24 @@ export class PortfolioItemResponse {
   })
   clientOrAgency!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Lead camera operator for regional commercial campaign',
+  })
   description!: string | null;
 
-  @ApiPropertyOptional({ nullable: true, description: 'Stored image, when one was uploaded.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Stored image, when one was uploaded.',
+    example: 'https://cdn.eskista.et/portfolio/item1.jpg',
+  })
   imageUrl!: string | null;
 
-  @ApiPropertyOptional({ nullable: true, description: 'External link, e.g. YouTube or Vimeo.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'External link, e.g. YouTube or Vimeo.',
+    example: 'https://vimeo.com/12345678',
+  })
   externalUrl!: string | null;
 
   @ApiPropertyOptional({ nullable: true, example: 'Director of Photography' })
@@ -687,7 +716,10 @@ export class TalentCardResponse {
   })
   headline!: string | null;
 
-  @ApiPropertyOptional({ nullable: true })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'https://cdn.eskista.et/avatars/dawit.jpg',
+  })
   avatarUrl!: string | null;
 
   @ApiProperty({ example: 'Lideta Kolfe, Addis Ababa' })

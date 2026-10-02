@@ -11,7 +11,8 @@ export class TimelineStepResponse {
   @ApiProperty({ example: 'PAYMENT' }) key!: string;
   @ApiProperty({ example: 'Payment' }) label!: string;
   @ApiProperty({ enum: ['DONE', 'IN_PROGRESS', 'PENDING'] }) state!: string;
-  @ApiPropertyOptional({ nullable: true }) occurredAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-09-28T14:30:00.000Z' })
+  occurredAt!: string | null;
 }
 
 export class TalentActionResponse {
@@ -27,7 +28,7 @@ export class TalentActionResponse {
   })
   key!: string;
   @ApiProperty({ example: 'Download & Sign Agreement' }) label!: string;
-  @ApiProperty() primary!: boolean;
+  @ApiProperty({ example: true }) primary!: boolean;
 }
 
 export class ListEngagementsQuery {
@@ -63,7 +64,11 @@ export class EngagementCardResponse {
 
 export class EngagementDetailResponse extends EngagementCardResponse {
   @ApiPropertyOptional({ enum: ProjectType, nullable: true }) projectType!: ProjectType | null;
-  @ApiPropertyOptional({ nullable: true }) projectDescription!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Multi-camera corporate interview and factory B-roll',
+  })
+  projectDescription!: string | null;
   @ApiProperty({ enum: EngagementModel }) engagementModel!: EngagementModel;
   @ApiPropertyOptional({ nullable: true, example: 3 }) headcount!: number | null;
   @ApiPropertyOptional({
@@ -77,9 +82,10 @@ export class EngagementDetailResponse extends EngagementCardResponse {
     description:
       'Parking and access instructions. Withheld until the client has paid and the booking ' +
       'is confirmed; `null` with `locationNotesLocked: true` before then.',
+    example: 'Security gate #2, park in visitor bays',
   })
   locationNotes!: string | null;
-  @ApiProperty() locationNotesLocked!: boolean;
+  @ApiProperty({ example: false }) locationNotesLocked!: boolean;
   @ApiProperty({ type: [TimelineStepResponse], description: 'The same six steps the client sees.' })
   timeline!: TimelineStepResponse[];
   @ApiProperty({ type: [AttachmentResponse], description: 'The client’s reference files.' })
@@ -93,7 +99,8 @@ export class EngagementDetailResponse extends EngagementCardResponse {
   })
   agreement!: CustomerAgreementResponse | null;
   @ApiProperty({ type: [TalentActionResponse] }) actions!: TalentActionResponse[];
-  @ApiProperty({ description: 'Eskista’s number, for Contact Eskista.' }) supportPhone!: string;
+  @ApiProperty({ description: 'Eskista’s number, for Contact Eskista.', example: '+251911000000' })
+  supportPhone!: string;
 
   @ApiPropertyOptional({
     type: () => TalentPayoutResponse,
@@ -112,33 +119,42 @@ export class EngagementDetailResponse extends EngagementCardResponse {
 export class TalentPayoutResponse {
   @ApiProperty({ enum: ['PENDING', 'IN_BATCH', 'PAID', 'ON_HOLD'] }) status!: string;
   @ApiProperty({ example: 'Pending' }) statusLabel!: string;
-  @ApiProperty({ description: 'Your rate in full.' }) amountMinor!: number;
-  @ApiProperty() currency!: string;
-  @ApiPropertyOptional({ nullable: true }) expectedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) paidAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) payoutReference!: string | null;
+  @ApiProperty({ description: 'Your rate in full.', example: 900000 }) amountMinor!: number;
+  @ApiProperty({ example: 'ETB' }) currency!: string;
+  @ApiPropertyOptional({ nullable: true, example: '2026-10-05T12:00:00.000Z' })
+  expectedAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-10-04T16:20:00.000Z' })
+  paidAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'STL-0021' }) payoutReference!: string | null;
   @ApiPropertyOptional({
     nullable: true,
     example: 'Telebirr •••• 3344',
     description: 'Where Eskista sent it.',
   })
   paidTo!: string | null;
-  @ApiPropertyOptional({ nullable: true, description: 'You confirmed it arrived.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'You confirmed it arrived.',
+    example: '2026-10-04T17:00:00.000Z',
+  })
   confirmedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true, description: 'You reported it missing.' })
+  @ApiPropertyOptional({ nullable: true, description: 'You reported it missing.', example: null })
   disputedAt!: string | null;
 }
 
 export class TalentDocumentLinkResponse {
   @ApiProperty({ enum: ['SETTLEMENT_RECORD'] }) kind!: string;
   @ApiProperty({ example: 'Settlement Record' }) label!: string;
-  @ApiProperty() url!: string;
+  @ApiProperty({ example: 'https://files.eskista.com/settlements/STL-0021.pdf' }) url!: string;
   @ApiProperty({ example: 'PDF' }) format!: string;
 }
 
 export class TalentCompletionResponse {
   @ApiProperty({ example: 'Payment Received!' }) title!: string;
-  @ApiProperty() message!: string;
+  @ApiProperty({
+    example: 'Your payout of ETB 9,000.00 has been confirmed and sent to your Telebirr account.',
+  })
+  message!: string;
   @ApiProperty({ type: () => EngagementDetailResponse }) engagement!: EngagementDetailResponse;
 }
 
@@ -166,8 +182,10 @@ export class TalentDashboardResponse {
   })
   newOpportunityTypes!: string[];
   @ApiProperty({ example: 78 }) completionPercent!: number;
-  @ApiProperty({ description: 'Show the Complete Profile button.' }) showCompleteProfile!: boolean;
-  @ApiPropertyOptional({ nullable: true }) profileUrl!: string | null;
+  @ApiProperty({ description: 'Show the Complete Profile button.', example: true })
+  showCompleteProfile!: boolean;
+  @ApiPropertyOptional({ nullable: true, example: 'https://eskista.com/talent/dawit-media' })
+  profileUrl!: string | null;
   @ApiProperty({ type: [HireRequestResponse], description: 'The five newest pending requests.' })
   hireRequests!: HireRequestResponse[];
   @ApiProperty({
@@ -183,7 +201,8 @@ export class EarningItemResponse {
   @ApiProperty({ example: '2026-10-02' }) date!: string;
   @ApiProperty({ example: 900000 }) earningsMinor!: number;
   @ApiProperty({ enum: ['UPCOMING', 'PENDING', 'PAID'] }) status!: 'UPCOMING' | 'PENDING' | 'PAID';
-  @ApiPropertyOptional({ nullable: true }) paidAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-10-03T11:00:00.000Z' })
+  paidAt!: string | null;
 }
 
 export class TalentEarningsResponse {
@@ -203,7 +222,11 @@ export class CvSectionEntry {
   @ApiPropertyOptional({ nullable: true, example: 'Tigist Media House' })
   subtitle!: string | null;
   @ApiPropertyOptional({ nullable: true, example: '2020 – Present' }) period!: string | null;
-  @ApiPropertyOptional({ nullable: true }) description!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Shot on ARRI Alexa Mini LF across multiple locations',
+  })
+  description!: string | null;
 }
 
 export class TalentCvResponse {
@@ -211,20 +234,27 @@ export class TalentCvResponse {
   @ApiProperty({ example: 'Dawit Bekele' }) name!: string;
   @ApiPropertyOptional({ nullable: true, example: 'Cinematographer · Colorist' })
   headline!: string | null;
-  @ApiPropertyOptional({ nullable: true }) avatarUrl!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'https://cdn.eskista.com/avatars/dawit.jpg' })
+  avatarUrl!: string | null;
   @ApiProperty({ example: 'Addis Ababa' }) location!: string;
   @ApiPropertyOptional({
     nullable: true,
     description: 'On your own CV only. Clients never see your contact details.',
+    example: 'dawit@media.et',
   })
   email!: string | null;
-  @ApiPropertyOptional({ nullable: true }) phone!: string | null;
-  @ApiPropertyOptional({ nullable: true }) bio!: string | null;
-  @ApiProperty({ type: [String] }) professions!: string[];
-  @ApiProperty({ type: [String] }) skills!: string[];
-  @ApiProperty({ type: [String] }) languages!: string[];
+  @ApiPropertyOptional({ nullable: true, example: '+251911223344' }) phone!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Experienced cinematographer specializing in narrative and commercial production.',
+  })
+  bio!: string | null;
+  @ApiProperty({ type: [String], example: ['Cinematographer', 'Colorist'] }) professions!: string[];
+  @ApiProperty({ type: [String], example: ['DaVinci Resolve', 'Lighting Design'] }) skills!: string[];
+  @ApiProperty({ type: [String], example: ['Amharic', 'English'] }) languages!: string[];
   @ApiProperty({ type: [CvSectionEntry] }) experience!: CvSectionEntry[];
   @ApiProperty({ type: [CvSectionEntry] }) education!: CvSectionEntry[];
   @ApiProperty({ type: [CvSectionEntry] }) portfolio!: CvSectionEntry[];
-  @ApiPropertyOptional({ nullable: true }) profileUrl!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'https://eskista.com/talent/dawit-media' })
+  profileUrl!: string | null;
 }

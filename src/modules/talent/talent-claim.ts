@@ -9,11 +9,11 @@ import {
   Post,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import { ApiOkResponse, ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { Transform } from 'class-transformer';
 import { Matches } from 'class-validator';
-import { ApiStandardErrors } from '../../common/dto/api-docs';
+import { ApiEndpoint, ApiStandardErrors } from '../../common/dto/api-docs';
 import { CurrentUser } from '../auth/auth.decorators';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -29,7 +29,7 @@ export class ClaimProfileDto {
 export class ClaimResultResponse {
   @ApiProperty({ format: 'uuid' }) talentProfileId!: string;
   @ApiProperty({ example: 'Dawit Bekele' }) displayName!: string;
-  @ApiProperty({ description: 'Where to go next: VERIFIED profiles are live already.' })
+  @ApiProperty({ description: 'Where to go next: VERIFIED profiles are live already.', example: 'VERIFIED' })
   status!: string;
 }
 
@@ -86,7 +86,7 @@ export class TalentClaimService {
   }
 }
 
-@ApiTags('talent')
+@ApiTags('talent · claim')
 @Controller({ path: 'talent', version: '1' })
 export class TalentClaimController {
   constructor(private readonly claims: TalentClaimService) {}
@@ -96,10 +96,24 @@ export class TalentClaimController {
   // A code is about 40 bits and takes over a profile, so guessing is throttled hard: five
   // tries a minute per client.
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Claim a profile Eskista registered for you',
-    description:
-      'Enter the code from Eskista. Any signed-in account without a talent profile can claim.',
+    does: 'Transfers an operator pre-registered talent profile to the signed-in user account using a one-time verification code.',
+    behind: [
+      'Validates claim code against unexpired TalentProfile records.',
+      'Reassigns talentProfile, agreement, and notification rows to the signed-in user.',
+      'Grants TALENT role and activates TALENT activeRole in a single transaction.',
+      'Deletes the temporary stand-in user record.',
+    ],
+    seenBy: [
+      'Talent onboarding: automatically unlocks the verified talent profile and dashboard.',
+    ],
+    rules: [
+      '400 if claim code format is invalid (must look like K7Q2-MX9P).',
+      '401 if unauthenticated.',
+      '404 if claim code is expired or invalid.',
+      '409 if the signed-in user already has a talent profile.',
+    ],
   })
   @ApiOkResponse({ type: ClaimResultResponse })
   @ApiStandardErrors({

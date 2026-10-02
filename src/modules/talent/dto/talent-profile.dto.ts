@@ -96,6 +96,7 @@ export class UpdateTalentProfileDto {
   @ApiPropertyOptional({
     description: '"Describe your background, experience, and what you do best…"',
     maxLength: 2000,
+    example: 'Award-winning cinematographer with 8 years of experience on commercials, narrative films, and documentaries.',
   })
   @IsOptional()
   @IsString()
@@ -106,6 +107,7 @@ export class UpdateTalentProfileDto {
   @ApiPropertyOptional({
     description: 'Short line under the name on cards — "Cinematographer · commercials".',
     maxLength: 120,
+    example: 'Cinematographer · Commercials & Narrative',
   })
   @IsOptional()
   @IsString()
@@ -141,6 +143,7 @@ export class UpdateTalentProfileDto {
 
   @ApiPropertyOptional({
     description: 'The terms checkbox. Send `true` once; the acceptance time is recorded.',
+    example: true,
   })
   @IsOptional()
   @IsBoolean()
@@ -223,6 +226,7 @@ export class UpdateTalentProfileDto {
 
   @ApiPropertyOptional({
     description: 'The talent’s own switch to hide from the directory, e.g. mid-shoot.',
+    example: true,
   })
   @IsOptional()
   @IsBoolean()
@@ -287,7 +291,20 @@ export class ExperienceItemDto {
 }
 
 export class ReplaceExperienceDto {
-  @ApiProperty({ type: [ExperienceItemDto], description: 'The whole list, in display order.' })
+  @ApiProperty({
+    type: [ExperienceItemDto],
+    description: 'The whole list, in display order.',
+    example: [
+      {
+        title: 'Senior Cinematographer',
+        company: 'Tigist Media House',
+        startDate: '2020-01-01',
+        endDate: '2023-12-31',
+        isCurrent: false,
+        description: 'Lead camera operator on commercial sets',
+      },
+    ],
+  })
   @IsArray()
   @ArrayMaxSize(20)
   @ValidateNested({ each: true })
@@ -333,7 +350,18 @@ export class EducationItemDto {
 }
 
 export class ReplaceEducationDto {
-  @ApiProperty({ type: [EducationItemDto] })
+  @ApiProperty({
+    type: [EducationItemDto],
+    example: [
+      {
+        institution: 'Addis Ababa University',
+        fieldOfStudy: 'Film & Television',
+        qualification: 'BSc',
+        startYear: 2016,
+        endYear: 2020,
+      },
+    ],
+  })
   @IsArray()
   @ArrayMaxSize(10)
   @ValidateNested({ each: true })
@@ -373,6 +401,13 @@ export class ReplaceReferencesDto {
   @ApiProperty({
     type: [ReferenceItemDto],
     description: 'At least two are needed to submit. Seen only by Eskista, never public.',
+    example: [
+      {
+        name: 'Hana Girma',
+        contact: '+251911556677',
+        relationship: 'Producer, Ethio Telecom campaign',
+      },
+    ],
   })
   @IsArray()
   @ArrayMaxSize(5)
@@ -440,7 +475,10 @@ export class TalentServiceDto {
   @Transform(trim)
   title!: string;
 
-  @ApiPropertyOptional({ maxLength: 500 })
+  @ApiPropertyOptional({
+    maxLength: 500,
+    example: '10-hour full day commercial shoot with lighting package',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -460,7 +498,11 @@ export class TalentServiceDto {
   @Min(1)
   priceMinor!: number;
 
-  @ApiPropertyOptional({ format: 'uuid', description: 'Talent category, for the directory.' })
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Talent category, for the directory.',
+    example: '550e8400-e29b-41d4-a716-446655440003',
+  })
   @IsOptional()
   @IsString()
   categoryId?: string;
@@ -537,28 +579,30 @@ export class ReviewChecklistResponse {
 
 export class ExperienceResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
-  @ApiProperty() title!: string;
-  @ApiPropertyOptional({ nullable: true }) company!: string | null;
-  @ApiPropertyOptional({ nullable: true }) startDate!: string | null;
-  @ApiPropertyOptional({ nullable: true }) endDate!: string | null;
-  @ApiProperty() isCurrent!: boolean;
-  @ApiPropertyOptional({ nullable: true }) description!: string | null;
+  @ApiProperty({ example: 'Senior Cinematographer' }) title!: string;
+  @ApiPropertyOptional({ nullable: true, example: 'Tigist Media House' }) company!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2020-01-01' }) startDate!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2023-12-31' }) endDate!: string | null;
+  @ApiProperty({ example: false }) isCurrent!: boolean;
+  @ApiPropertyOptional({ nullable: true, example: 'Lead camera operator on commercial sets' })
+  description!: string | null;
 }
 
 export class EducationResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
-  @ApiProperty() institution!: string;
-  @ApiPropertyOptional({ nullable: true }) fieldOfStudy!: string | null;
-  @ApiPropertyOptional({ nullable: true }) qualification!: string | null;
-  @ApiPropertyOptional({ nullable: true }) startYear!: number | null;
-  @ApiPropertyOptional({ nullable: true }) endYear!: number | null;
+  @ApiProperty({ example: 'Addis Ababa University' }) institution!: string;
+  @ApiPropertyOptional({ nullable: true, example: 'Film & Television' }) fieldOfStudy!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'BSc' }) qualification!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 2016 }) startYear!: number | null;
+  @ApiPropertyOptional({ nullable: true, example: 2020 }) endYear!: number | null;
 }
 
 export class ReferenceResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
-  @ApiProperty() name!: string;
-  @ApiPropertyOptional({ nullable: true }) contact!: string | null;
-  @ApiPropertyOptional({ nullable: true }) relationship!: string | null;
+  @ApiProperty({ example: 'Hana Girma' }) name!: string;
+  @ApiPropertyOptional({ nullable: true, example: '+251911556677' }) contact!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Producer, Ethio Telecom campaign' })
+  relationship!: string | null;
 }
 
 export class PortfolioResponse {
@@ -569,59 +613,91 @@ export class PortfolioResponse {
   role!: string | null;
   @ApiPropertyOptional({ nullable: true, example: '2026-08-16' }) startDate!: string | null;
   @ApiPropertyOptional({ nullable: true, example: '2026-08-30' }) endDate!: string | null;
-  @ApiPropertyOptional({ nullable: true }) description!: string | null;
-  @ApiPropertyOptional({ nullable: true, description: 'Cover image.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'High-end fashion commercial campaign shot on RED Komodo',
+  })
+  description!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Cover image.',
+    example: 'https://cdn.eskista.com/portfolio/cover1.jpg',
+  })
   coverUrl!: string | null;
-  @ApiPropertyOptional({ nullable: true }) workLink!: string | null;
-  @ApiProperty() sortOrder!: number;
+  @ApiPropertyOptional({ nullable: true, example: 'https://youtube.com/watch?v=abc' })
+  workLink!: string | null;
+  @ApiProperty({ example: 0 }) sortOrder!: number;
 }
 
 export class TalentServiceResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
-  @ApiProperty() title!: string;
-  @ApiPropertyOptional({ nullable: true }) description!: string | null;
+  @ApiProperty({ example: 'Full Day Commercial' }) title!: string;
+  @ApiPropertyOptional({ nullable: true, example: '10-hour shoot with lighting setup' })
+  description!: string | null;
   @ApiProperty({ enum: PricingModel }) pricingModel!: PricingModel;
-  @ApiProperty({ description: 'What the talent is paid.' }) priceMinor!: number;
-  @ApiProperty() isActive!: boolean;
+  @ApiProperty({ description: 'What the talent is paid.', example: 450000 }) priceMinor!: number;
+  @ApiProperty({ example: true }) isActive!: boolean;
 }
 
 export class TalentDocumentResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ example: 'FAYDA_ID' }) type!: string;
   @ApiProperty({ example: 'PENDING' }) status!: string;
-  @ApiProperty() fileName!: string;
-  @ApiProperty({ description: 'Readable by the talent and Eskista only.' }) url!: string;
-  @ApiPropertyOptional({ nullable: true }) rejectionReason!: string | null;
-  @ApiProperty() uploadedAt!: string;
+  @ApiProperty({ example: 'fayda_id_front.pdf' }) fileName!: string;
+  @ApiProperty({
+    description: 'Readable by the talent and Eskista only.',
+    example: 'https://files.eskista.com/talent-docs/doc-1.pdf',
+  })
+  url!: string;
+  @ApiPropertyOptional({ nullable: true, example: null }) rejectionReason!: string | null;
+  @ApiProperty({ example: '2026-09-01T12:00:00.000Z' }) uploadedAt!: string;
 }
 
 export class TalentProfileResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ enum: VerificationStatus }) status!: VerificationStatus;
-  @ApiPropertyOptional({ nullable: true, description: 'Why Eskista sent it back, if it did.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'Why Eskista sent it back, if it did.',
+    example: null,
+  })
   rejectionReason!: string | null;
 
-  @ApiProperty() displayName!: string;
-  @ApiPropertyOptional({ nullable: true }) headline!: string | null;
-  @ApiPropertyOptional({ nullable: true }) phone!: string | null;
-  @ApiPropertyOptional({ nullable: true }) email!: string | null;
-  @ApiProperty() location!: string;
-  @ApiPropertyOptional({ nullable: true }) yearsExperience!: number | null;
+  @ApiProperty({ example: 'Dawit Bekele' }) displayName!: string;
+  @ApiPropertyOptional({ nullable: true, example: 'Cinematographer · Commercials' })
+  headline!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '+251911223344' }) phone!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'dawit@media.et' }) email!: string | null;
+  @ApiProperty({ example: 'Addis Ababa' }) location!: string;
+  @ApiPropertyOptional({ nullable: true, example: 8 }) yearsExperience!: number | null;
   @ApiProperty({ enum: ExperienceLevel }) experienceLevel!: ExperienceLevel;
-  @ApiPropertyOptional({ nullable: true }) bio!: string | null;
-  @ApiPropertyOptional({ nullable: true, description: 'What the talent is paid per day.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Award-winning cinematographer with 8 years of experience.',
+  })
+  bio!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'What the talent is paid per day.',
+    example: 300000,
+  })
   baseRateMinor!: number | null;
   @ApiProperty({ enum: PricingModel }) pricingModel!: PricingModel;
-  @ApiProperty({ type: [String] }) languages!: string[];
-  @ApiPropertyOptional({ nullable: true }) avatarUrl!: string | null;
-  @ApiPropertyOptional({ nullable: true }) termsAcceptedAt!: string | null;
+  @ApiProperty({ type: [String], example: ['Amharic', 'English'] }) languages!: string[];
+  @ApiPropertyOptional({ nullable: true, example: 'https://cdn.eskista.com/avatars/dawit.jpg' })
+  avatarUrl!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-08-01T10:00:00.000Z' })
+  termsAcceptedAt!: string | null;
 
-  @ApiProperty({ type: [String] }) professions!: string[];
-  @ApiProperty({ type: [String] }) specializations!: string[];
+  @ApiProperty({ type: [String], example: ['Cinematographer', 'Colorist'] })
+  professions!: string[];
+  @ApiProperty({ type: [String], example: ['Commercial', 'Music Video'] })
+  specializations!: string[];
   @ApiProperty({ enum: Weekday, isArray: true }) workingDays!: Weekday[];
   @ApiPropertyOptional({ enum: TalentDayType, nullable: true }) dayType!: TalentDayType | null;
-  @ApiPropertyOptional({ nullable: true }) highestEducation!: string | null;
-  @ApiProperty({ type: [String] }) skills!: string[];
+  @ApiPropertyOptional({ nullable: true, example: 'BA Film Production' })
+  highestEducation!: string | null;
+  @ApiProperty({ type: [String], example: ['DaVinci Resolve', 'Drone Operation'] }) skills!: string[];
   @ApiProperty({ enum: CvTemplate }) cvTemplate!: CvTemplate;
 
   @ApiPropertyOptional({ nullable: true, example: 'dawit-media' }) slug!: string | null;
@@ -631,7 +707,7 @@ export class TalentProfileResponse {
     example: 'https://eskista.com/talent/dawit-media',
   })
   profileUrl!: string | null;
-  @ApiProperty() isAvailableForHire!: boolean;
+  @ApiProperty({ example: true }) isAvailableForHire!: boolean;
 
   @ApiPropertyOptional({
     nullable: true,
@@ -655,9 +731,10 @@ export class TalentProfileResponse {
   @ApiProperty({
     type: [String],
     description: 'What still stops submission. Empty means `canSubmit`.',
+    example: [],
   })
   submitBlockers!: string[];
-  @ApiProperty() canSubmit!: boolean;
+  @ApiProperty({ example: true }) canSubmit!: boolean;
   @ApiProperty({ type: ReviewChecklistResponse }) reviewChecklist!: ReviewChecklistResponse;
 }
 
@@ -710,6 +787,10 @@ export class ReorderPortfolioDto {
     type: [String],
     format: 'uuid',
     description: 'Every portfolio item id, in the order to show them.',
+    example: [
+      '550e8400-e29b-41d4-a716-446655440000',
+      '550e8400-e29b-41d4-a716-446655440001',
+    ],
   })
   @IsArray()
   @ArrayMaxSize(20)
@@ -718,7 +799,7 @@ export class ReorderPortfolioDto {
 }
 
 export class UpdateTalentServiceDto {
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Full Day Commercial' })
   @IsOptional()
   @IsString()
   @MinLength(2)
@@ -726,7 +807,7 @@ export class UpdateTalentServiceDto {
   @Transform(trim)
   title?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: '10-hour shoot with lighting' })
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -738,14 +819,14 @@ export class UpdateTalentServiceDto {
   @IsEnum(PricingModel)
   pricingModel?: PricingModel;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 450000 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   priceMinor?: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: true })
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
@@ -762,7 +843,7 @@ export class BlockedDateResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ example: '2026-10-10' }) startDate!: string;
   @ApiProperty({ example: '2026-10-12' }) endDate!: string;
-  @ApiPropertyOptional({ nullable: true }) reason!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Travelling' }) reason!: string | null;
 }
 
 export class CommittedDateResponse {
@@ -775,7 +856,7 @@ export class CommittedDateResponse {
 export class TalentAvailabilityResponse {
   @ApiProperty({ enum: Weekday, isArray: true }) workingDays!: Weekday[];
   @ApiPropertyOptional({ enum: TalentDayType, nullable: true }) dayType!: TalentDayType | null;
-  @ApiProperty() isAvailableForHire!: boolean;
+  @ApiProperty({ example: true }) isAvailableForHire!: boolean;
   @ApiProperty({ type: [BlockedDateResponse], description: '"Blocked" on the calendar.' })
   blockedDates!: BlockedDateResponse[];
   @ApiProperty({

@@ -17,21 +17,18 @@ import {
 import type { Response } from 'express';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import {
-  ApiBadRequestResponse,
   ApiBearerAuth,
   ApiBody,
   ApiConflictResponse,
   ApiConsumes,
   ApiCreatedResponse,
   ApiNoContentResponse,
-  ApiNotFoundResponse,
   ApiOkResponse,
-  ApiOperation,
   ApiParam,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { IncidentPhase, IncidentType, PaymentMethod } from '@prisma/client';
+import { ApiEndpoint, ApiStandardErrors } from '../../common/dto/api-docs';
 import type { UploadedFile } from '../../common/upload';
 import { CurrentUser } from '../auth/auth.decorators';
 import { BookingLifecycleService } from './booking-lifecycle.service';
@@ -52,11 +49,30 @@ import {
   UploadSignedCopyDto,
 } from './dto/lifecycle.dto';
 
+const BOOKING_REF_PARAM = {
+  name: 'reference',
+  description: 'The booking reference.',
+  example: 'ESK-10482',
+};
+
+const AGREEMENT_ID_PARAM = {
+  name: 'agreementId',
+  format: 'uuid',
+  description: 'Agreement ID (UUID).',
+  example: '550e8400-e29b-41d4-a716-446655440000',
+};
+
+const ATTACHMENT_ID_PARAM = {
+  name: 'attachmentId',
+  format: 'uuid',
+  description: 'Attachment ID (UUID).',
+  example: '550e8400-e29b-41d4-a716-446655440001',
+};
+
 @ApiTags('customer · booking lifecycle')
 @ApiBearerAuth()
-@ApiUnauthorizedResponse({ description: 'No valid session.' })
-@ApiNotFoundResponse({ description: 'No booking with that reference belongs to you.' })
-@ApiParam({ name: 'reference', example: 'ESK-10482', description: 'The booking reference.' })
+@ApiStandardErrors({ notFound: 'No booking with that reference belongs to you.' })
+@ApiParam(BOOKING_REF_PARAM)
 @Controller({ path: 'customer/bookings/:reference', version: '1' })
 export class BookingLifecycleController {
   constructor(private readonly lifecycle: BookingLifecycleService) {}
@@ -64,15 +80,20 @@ export class BookingLifecycleController {
   // ── Agreements ─────────────────────────────────────────────────────────────
 
   @Get('agreements')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'List the agreements on this booking',
-    description: `
-Usually one — the Eskista ↔ Customer rental agreement for this booking.
-
-\`awaitingCustomer\` is the flag to branch on: it is true while the next move is theirs,
-covering both "never uploaded" and "rejected, upload a better scan". \`statusLabel\` gives
-the status pill text already worded.
-`.trim(),
+    does: 'Returns contract agreements associated with this booking, indicating whether customer action is required.',
+    behind: [
+      'Queries agreements linked to the booking reference.',
+      'Derives awaitingCustomer status and human-readable status labels.',
+    ],
+    seenBy: [
+      'Customer sees the agreements card and current signature review status.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if booking reference not found.',
+    ],
   })
   @ApiOkResponse({ type: [CustomerAgreementResponse] })
   listAgreements(
@@ -83,20 +104,22 @@ the status pill text already worded.
   }
 
   @Get('agreements/:agreementId')
-  @ApiOperation({
+  @ApiParam(AGREEMENT_ID_PARAM)
+  @ApiEndpoint({
     summary: 'Read one agreement in full',
-    description: `
-Returns the contract text exactly as frozen when it was issued, plus \`documentUrl\` for
-the **Download Agreement (PDF)** button.
-
-**Render \`body\`, do not re-render from a template.** \`contentHash\` is the SHA-256 of
-these exact bytes; anything regenerated later would not match, and the hash is what proves
-what was agreed if it is ever disputed.
-
-\`governedBy\` is "Ethiopian Law", for the agreement header.
-`.trim(),
+    does: 'Returns the complete frozen legal agreement text, terms, and SHA-256 content verification hash.',
+    behind: [
+      'Fetches agreement details and frozen markdown body bytes.',
+      'Confirms contentHash against the issued document text.',
+    ],
+    seenBy: [
+      'Customer reads the contract terms on screen before downloading or signing.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if agreement ID or booking reference not found.',
+    ],
   })
-  @ApiParam({ name: 'agreementId', format: 'uuid' })
   @ApiOkResponse({ type: CustomerAgreementBodyResponse })
   getAgreement(
     @CurrentUser('id') userId: string,
@@ -107,23 +130,22 @@ what was agreed if it is ever disputed.
   }
 
   @Get('agreements/:agreementId/pdf')
-  @ApiOperation({
+  @ApiParam(AGREEMENT_ID_PARAM)
+  @ApiEndpoint({
     summary: 'Download the agreement as a PDF',
-    description: `
-Backs **Download Agreement (PDF)**.
-
-Streams an A4 contract with the header block, the full clause text, a signature line for
-each party, and the content hash in the footer. Print it, sign it by hand, then upload the
-scan through \`POST .../signed-copy\`.
-
-Rendered on demand from the **frozen body**, never re-rendered from the template — so the
-PDF always matches the \`contentHash\` that was issued. The hash is printed on the page so
-a signed paper copy can be checked against the bytes the parties agreed to.
-
-Returns \`application/pdf\` as an attachment.
-`.trim(),
+    does: 'Renders and streams an A4 contract PDF containing agreement terms, signature blocks, and verification hash.',
+    behind: [
+      'Generates an A4 PDF document on-demand from the frozen contract body.',
+      'Sets Content-Disposition attachment headers with appropriate no-store caching.',
+    ],
+    seenBy: [
+      'Customer downloads and prints the official agreement PDF for physical signature.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if agreement not found.',
+    ],
   })
-  @ApiParam({ name: 'agreementId', format: 'uuid' })
   @ApiOkResponse({
     description: 'The rendered contract.',
     content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } },
@@ -144,7 +166,6 @@ Returns \`application/pdf\` as an attachment.
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${filename}"`,
       'X-Content-Type-Options': 'nosniff',
-      // A contract is not something to leave in a shared cache.
       'Cache-Control': 'private, no-store',
     });
 
@@ -155,25 +176,26 @@ Returns \`application/pdf\` as an attachment.
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({
+  @ApiParam(AGREEMENT_ID_PARAM)
+  @ApiEndpoint({
     summary: 'Upload the signed agreement',
-    description: `
-Backs **Upload Scanned Agreement**.
-
-Contracts are signed on paper: download, print, sign by hand, photograph or scan, upload
-here. There is no signature pad — that flow was replaced in September 2026.
-
-The upload moves the agreement to \`UNDER_REVIEW\`. Eskista checks the scan is the right
-document, legible, and actually signed, then approves or rejects it.
-
-**Uploading unlocks payment.** Eskista's review runs in parallel rather than holding the
-customer up; if the scan is rejected, payment closes again until a replacement is uploaded.
-
-Re-uploading over a \`REJECTED\` scan is expected and clears the previous rejection reason.
-Re-uploading over an \`APPROVED\` or \`UNDER_REVIEW\` one returns **409**.
-
-PNG, JPEG, WebP or PDF, up to 10 MB.
-`.trim(),
+    does: 'Uploads a scanned copy or photo of the physically signed contract to submit for Eskista review.',
+    behind: [
+      'Stores the scanned document in secure private storage.',
+      'Sets agreement status to UNDER_REVIEW and records the signer name and timestamp.',
+      'Unlocks the ability for the customer to proceed to payment submission.',
+      'Creates review notification for Eskista operations staff.',
+    ],
+    seenBy: [
+      'Customer sees the agreement update to "Under Review" and can access the payment screen.',
+      'Eskista admin staff see the scan in the agreements review queue.',
+    ],
+    rules: [
+      '400 if missing file, unsupported file format (PNG, JPEG, WebP, PDF), or file exceeds 10 MB.',
+      '401 if not authenticated.',
+      '404 if agreement not found.',
+      '409 if already approved or currently under review.',
+    ],
   })
   @ApiBody({
     schema: {
@@ -192,7 +214,6 @@ PNG, JPEG, WebP or PDF, up to 10 MB.
   })
   @ApiOkResponse({ type: CustomerAgreementResponse })
   @ApiConflictResponse({ description: 'Already approved, or a scan is already under review.' })
-  @ApiBadRequestResponse({ description: 'Missing file, unsupported type, or larger than 10 MB.' })
   uploadSignedAgreement(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -205,13 +226,25 @@ PNG, JPEG, WebP or PDF, up to 10 MB.
 
   @Post('agreements/:agreementId/decline')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiParam(AGREEMENT_ID_PARAM)
+  @ApiEndpoint({
     summary: 'Decline to sign',
-    description:
-      'Records that the customer will not sign, with their reason. Eskista follows up. ' +
-      'An already-approved agreement cannot be declined.',
+    does: 'Records that the customer declines the issued agreement terms along with their explanation.',
+    behind: [
+      'Updates the agreement status to REJECTED with the decline reason.',
+      'Logs the event and notifies Eskista operations for mediation.',
+    ],
+    seenBy: [
+      'Customer sees the agreement marked as declined.',
+      'Eskista staff follow up with the customer.',
+    ],
+    rules: [
+      '400 if reason is too short.',
+      '401 if not authenticated.',
+      '404 if agreement not found.',
+      '409 if agreement is already approved.',
+    ],
   })
-  @ApiParam({ name: 'agreementId', format: 'uuid' })
   @ApiOkResponse({ type: CustomerAgreementResponse })
   @ApiConflictResponse({ description: 'Already approved.' })
   declineAgreement(
@@ -226,23 +259,21 @@ PNG, JPEG, WebP or PDF, up to 10 MB.
   // ── Payments ───────────────────────────────────────────────────────────────
 
   @Get('payment-instructions')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Where to send the money, and how much',
-    description: `
-Everything on the **Complete Payment** screen: the item summary, the amount, and Eskista's
-Telebirr and bank details.
-
-**\`amountDueMinor\` is the figure to display.** It is \`totalMinor\` plus the refundable
-deposit — the larger of the two totals. Showing the goods-only total here would have the
-customer transfer too little.
-
-Either \`telebirr\` or \`bank\` may be null if Eskista has not configured that method;
-render only what comes back rather than assuming both exist. These come from platform
-settings, so they change without a deploy.
-
-Check \`canSubmit\` before enabling the form. \`blockedReason\` explains a false in language
-you can show directly — still under review, already paid, booking closed.
-`.trim(),
+    does: 'Returns bank and Telebirr collection details, exact transfer amount due, and verification requirements.',
+    behind: [
+      'Calculates amountDueMinor (rental total plus refundable security deposit).',
+      'Fetches active Eskista collection accounts (Telebirr merchant, commercial bank accounts).',
+      'Evaluates canSubmit and provides clear blockers if payment is currently unavailable.',
+    ],
+    seenBy: [
+      'Customer sees the Complete Payment screen with bank account numbers and transfer reference.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if booking not found.',
+    ],
   })
   @ApiOkResponse({ type: PaymentInstructionsResponse })
   getPaymentInstructions(
@@ -255,27 +286,24 @@ you can show directly — still under review, already paid, booking closed.
   @Post('payments')
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Submit proof of payment',
-    description: `
-Backs **Submit Payment**: the receipt upload plus transaction reference and amount.
-
-Payment is offline. This records *evidence* of a transfer — it does not confirm the
-booking. Eskista verifies the receipt against their account and moves the booking on
-separately, so expect the status to stay put until they do.
-
-**The amount is deliberately not validated against what is owed.** A customer who
-transferred the wrong figure needs Eskista to see the receipt and sort it out; rejecting it
-here would leave them with money sent and no record of it in the app.
-
-\`transactionReference\` is how Eskista matches the transfer, so a typo delays verification
-rather than failing outright.
-
-Returns 409 while an earlier submission is still being verified — one pending receipt at a
-time.
-
-PNG, JPEG, WebP or PDF, up to 10 MB.
-`.trim(),
+    does: 'Uploads bank transfer slip or Telebirr confirmation screenshot to record offline payment evidence.',
+    behind: [
+      'Stores payment slip in private file storage.',
+      'Creates Payment record in SUBMITTED status with transaction reference and transfer amount.',
+      'Moves booking payment status to SUBMITTED and queues for Eskista finance verification.',
+    ],
+    seenBy: [
+      'Customer sees payment marked as "Pending Verification".',
+      'Eskista finance team sees the payment in the payment verification desk.',
+    ],
+    rules: [
+      '400 if missing receipt file, missing transaction reference, or invalid amount.',
+      '401 if not authenticated.',
+      '404 if booking not found.',
+      '409 if payment already verified or previous submission is pending review.',
+    ],
   })
   @ApiBody({
     schema: {
@@ -323,21 +351,26 @@ PNG, JPEG, WebP or PDF, up to 10 MB.
 
   @Post('complete-service')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Confirm the talent delivered',
-    description: `
-Backs **Complete Service** on a talent booking.
-
-A talent engagement has nothing to return or inspect, so the customer's confirmation takes
-the place of the return-and-inspection steps. The booking moves to \`RENTAL_COMPLETED\`;
-Eskista then settles with the talent and closes it, which is what opens the review.
-
-Idempotent — confirming twice returns the same status. Talent bookings only, and only once
-the engagement has started.
-`.trim(),
+    does: 'Confirms satisfactory completion of creative talent services for a talent engagement booking.',
+    behind: [
+      'Transitions talent booking status to RENTAL_COMPLETED.',
+      'Records customer completion confirmation in the booking timeline.',
+      'Triggers talent settlement payout preparation by Eskista.',
+    ],
+    seenBy: [
+      'Customer sees the booking marked as completed and is invited to rate the talent.',
+      'Talent is notified that the customer confirmed delivery.',
+    ],
+    rules: [
+      '400 if called on an equipment booking instead of a talent booking.',
+      '401 if not authenticated.',
+      '404 if booking not found.',
+      '409 if the engagement has not started yet.',
+    ],
   })
   @ApiOkResponse({ schema: { example: { status: 'RENTAL_COMPLETED' } } })
-  @ApiBadRequestResponse({ description: 'Not a talent booking.' })
   @ApiConflictResponse({ description: 'The engagement has not started yet.' })
   completeService(
     @CurrentUser('id') userId: string,
@@ -351,20 +384,23 @@ the engagement has started.
   @Post('attachments')
   @UseInterceptors(FilesInterceptor('files', 10))
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Attach reference files to a talent request',
-    description: `
-Backs the **References** step of the hire wizard — "Moodboards, briefs, scripts, reference
-images, project documents". The step is optional; a request can be submitted with none.
-
-Upload against the draft's \`reference\` as soon as the draft exists, so files survive
-the customer leaving the wizard.
-
-PNG, JPEG, WebP, PDF or Word (.docx), up to 10 MB each and 10 per request.
-
-Talent requests only, and only until the engagement is confirmed — after that the brief
-is what the talent agreed to work from. The talent sees these as "N files (via Eskista)".
-`.trim(),
+    does: 'Uploads moodboards, scripts, or project briefs (up to 10 files) for an open talent hire request.',
+    behind: [
+      'Uploads files into secure storage and links them to the Booking record.',
+      'Allows up to 10 files, max 10 MB each.',
+    ],
+    seenBy: [
+      'Customer sees the uploaded documents list in the References step.',
+      'Invited talents see the project references.',
+    ],
+    rules: [
+      '400 if not a talent request, file exceeds 10 MB, or unsupported format.',
+      '401 if not authenticated.',
+      '404 if booking not found.',
+      '409 if engagement is already confirmed.',
+    ],
   })
   @ApiBody({
     schema: {
@@ -380,9 +416,6 @@ is what the talent agreed to work from. The talent sees these as "N files (via E
     },
   })
   @ApiCreatedResponse({ type: [AttachmentResponse], description: 'The files just added.' })
-  @ApiBadRequestResponse({
-    description: 'Not a talent request, no files, too many, oversize, or wrong type.',
-  })
   @ApiConflictResponse({ description: 'The engagement is already confirmed.' })
   addAttachments(
     @CurrentUser('id') userId: string,
@@ -393,7 +426,20 @@ is what the talent agreed to work from. The talent sees these as "N files (via E
   }
 
   @Get('attachments')
-  @ApiOperation({ summary: 'List the reference files on a request', description: 'Oldest first.' })
+  @ApiEndpoint({
+    summary: 'List the reference files on a request',
+    does: 'Returns all uploaded reference files attached to a talent hire request in chronological order.',
+    behind: [
+      'Queries attachments linked to the talent booking reference.',
+    ],
+    seenBy: [
+      'Customer sees the reference files list on the booking screen.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if booking not found.',
+    ],
+  })
   @ApiOkResponse({ type: [AttachmentResponse] })
   listAttachments(
     @CurrentUser('id') userId: string,
@@ -404,11 +450,22 @@ is what the talent agreed to work from. The talent sees these as "N files (via E
 
   @Delete('attachments/:attachmentId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({
+  @ApiParam(ATTACHMENT_ID_PARAM)
+  @ApiEndpoint({
     summary: 'Remove a reference file',
-    description: 'Only until the engagement is confirmed.',
+    does: 'Removes an uploaded reference file from a talent hire request prior to confirmation.',
+    behind: [
+      'Deletes the attachment record and underlying file from storage.',
+    ],
+    seenBy: [
+      'Customer sees file removed from the references list.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if attachment or booking not found.',
+      '409 if engagement is already confirmed.',
+    ],
   })
-  @ApiParam({ name: 'attachmentId', format: 'uuid' })
   @ApiNoContentResponse({ description: 'Removed.' })
   @ApiConflictResponse({ description: 'The engagement is already confirmed.' })
   removeAttachment(
@@ -422,25 +479,20 @@ is what the talent agreed to work from. The talent sees these as "N files (via E
   // ── Tracking ───────────────────────────────────────────────────────────────
 
   @Get('tracking')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Track the courier',
-    description: `
-Backs **Track Your Equipment**: the status chip, headline, ETA, the courier card with
-**Call Courier**, and the four-step sub-tracker.
-
-A deliberately small payload. The booking detail carries the same data, but it is far
-heavier and this screen polls. **Poll about every 30 seconds while \`isLive\` is true, and
-stop when it turns false** — a delivered booking does not need watching.
-
-Follows the **return** leg once one exists, since by then that is the journey the customer
-cares about; \`direction\` says which one you are looking at.
-
-\`courierPhone\` is the courier's own number. The vendor's is never exposed — Eskista
-mediates all contact.
-
-Before a courier is assigned, every courier field is null and \`headline\` says delivery has
-not been arranged yet. Render that state rather than an empty card.
-`.trim(),
+    does: 'Returns real-time courier delivery or return transit status, courier contact, vehicle details, and ETA.',
+    behind: [
+      'Queries active fulfilment record (outbound delivery or return).',
+      'Derives courier details, vehicle plate, sub-tracker progress, and live tracking status.',
+    ],
+    seenBy: [
+      'Customer sees the "Track Your Equipment" screen with Call Courier button and ETA.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if booking not found.',
+    ],
   })
   @ApiOkResponse({ type: TrackingResponse })
   getTracking(
@@ -453,18 +505,20 @@ not been arranged yet. Render that state rather than an empty card.
   // ── Return ─────────────────────────────────────────────────────────────────
 
   @Get('return-options')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Return slots and instructions',
-    description: `
-Backs the **Return Equipment** screen: the drop-off time picker, the return instructions
-list, and the address to pre-fill.
-
-Slots past the return deadline come back with \`available: false\` rather than being
-omitted — a customer who has already missed the deadline should see the option greyed out
-and understand why, not wonder where it went.
-
-\`suggestedAddress\` is the original delivery address, offered as the default pickup point.
-`.trim(),
+    does: 'Returns available equipment return slots, packing instructions, and suggested pickup address.',
+    behind: [
+      'Computes eligible return time slots based on return deadline.',
+      'Retrieves platform return instructions and original delivery location.',
+    ],
+    seenBy: [
+      'Customer sees the Return Equipment picker with selectable time slots and return guide.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if booking not found.',
+    ],
   })
   @ApiOkResponse({ type: ReturnOptionsResponse })
   getReturnOptions(
@@ -476,28 +530,30 @@ and understand why, not wonder where it went.
 
   @Post('return')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Arrange the return',
-    description: `
-Backs **Schedule Pickup** and **Drop Off**.
-
-\`SCHEDULED_PICKUP\` means Eskista collects, and requires an \`address\`. \`DROP_OFF\` means
-the customer brings it back themselves.
-
-**Idempotent**: calling it again replaces the existing arrangement rather than creating a
-second one. A customer changing their mind is ordinary, and two open return jobs for one
-booking would confuse operations.
-
-Moves the booking to \`RETURN_SCHEDULED\`. Only possible once the equipment is actually with
-the customer — before that it returns 409.
-`.trim(),
+    does: 'Schedules equipment return via Eskista courier collection or customer hub drop-off.',
+    behind: [
+      'Records return arrangement (SCHEDULED_PICKUP or DROP_OFF) and scheduled timestamp.',
+      'Updates booking status to RETURN_SCHEDULED.',
+      'Dispatches pickup task to Eskista courier dispatch operations.',
+    ],
+    seenBy: [
+      'Customer sees return confirmed and can track return courier status.',
+      'Hub operations see incoming return in the logistics schedule.',
+    ],
+    rules: [
+      '400 if missing address for scheduled pickup or invalid time slot.',
+      '401 if not authenticated.',
+      '404 if booking not found.',
+      '409 if equipment has not yet been delivered to the customer.',
+    ],
   })
   @ApiOkResponse({
     type: ReturnOptionsResponse,
     description: 'The refreshed options, reflecting what was just booked.',
   })
   @ApiConflictResponse({ description: 'The equipment is not with you yet.' })
-  @ApiBadRequestResponse({ description: 'Missing address for a pickup, or a malformed slot.' })
   scheduleReturn(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -511,23 +567,24 @@ the customer — before that it returns 409.
   @Post('incidents')
   @UseInterceptors(FilesInterceptor('photos', 6))
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Report an issue',
-    description: `
-Backs **Submit Incident Report**.
-
-**Eskista mediates every incident.** The report goes to them, never to the vendor — the
-screen says so and the operating model depends on it. Do not surface vendor contact details
-anywhere near this flow.
-
-Up to 6 photos, each PNG, JPEG or WebP up to 5 MB. Photos are optional but make assessment
-much faster.
-
-Only possible once the booking is confirmed; there is nothing to report on a request still
-under review.
-
-Returns a reference like \`ESK-INC-00042\` that the customer can quote to support.
-`.trim(),
+    does: 'Submits an incident report regarding damaged equipment, late delivery, or missing items directly to Eskista mediation.',
+    behind: [
+      'Creates Incident record linked to the booking with incident reference (e.g. ESK-INC-00042).',
+      'Stores up to 6 photo attachments in private storage.',
+      'Alerts Eskista mediation and grievance desk.',
+    ],
+    seenBy: [
+      'Customer sees incident report reference and status in their booking records.',
+      'Eskista mediation team receives the report in the admin grievance desk.',
+    ],
+    rules: [
+      '400 if photos exceed 6 items, oversize, or invalid mime type.',
+      '401 if not authenticated.',
+      '404 if booking not found.',
+      '409 if booking is not yet confirmed.',
+    ],
   })
   @ApiBody({
     schema: {
@@ -557,7 +614,6 @@ Returns a reference like \`ESK-INC-00042\` that the customer can quote to suppor
   })
   @ApiCreatedResponse({ type: IncidentResponse })
   @ApiConflictResponse({ description: 'The booking is not confirmed yet.' })
-  @ApiBadRequestResponse({ description: 'Too many photos, or one is oversize or not an image.' })
   reportIncident(
     @CurrentUser('id') userId: string,
     @Param('reference') reference: string,
@@ -568,10 +624,19 @@ Returns a reference like \`ESK-INC-00042\` that the customer can quote to suppor
   }
 
   @Get('incidents')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'List issues I reported on this booking',
-    description:
-      'Newest first, with the current status and Eskista’s resolution once there is one.',
+    does: 'Returns all incident reports submitted for this booking along with status and Eskista resolution.',
+    behind: [
+      'Queries all incidents for this booking ordered by creation date descending.',
+    ],
+    seenBy: [
+      'Customer views reported incidents and resolutions on the booking detail screen.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if booking not found.',
+    ],
   })
   @ApiOkResponse({ type: [IncidentResponse] })
   listIncidents(
@@ -584,21 +649,24 @@ Returns a reference like \`ESK-INC-00042\` that the customer can quote to suppor
   // ── Review ─────────────────────────────────────────────────────────────────
 
   @Post('review')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Rate the completed booking',
-    description: `
-Backs the **"How was your experience?"** sheet.
-
-Reviews are **one-way**: clients rate equipment and talent, and nobody rates the client.
-There is no counterpart endpoint for a vendor to rate a customer.
-
-Only once per booking, and only after it closes — rating equipment still in your hands
-rates an experience that has not finished.
-
-Publishing the review recomputes the listing's and the supplier's rating aggregates in the
-same transaction, from the reviews themselves rather than by nudging a running average, so
-the star count on the catalogue can never disagree with the reviews behind it.
-`.trim(),
+    does: 'Submits a 1-to-5 star rating and optional feedback review for completed equipment rentals or talent engagements.',
+    behind: [
+      'Creates Review record for the booking.',
+      'Recomputes average rating and review count on the listing and vendor or talent profile atomically.',
+      'Marks the booking as reviewed.',
+    ],
+    seenBy: [
+      'Customer sees their review reflected on the booking.',
+      'Public catalogue reflects the updated star rating and review list.',
+    ],
+    rules: [
+      '400 if rating is not an integer between 1 and 5.',
+      '401 if not authenticated.',
+      '404 if booking not found.',
+      '409 if booking is not completed or has already been reviewed.',
+    ],
   })
   @ApiCreatedResponse({ type: ReviewResponse })
   @ApiConflictResponse({ description: 'Not completed yet, or already rated.' })

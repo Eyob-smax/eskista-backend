@@ -22,7 +22,13 @@ const METHODS = ['get', 'post', 'put', 'patch', 'delete'] as const;
 const FILE_TYPES = ['application/pdf', 'text/csv'];
 
 /** Every gap that stops an operation from being fully documented. */
-export function auditOperation(doc: OpenAPIObject, path: string, method: string, op: Json): string[] {
+export function auditOperation(
+  doc: OpenAPIObject,
+  path: string,
+  method: string,
+  op: Json,
+  options: { requireForbidden?: boolean } = { requireForbidden: true },
+): string[] {
   const issues: string[] = [];
   const isAuth = path.startsWith('/api/auth/');
 
@@ -36,23 +42,25 @@ export function auditOperation(doc: OpenAPIObject, path: string, method: string,
   if (!success) {
     issues.push('no 2xx response');
   } else {
+    const isNoContent = success[0] === '204';
     const content = (success[1].content ?? {}) as Record<string, Json>;
     const isFile = Object.keys(content).some((t) => FILE_TYPES.includes(t));
     const json = content['application/json'];
     if (!isFile && Object.keys(content).length > 0 && !json?.schema) issues.push('2xx has no schema');
-    if (!isFile && Object.keys(content).length === 0 && method !== 'delete') {
+    if (!isFile && !isNoContent && Object.keys(content).length === 0 && method !== 'delete') {
       issues.push('2xx has no body schema');
     }
   }
   if (!isAuth && !responses['401']) issues.push('no 401');
-  if (!isAuth && !responses['403']) issues.push('no 403');
+  if (options.requireForbidden && !isAuth && !responses['403']) issues.push('no 403');
 
   for (const p of (op.parameters ?? []) as Json[]) {
     const schema = (p.schema ?? {}) as Json;
+    const hasExample = p.example !== undefined || schema.example !== undefined;
     const explained =
-      p.description || schema.enum || p.example !== undefined || schema.default !== undefined;
+      p.description || schema.enum || hasExample || schema.default !== undefined;
     if (!explained) issues.push(`param "${String(p.name)}" (${String(p.in)}) undescribed`);
-    if (p.in === 'path' && p.example === undefined && !schema.format && !schema.enum) {
+    if (p.in === 'path' && !hasExample && !schema.format && !schema.enum) {
       issues.push(`path param "${String(p.name)}" has no example or format`);
     }
   }
@@ -113,11 +121,14 @@ async function main(): Promise<void> {
   const app = await NestFactory.create(AppModule, { logger: ['error'], abortOnError: false });
   app.setGlobalPrefix(process.env.API_PREFIX ?? 'api');
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
-  const { full, admin } = buildDocuments(app, '0.1.0');
+  const { full, admin, vendor, talent, customer } = buildDocuments(app, '0.1.0');
 
   const dir = join('docs', 'openapi');
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, 'admin.json'), JSON.stringify(admin, null, 2));
+  writeFileSync(join(dir, 'vendor.json'), JSON.stringify(vendor, null, 2));
+  writeFileSync(join(dir, 'talent.json'), JSON.stringify(talent, null, 2));
+  writeFileSync(join(dir, 'customer.json'), JSON.stringify(customer, null, 2));
   writeFileSync(join(dir, 'full.json'), JSON.stringify(full, null, 2));
 
   let operations = 0;
@@ -142,10 +153,94 @@ async function main(): Promise<void> {
   const schemaGaps = Object.entries(schemas);
   console.log(`Response models with fields lacking examples: ${schemaGaps.length}`);
   for (const [name, fields] of schemaGaps) console.log(`  ${name}: ${fields.join(', ')}`);
-  console.log(`\nWrote ${join(dir, 'admin.json')} and ${join(dir, 'full.json')}.`);
+
+  let vendorOps = 0;
+  let vendorGaps = 0;
+  const vendorByTag = new Map<string, string[]>();
+  for (const [path, item] of Object.entries(vendor.paths)) {
+    for (const method of METHODS) {
+      const op = (item as Record<string, Json | undefined>)[method];
+      if (!op) continue;
+      vendorOps += 1;
+      const issues = auditOperation(vendor, path, method, op, { requireForbidden: false });
+      if (issues.length === 0) continue;
+      vendorGaps += 1;
+      const tag = ((op.tags as string[] | undefined) ?? ['untagged'])[0];
+      vendorByTag.set(tag, [...(vendorByTag.get(tag) ?? []), `  ${method.toUpperCase()} ${path}\n    - ${issues.join('\n    - ')}`]);
+    }
+  }
+  const vendorResponseGaps = auditResponseSchemas(vendor);
+
+  console.log(`\nVendor document: ${vendorOps} operations, ${vendorGaps} with gaps.\n`);
+  for (const [tag, lines] of vendorByTag) console.log(`[${tag}]\n${lines.join('\n')}\n`);
+  const vendorSchemaGapEntries = Object.entries(vendorResponseGaps);
+  console.log(`Vendor response models with fields lacking examples: ${vendorSchemaGapEntries.length}`);
+  for (const [name, fields] of vendorSchemaGapEntries) console.log(`  ${name}: ${fields.join(', ')}`);
+
+  let talentOps = 0;
+  let talentGaps = 0;
+  const talentByTag = new Map<string, string[]>();
+  for (const [path, item] of Object.entries(talent.paths)) {
+    for (const method of METHODS) {
+      const op = (item as Record<string, Json | undefined>)[method];
+      if (!op) continue;
+      talentOps += 1;
+      const issues = auditOperation(talent, path, method, op, { requireForbidden: false });
+      if (issues.length === 0) continue;
+      talentGaps += 1;
+      const tag = ((op.tags as string[] | undefined) ?? ['untagged'])[0];
+      talentByTag.set(tag, [...(talentByTag.get(tag) ?? []), `  ${method.toUpperCase()} ${path}\n    - ${issues.join('\n    - ')}`]);
+    }
+  }
+  const talentResponseGaps = auditResponseSchemas(talent);
+
+  console.log(`\nTalent document: ${talentOps} operations, ${talentGaps} with gaps.\n`);
+  for (const [tag, lines] of talentByTag) console.log(`[${tag}]\n${lines.join('\n')}\n`);
+  const talentSchemaGapEntries = Object.entries(talentResponseGaps);
+  console.log(`Talent response models with fields lacking examples: ${talentSchemaGapEntries.length}`);
+  for (const [name, fields] of talentSchemaGapEntries) console.log(`  ${name}: ${fields.join(', ')}`);
+
+  let customerOps = 0;
+  let customerGaps = 0;
+  const customerByTag = new Map<string, string[]>();
+  for (const [path, item] of Object.entries(customer.paths)) {
+    for (const method of METHODS) {
+      const op = (item as Record<string, Json | undefined>)[method];
+      if (!op) continue;
+      customerOps += 1;
+      const issues = auditOperation(customer, path, method, op, { requireForbidden: false });
+      if (issues.length === 0) continue;
+      customerGaps += 1;
+      const tag = ((op.tags as string[] | undefined) ?? ['untagged'])[0];
+      customerByTag.set(tag, [...(customerByTag.get(tag) ?? []), `  ${method.toUpperCase()} ${path}\n    - ${issues.join('\n    - ')}`]);
+    }
+  }
+  const customerResponseGaps = auditResponseSchemas(customer);
+
+  console.log(`\nCustomer document: ${customerOps} operations, ${customerGaps} with gaps.\n`);
+  for (const [tag, lines] of customerByTag) console.log(`[${tag}]\n${lines.join('\n')}\n`);
+  const customerSchemaGapEntries = Object.entries(customerResponseGaps);
+  console.log(`Customer response models with fields lacking examples: ${customerSchemaGapEntries.length}`);
+  for (const [name, fields] of customerSchemaGapEntries) console.log(`  ${name}: ${fields.join(', ')}`);
+
+  console.log(
+    `\nWrote ${join(dir, 'admin.json')}, ${join(dir, 'vendor.json')}, ${join(dir, 'talent.json')}, ${join(dir, 'customer.json')}, and ${join(dir, 'full.json')}.`,
+  );
 
   await app.close();
-  if (strict && (withIssues > 0 || schemaGaps.length > 0)) process.exitCode = 1;
+  if (
+    strict &&
+    (withIssues > 0 ||
+      schemaGaps.length > 0 ||
+      vendorGaps > 0 ||
+      vendorSchemaGapEntries.length > 0 ||
+      talentGaps > 0 ||
+      talentSchemaGapEntries.length > 0 ||
+      customerGaps > 0 ||
+      customerSchemaGapEntries.length > 0)
+  ) {
+    process.exitCode = 1;
+  }
 }
 
 if (require.main === module) {

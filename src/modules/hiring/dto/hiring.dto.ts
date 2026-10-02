@@ -50,6 +50,7 @@ export class InviteMoreDto {
     description:
       'More talents to invite while the request is still open. The total may not exceed ' +
       'the admin limit (5 by default).',
+    example: ['6f1c9f5e-2c1a-4d8e-9a0b-3b1f7c2d9e11'],
   })
   @IsArray()
   @ArrayMinSize(1)
@@ -60,11 +61,12 @@ export class InviteMoreDto {
 }
 
 export class InvitedTalentResponse {
-  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({ format: 'uuid', example: '6f1c9f5e-2c1a-4d8e-9a0b-3b1f7c2d9e11' }) id!: string;
   @ApiProperty({ example: 'Dawit Bekele' }) displayName!: string;
   @ApiPropertyOptional({ nullable: true, example: 'Cinematographer' })
   profession!: string | null;
-  @ApiPropertyOptional({ nullable: true }) avatarUrl!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'https://cdn.eskista.com/avatars/dawit.jpg' })
+  avatarUrl!: string | null;
   @ApiProperty({ example: 'Addis Ababa' }) location!: string;
   @ApiPropertyOptional({ nullable: true, example: 4.9 }) rating!: number | null;
   @ApiProperty({ example: 24 }) reviewCount!: number;
@@ -86,7 +88,7 @@ export class InvitationPriceResponse {
 }
 
 export class CustomerInvitationResponse {
-  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({ format: 'uuid', example: '7e1c9f5e-2c1a-4d8e-9a0b-3b1f7c2d9e22' }) id!: string;
   @ApiProperty({ type: InvitedTalentResponse }) talent!: InvitedTalentResponse;
   @ApiProperty({ enum: InvitationStatus }) status!: InvitationStatus;
   @ApiProperty({ example: 'Available' }) statusLabel!: string;
@@ -97,14 +99,18 @@ export class CustomerInvitationResponse {
   })
   price!: InvitationPriceResponse | null;
   @ApiProperty({ example: '2026-09-27T09:00:00.000Z' }) expiresAt!: string;
-  @ApiPropertyOptional({ nullable: true }) respondedAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-09-26T14:30:00.000Z' })
+  respondedAt!: string | null;
   @ApiPropertyOptional({
     nullable: true,
     description: 'The booking this hire became, once HIRED — a sibling for a second hire.',
     example: 'ESK-TLT-1005',
   })
   hiredBookingReference!: string | null;
-  @ApiProperty({ description: 'True while this talent can be picked in `POST …/hire`.' })
+  @ApiProperty({
+    description: 'True while this talent can be picked in `POST …/hire`.',
+    example: true,
+  })
   canHire!: boolean;
 }
 
@@ -125,12 +131,16 @@ export class CustomerInvitationsResponse {
   @ApiPropertyOptional({
     nullable: true,
     description: 'When the customer must have chosen by. Set on the first acceptance.',
+    example: '2026-09-29T12:00:00.000Z',
   })
   selectionDeadlineAt!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 71 }) selectionHoursLeft!: number | null;
   @ApiProperty({ description: 'The admin limit on invitations per request.', example: 5 })
   maxInvitations!: number;
-  @ApiProperty({ description: 'Whether `POST …/invitations` would be accepted now.' })
+  @ApiProperty({
+    description: 'Whether `POST …/invitations` would be accepted now.',
+    example: true,
+  })
   canInviteMore!: boolean;
   @ApiProperty({ type: [CustomerInvitationResponse] })
   invitations!: CustomerInvitationResponse[];
@@ -168,12 +178,16 @@ export class HireRequestResponse {
   @ApiProperty({ example: 'ESK-TLT-1004' }) reference!: string;
   @ApiProperty({ enum: InvitationStatus }) status!: InvitationStatus;
   @ApiProperty({ example: 'Request Received' }) statusLabel!: string;
-  @ApiProperty({ description: 'False once opened — "new opportunity" until then.' })
+  @ApiProperty({
+    description: 'False once opened — "new opportunity" until then.',
+    example: true,
+  })
   isNew!: boolean;
 
   @ApiProperty({ example: 'Brand campaign shoot' }) title!: string;
   @ApiPropertyOptional({ enum: ProjectType, nullable: true }) projectType!: ProjectType | null;
-  @ApiPropertyOptional({ nullable: true }) projectDescription!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Corporate documentary shoot' })
+  projectDescription!: string | null;
   @ApiProperty({ example: '2026-10-02' }) startDate!: string;
   @ApiProperty({ example: '2026-10-03' }) endDate!: string;
   @ApiPropertyOptional({ nullable: true, example: '08:00' }) startTime!: string | null;
@@ -182,7 +196,7 @@ export class HireRequestResponse {
   @ApiPropertyOptional({ nullable: true, example: 'Addis Ababa' }) city!: string | null;
   @ApiProperty({ example: 1 }) headcount!: number;
   @ApiPropertyOptional({ enum: BudgetBand, nullable: true }) budgetBand!: BudgetBand | null;
-  @ApiPropertyOptional({ nullable: true }) budgetMinor!: number | null;
+  @ApiPropertyOptional({ nullable: true, example: 2500000 }) budgetMinor!: number | null;
   @ApiPropertyOptional({
     nullable: true,
     example: 'ETB 10k – 25k',
@@ -203,8 +217,9 @@ export class HireRequestResponse {
   @ApiProperty({ example: '2026-09-27T09:00:00.000Z' }) expiresAt!: string;
   @ApiPropertyOptional({ nullable: true, example: 47 }) hoursToRespond!: number | null;
 
-  @ApiProperty({ description: 'Accept and Decline are available.' }) canRespond!: boolean;
-  @ApiProperty({ description: 'Withdraw is available (accepted, not yet chosen).' })
+  @ApiProperty({ description: 'Accept and Decline are available.', example: true })
+  canRespond!: boolean;
+  @ApiProperty({ description: 'Withdraw is available (accepted, not yet chosen).', example: false })
   canWithdraw!: boolean;
   @ApiPropertyOptional({
     nullable: true,

@@ -17,18 +17,14 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
-  ApiBadRequestResponse,
   ApiBearerAuth,
   ApiBody,
   ApiConflictResponse,
   ApiConsumes,
   ApiCreatedResponse,
-  ApiNotFoundResponse,
   ApiOkResponse,
-  ApiOperation,
   ApiParam,
   ApiTags,
-  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { AdminTier, Role } from '@prisma/client';
 import type { Response } from 'express';
@@ -67,17 +63,25 @@ function sendPdf(res: Response, buffer: Buffer, filename: string): StreamableFil
 
 @ApiTags('customer · invoices')
 @ApiBearerAuth()
-@ApiUnauthorizedResponse({ description: 'No valid session.' })
+@ApiStandardErrors({ notFound: 'Not one of your invoices.' })
 @Controller({ path: 'customer/invoices', version: '1' })
 export class CustomerInvoicesController {
   constructor(private readonly invoices: InvoicesService) {}
 
   @Get()
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'My invoices',
-    description:
-      'Every invoice issued to the customer, newest first — single and combined. Voided ' +
-      'invoices (replaced by a combined one, or split) are left out.',
+    does: 'Returns all invoices issued to the customer, both single and combined, newest first.',
+    behind: [
+      'Queries invoices for the authenticated user ID.',
+      'Excludes voided invoices that were replaced by combined invoices.',
+    ],
+    seenBy: [
+      'Customer sees the Invoices list in the billing tab.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+    ],
   })
   @ApiOkResponse({ type: [InvoiceSummaryResponse] })
   list(@CurrentUser('id') userId: string): Promise<InvoiceSummaryResponse[]> {
@@ -85,12 +89,19 @@ export class CustomerInvoicesController {
   }
 
   @Get('payable')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Bookings I can pay together',
-    description:
-      'For the **Pay together** picker: the customer’s bookings awaiting payment that have ' +
-      'no payment yet and are not already on a combined invoice — across any vendors and ' +
-      'talents.',
+    does: 'Returns bookings currently awaiting payment that can be combined into a consolidated invoice.',
+    behind: [
+      'Queries bookings in AWAITING_PAYMENT with no verified or submitted payments.',
+      'Excludes bookings that are already part of a combined invoice.',
+    ],
+    seenBy: [
+      'Customer sees the selectable bookings list in the "Pay Together" wizard.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+    ],
   })
   @ApiOkResponse({ type: [PayableBookingResponse] })
   payable(@CurrentUser('id') userId: string): Promise<PayableBookingResponse[]> {
@@ -98,20 +109,23 @@ export class CustomerInvoicesController {
   }
 
   @Post()
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Pay together — combine bookings into one invoice',
-    description: `
-Creates one invoice for two or more bookings awaiting payment, from any mix of vendors and
-talents. Their single invoices are voided and replaced. One transfer then pays everything.
-
-Each supplier is still paid for their own booking only and never sees the others.
-
-**409** when a booking is not awaiting payment, already has a payment, or is on another
-combined invoice (split that one first).
-`.trim(),
+    does: 'Combines two or more bookings awaiting payment into a single consolidated invoice.',
+    behind: [
+      'Voids individual invoices and creates a single consolidated Invoice with combined line items.',
+      'Sums up subtotals, VAT, and deposits into a single balance due.',
+    ],
+    seenBy: [
+      'Customer sees a single combined invoice with one consolidated payment reference.',
+    ],
+    rules: [
+      '400 if fewer than 2 bookings or mixed currencies.',
+      '401 if not authenticated.',
+      '409 if any booking is not in AWAITING_PAYMENT, already paid, or part of another combined invoice.',
+    ],
   })
   @ApiCreatedResponse({ type: InvoiceDetailResponse })
-  @ApiBadRequestResponse({ description: 'Fewer than two bookings, or mixed currencies.' })
   @ApiConflictResponse({ description: 'A booking cannot be combined — see `problems`.' })
   combine(
     @CurrentUser('id') userId: string,
@@ -125,17 +139,23 @@ combined invoice (split that one first).
   }
 
   @Get(':number')
-  @ApiOperation({
-    summary: 'One invoice',
-    description: `
-Lines (one per booking, with its own \`paymentBlocker\`), totals with VAT shown as included
-(or exempt), the refundable deposits, payments, \`balanceMinor\`, and whether it can be paid
-(\`canPay\` / \`blockers\`) or split (\`canUngroup\`).
-`.trim(),
-  })
   @ApiParam(NUMBER)
+  @ApiEndpoint({
+    summary: 'One invoice',
+    does: 'Returns full invoice breakdown including line items, VAT calculation, security deposits, payment blockers, and ungroup eligibility.',
+    behind: [
+      'Queries invoice by number for the authenticated customer.',
+      'Derives blockers, payment instructions, balance due, and ungroup eligibility.',
+    ],
+    seenBy: [
+      'Customer views the Invoice Details screen.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if invoice number not found for this customer.',
+    ],
+  })
   @ApiOkResponse({ type: InvoiceDetailResponse })
-  @ApiNotFoundResponse({ description: 'Not one of your invoices.' })
   get(
     @CurrentUser('id') userId: string,
     @Param('number') number: string,
@@ -144,13 +164,22 @@ Lines (one per booking, with its own \`paymentBlocker\`), totals with VAT shown 
   }
 
   @Get(':number/payment-instructions')
-  @ApiOperation({
-    summary: 'How to pay an invoice',
-    description:
-      'Eskista’s Telebirr and bank details, the amount due (total plus deposits) and the ' +
-      'reference to use — the invoice number.',
-  })
   @ApiParam(NUMBER)
+  @ApiEndpoint({
+    summary: 'How to pay an invoice',
+    does: 'Returns Eskista bank accounts, Telebirr merchant code, exact transfer amount, and invoice reference for offline payment.',
+    behind: [
+      'Fetches active bank and Telebirr collection accounts from platform settings.',
+      'Confirms amountDueMinor and checks blockers.',
+    ],
+    seenBy: [
+      'Customer views payment transfer instructions and account numbers.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if invoice not found.',
+    ],
+  })
   @ApiOkResponse({ type: InvoicePaymentInstructionsResponse })
   instructions(
     @CurrentUser('id') userId: string,
@@ -162,17 +191,25 @@ Lines (one per booking, with its own \`paymentBlocker\`), totals with VAT shown 
   @Post(':number/payments')
   @UseInterceptors(FileInterceptor('receipt'))
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({
-    summary: 'Submit payment for an invoice',
-    description: `
-One transfer, one receipt, for every booking on the invoice. Recorded as one payment per
-booking, split by what each owes, so each booking shows its payment as being verified.
-
-Every booking must be payable — agreement uploaded, nothing already being verified —
-or **409** lists which are not. Eskista then verifies the payment; nothing is confirmed here.
-`.trim(),
-  })
   @ApiParam(NUMBER)
+  @ApiEndpoint({
+    summary: 'Submit payment for an invoice',
+    does: 'Uploads transfer receipt proof for an invoice, splitting payment proportionally across constituent bookings.',
+    behind: [
+      'Uploads receipt image or PDF to private storage.',
+      'Creates Payment record for each booking on the invoice and marks status as SUBMITTED.',
+      'Queues for Eskista finance team verification.',
+    ],
+    seenBy: [
+      'Customer sees invoice and bookings transition to "Payment Pending Verification".',
+    ],
+    rules: [
+      '400 if missing receipt file, missing transactionReference, or invalid amount.',
+      '401 if not authenticated.',
+      '404 if invoice not found.',
+      '409 if any booking on the invoice has unsigned agreements or existing pending payment.',
+    ],
+  })
   @ApiBody({
     schema: {
       type: 'object',
@@ -201,8 +238,22 @@ or **409** lists which are not. Eskista then verifies the payment; nothing is co
   }
 
   @Get(':number/pdf')
-  @ApiOperation({ summary: 'Download the invoice as a PDF' })
   @ApiParam(NUMBER)
+  @ApiEndpoint({
+    summary: 'Download the invoice as a PDF',
+    does: 'Renders and streams an official Ethiopian VAT tax invoice PDF with QR code and line item breakdowns.',
+    behind: [
+      'Renders printable tax invoice PDF with company TIN, customer details, line items, and VAT breakdown.',
+      'Sets Content-Disposition attachment header.',
+    ],
+    seenBy: [
+      'Customer downloads and saves or prints the official tax invoice PDF.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if invoice not found.',
+    ],
+  })
   @ApiOkResponse({ content: PDF_CONTENT })
   async pdf(
     @CurrentUser('id') userId: string,
@@ -214,13 +265,23 @@ or **409** lists which are not. Eskista then verifies the payment; nothing is co
   }
 
   @Delete(':number')
-  @ApiOperation({
-    summary: 'Split a combined invoice',
-    description:
-      'Undoes Pay together. Each booking gets its own invoice again when it is next paid. ' +
-      'Only before any payment has been sent against it.',
-  })
   @ApiParam(NUMBER)
+  @ApiEndpoint({
+    summary: 'Split a combined invoice',
+    does: 'Splits a combined invoice back into individual single-booking invoices before any payment is made.',
+    behind: [
+      'Voids the combined invoice and reactivates individual booking invoices.',
+      'Verifies no payments have been recorded against the combined invoice.',
+    ],
+    seenBy: [
+      'Customer sees the bookings separated back into individual payable items.',
+    ],
+    rules: [
+      '401 if not authenticated.',
+      '404 if invoice not found.',
+      '409 if a payment has already been submitted or verified against the combined invoice.',
+    ],
+  })
   @ApiOkResponse({ schema: { example: { bookingReferences: ['ESK-10484', 'ESK-TLT-1005'] } } })
   @ApiConflictResponse({ description: 'A payment has been sent against it.' })
   ungroup(

@@ -3,6 +3,7 @@ import {
   ApiBadRequestResponse,
   ApiConflictResponse,
   ApiExtraModels,
+  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -96,11 +97,12 @@ export interface StandardErrors {
   badRequest?: string | false;
   notFound?: string | false;
   conflict?: string | false;
+  forbidden?: string | false;
 }
 
 /**
  * The error responses an endpoint can return, each with the real envelope. 401 is always
- * possible (every route needs a session); 403 comes from AdminAccess.
+ * possible (every route needs a session); 403 comes from AdminAccess or role guards.
  */
 export function ApiStandardErrors(errors: StandardErrors = {}) {
   const decorators = [
@@ -114,6 +116,14 @@ export function ApiStandardErrors(errors: StandardErrors = {}) {
       }),
     }),
   ];
+  if (errors.forbidden !== false && errors.forbidden !== undefined) {
+    decorators.push(
+      ApiForbiddenResponse({
+        description: errors.forbidden,
+        ...errorContent({ statusCode: 403, message: 'Forbidden', error: 'Forbidden' }),
+      }),
+    );
+  }
   if (errors.badRequest !== false && errors.badRequest !== undefined) {
     decorators.push(
       ApiBadRequestResponse({

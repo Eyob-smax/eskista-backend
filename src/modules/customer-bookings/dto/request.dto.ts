@@ -38,6 +38,7 @@ export class UpsertEquipmentRequestDto {
   @ApiPropertyOptional({
     format: 'uuid',
     description: 'The listing being booked. Required to submit; may be absent in a draft.',
+    example: '550e8400-e29b-41d4-a716-446655440000',
   })
   @IsOptional()
   @IsUUID()
@@ -105,6 +106,7 @@ export class UpsertEquipmentRequestDto {
   @ApiPropertyOptional({
     description: '"Any special handling, conditions, or requirements…"',
     maxLength: 1000,
+    example: 'Please call 30 minutes before arrival',
   })
   @IsOptional()
   @IsString()
@@ -165,6 +167,7 @@ export class UpsertTalentRequestDto {
     description:
       'A single talent — the pre-multi-invite form. Treated as `talentProfileIds: [id]`. ' +
       'Ignored when `talentProfileIds` is also sent.',
+    example: '550e8400-e29b-41d4-a716-446655440001',
   })
   @IsOptional()
   @IsUUID()
@@ -185,13 +188,18 @@ export class UpsertTalentRequestDto {
     description:
       'Optionally, one of a talent’s listed services. It prices the hire only if that ' +
       'talent is the one hired; anyone else is priced at their own base rate.',
+    example: '550e8400-e29b-41d4-a716-446655440002',
   })
   @IsOptional()
   @IsUUID()
   talentServiceId?: string;
 
   // ── Step 1: Project ──
-  @ApiPropertyOptional({ enum: ProjectType, description: 'The purpose chips.' })
+  @ApiPropertyOptional({
+    enum: ProjectType,
+    description: 'The purpose chips.',
+    example: ProjectType.COMMERCIAL_PRODUCTION,
+  })
   @IsOptional()
   @IsEnum(ProjectType)
   projectType?: ProjectType;
@@ -267,6 +275,7 @@ export class UpsertTalentRequestDto {
       '"Parking, access instructions, indoor / outdoor…" Withheld from the talent until ' +
       'the booking is confirmed.',
     maxLength: 1000,
+    example: 'Main entrance security requires ID for gate pass',
   })
   @IsOptional()
   @IsString()
@@ -280,6 +289,7 @@ export class UpsertTalentRequestDto {
     description:
       'Optional. One of the five preset bands, recorded for Eskista’s information. ' +
       'Talent rates are fixed, so a budget never prices anything.',
+    example: BudgetBand.FROM_10K_TO_25K,
   })
   @IsOptional()
   @IsEnum(BudgetBand)

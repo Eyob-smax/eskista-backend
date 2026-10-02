@@ -1,15 +1,14 @@
 import { Controller, Get, Param, ParseUUIDPipe, Query } from '@nestjs/common';
 import {
-  ApiBadRequestResponse,
   ApiExtraModels,
-  ApiNotFoundResponse,
   ApiOkResponse,
-  ApiOperation,
+  ApiParam,
   ApiQuery,
   ApiTags,
   getSchemaPath,
 } from '@nestjs/swagger';
 import { CategoryKind } from '@prisma/client';
+import { ApiEndpoint, ApiStandardErrors } from '../../common/dto/api-docs';
 import type { CursorPage } from '../../common/dto/pagination.dto';
 import { Public } from '../auth/auth.decorators';
 import {
@@ -25,7 +24,15 @@ import {
 } from './dto/catalogue.dto';
 import { CatalogueService } from './catalogue.service';
 
+const LISTING_ID_PARAM = {
+  name: 'id',
+  format: 'uuid',
+  description: 'Equipment listing ID (UUID).',
+  example: '550e8400-e29b-41d4-a716-446655440000',
+};
+
 @ApiTags('catalogue · equipment')
+@ApiStandardErrors({ notFound: 'No published listing with that id.' })
 @ApiExtraModels(EquipmentCardResponse)
 @Controller({ path: 'catalogue', version: '1' })
 export class CatalogueController {
@@ -33,18 +40,21 @@ export class CatalogueController {
 
   @Get('home')
   @Public()
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Everything the Home screen needs, in one call',
-    description: `
-Assembles the four rails on the **Home** tab: categories, Featured Equipment, Popular
-Equipment, and the talent strip behind the "Creative Professionals" banner.
-
-Deliberately one endpoint rather than four. On a slow connection four parallel calls give
-four chances to paint a half-empty screen; this resolves them server-side and returns
-together.
-
-**Public** — no session required, so the catalogue is browsable before sign-in.
-`.trim(),
+    does: 'Assembles the four rails on the Home tab: categories, Featured Equipment, Popular Equipment, and Creative Professionals banner.',
+    behind: [
+      'Queries top categories with published listings.',
+      'Resolves featured equipment listings and popular equipment ordered by completed booking counts.',
+      'Resolves featured verified creative talent profiles.',
+      'Returns combined homepage payload in a single response.',
+    ],
+    seenBy: [
+      'Customer sees the marketplace Home tab with all rails pre-populated.',
+    ],
+    rules: [
+      'Public access — no authentication required.',
+    ],
   })
   @ApiOkResponse({ type: HomeResponse })
   getHome(): Promise<HomeResponse> {
@@ -53,15 +63,21 @@ together.
 
   @Get('categories')
   @Public()
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'List equipment or talent categories',
-    description: `
-Backs the **Browse Categories** grid.
-
-\`itemCount\` counts only what a customer can actually book — published listings from
-verified vendors — so a category that returns 0 can be hidden rather than leading to an
-empty results page.
-`.trim(),
+    does: 'Returns active equipment or talent categories with published listing counts and related suggestions.',
+    behind: [
+      'Queries Category table filtered by kind (EQUIPMENT or TALENT).',
+      'Computes itemCount for published listings from verified suppliers.',
+      'Includes related category suggestions.',
+    ],
+    seenBy: [
+      'Customer sees the category selection grid in the Mini App catalogue.',
+    ],
+    rules: [
+      'Public access.',
+      'Defaults to kind=EQUIPMENT when kind query parameter is omitted.',
+    ],
   })
   @ApiQuery({
     name: 'kind',
@@ -78,27 +94,22 @@ empty results page.
 
   @Get('equipment')
   @Public()
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Browse and search equipment',
-    description: `
-The **Explore** tab, and every "See All" rail.
-
-Only published listings from verified vendors are ever returned. Drafts, listings awaiting
-review, rejected and archived listings, and everything belonging to a suspended vendor are
-excluded — suspending a vendor therefore withdraws their whole catalogue in one step.
-
-**Date filtering.** Pass \`availableFrom\` **and** \`availableTo\` together to hide anything
-already committed or blocked anywhere inside that range. Use it once the customer has picked
-dates, so nothing unbookable is shown.
-
-**Paging is cursor-based.** Pass the \`meta.nextCursor\` from the previous response as
-\`cursor\`. Offset paging would duplicate and skip rows as the catalogue changes underneath
-the reader.
-
-The \`availabilityToday\` field on each card drives the **Available / Booked** badge. It
-describes *today only* and is not a promise about the customer's chosen dates — check
-\`/availability\` or \`/quote\` before letting them book.
-`.trim(),
+    does: 'Searches and filters published equipment listings with cursor-based pagination, date availability, and category filters.',
+    behind: [
+      'Searches name, brand, model, and description text.',
+      'Filters by category, price range, and location.',
+      'If availableFrom and availableTo are supplied, excludes items booked on those dates.',
+      'Computes VAT-inclusive pricing (base vendor price + commission + 15% VAT).',
+    ],
+    seenBy: [
+      'Customer sees the Explore tab and filtered equipment search results.',
+    ],
+    rules: [
+      'Public access.',
+      '400 if date format is invalid or minPrice exceeds maxPrice.',
+    ],
   })
   @ApiOkResponse({
     description: 'A page of cards plus the cursor for the next one.',
@@ -121,60 +132,53 @@ describes *today only* and is not a promise about the customer's chosen dates �
       },
     },
   })
-  @ApiBadRequestResponse({
-    description:
-      'A malformed date, a price range whose maximum is below its minimum, or only one ' +
-      'half of the availability range.',
-  })
   browse(@Query() query: BrowseEquipmentQuery): Promise<CursorPage<EquipmentCardResponse>> {
     return this.catalogue.browseEquipment(query);
   }
 
   @Get('equipment/:id')
   @Public()
-  @ApiOperation({
+  @ApiParam(LISTING_ID_PARAM)
+  @ApiEndpoint({
     summary: 'Get one piece of equipment in full',
-    description: `
-Everything on the equipment detail screen: photo gallery, description, specification chips,
-included items, related accessories, the vendor card, and the three most recent reviews.
-
-Reviewer names are shortened to "Selam T." — a customer's full name is not published because
-they left a review.
-
-Accessories that are not themselves publishable are filtered out, so the rail never links to
-a dead page.
-
-Returns **404** for a listing that is not published, rather than 403. The existence of
-another vendor's draft is not public information.
-`.trim(),
+    does: 'Returns complete details for an equipment listing: photo gallery, specs, included accessories, vendor card, and recent customer reviews.',
+    behind: [
+      'Queries EquipmentListing by ID with included items, specs, vendor, and reviews.',
+      'Shortens reviewer names (e.g. Selam T.) for privacy.',
+    ],
+    seenBy: [
+      'Customer views the comprehensive Equipment Detail screen.',
+    ],
+    rules: [
+      'Public access.',
+      '404 if listing is not published, archived, or owned by a suspended vendor.',
+    ],
   })
   @ApiOkResponse({ type: EquipmentDetailResponse })
-  @ApiNotFoundResponse({ description: 'No published listing with that id.' })
   getEquipment(@Param('id', ParseUUIDPipe) listingId: string): Promise<EquipmentDetailResponse> {
     return this.catalogue.getEquipment(listingId);
   }
 
   @Get('equipment/:id/availability')
   @Public()
-  @ApiOperation({
+  @ApiParam(LISTING_ID_PARAM)
+  @ApiEndpoint({
     summary: 'Day-by-day availability for the booking calendar',
-    description: `
-Drives the calendar on the detail screen — the green days are the ones with
-\`state: "AVAILABLE"\`.
-
-Each day reports \`unitsAvailable\`, so a vendor with three of an item stays bookable while
-two are out. Compare it against the quantity the customer wants.
-
-Only two states are exposed. The vendor console distinguishes *rented* from *reserved* from
-*blocked*, but telling one customer why a day is taken would leak another customer's
-booking, so the public view says only whether it is free.
-
-At most **190 days** per request.
-`.trim(),
+    does: 'Returns calendar availability indicating available vs unavailable days and units free for booking.',
+    behind: [
+      'Computes daily unit counts across active bookings and maintenance holds.',
+      'Masks internal booking reasons for customer privacy.',
+    ],
+    seenBy: [
+      'Customer sees green (available) and grey (booked) days on the detail calendar picker.',
+    ],
+    rules: [
+      'Public access.',
+      '400 if date range is reversed, invalid, or exceeds 190 days.',
+      '404 if listing not found.',
+    ],
   })
   @ApiOkResponse({ type: [AvailabilityDayResponse] })
-  @ApiBadRequestResponse({ description: 'Malformed dates, reversed range, or more than 190 days.' })
-  @ApiNotFoundResponse({ description: 'No published listing with that id.' })
   getAvailability(
     @Param('id', ParseUUIDPipe) listingId: string,
     @Query() query: AvailabilityRangeQuery,
@@ -184,37 +188,25 @@ At most **190 days** per request.
 
   @Get('equipment/:id/quote')
   @Public()
-  @ApiOperation({
+  @ApiParam(LISTING_ID_PARAM)
+  @ApiEndpoint({
     summary: 'Price a rental before booking it',
-    description: `
-Backs the **"Availability & Pricing"** panel, and the totals on both steps of the request
-wizard.
-
-Computed with exactly the same function the real booking uses, so the figure quoted here is
-the figure charged. Read-only: it holds no stock and writes nothing, so it is safe to call
-on every date change.
-
-**Two totals, and they are not interchangeable:**
-
-| Field | Meaning | Where the design shows it |
-| --- | --- | --- |
-| \`totalMinor\` | Rental + delivery + VAT. Excludes the deposit. | "Total" on Finalize Booking — ETB 12,575 |
-| \`amountDueMinor\` | \`totalMinor\` + the refundable deposit. | "Total" on Complete Payment — ETB 16,575 |
-
-VAT is charged on the **rental subtotal only** — not on delivery, not on the service fee,
-and never on the refundable deposit.
-
-\`lines\` comes back print-ready and in order, with zero-value lines already omitted, so the
-breakdown can be rendered without client-side formatting rules.
-
-Check \`isBookable\` before enabling the submit button. When it is false, \`blockers\`
-explains why in language you can show the customer directly — minimum rental not met,
-maximum exceeded, or days in the range already taken.
-`.trim(),
+    does: 'Calculates price quote including daily rental fees, delivery, platform commission, 15% VAT, and refundable deposit.',
+    behind: [
+      'Performs live calculation of rental subtotal, platform commission, 15% VAT, and security deposit.',
+      'Checks calendar availability and checks rental duration against vendor minimum and maximum limits.',
+      'Generates itemized quote lines and evaluates isBookable and blockers.',
+    ],
+    seenBy: [
+      'Customer sees the Availability & Pricing breakdown panel and booking wizard totals.',
+    ],
+    rules: [
+      'Public access.',
+      '400 if date range is invalid.',
+      '404 if listing not found.',
+    ],
   })
   @ApiOkResponse({ type: QuoteResponse })
-  @ApiBadRequestResponse({ description: 'Malformed or reversed dates.' })
-  @ApiNotFoundResponse({ description: 'No published listing with that id.' })
   quote(
     @Param('id', ParseUUIDPipe) listingId: string,
     @Query() query: QuoteQuery,
@@ -222,3 +214,4 @@ maximum exceeded, or days in the range already taken.
     return this.catalogue.quote(listingId, query);
   }
 }
+
