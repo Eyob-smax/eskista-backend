@@ -41,8 +41,14 @@ export class AdminUnitsQuery extends PaginationQuery {
   @IsIn(UNIT_STATES)
   state?: UnitState;
 
-  @ApiPropertyOptional() @IsOptional() @IsUUID() categoryId?: string;
-  @ApiPropertyOptional() @IsOptional() @IsUUID() vendorId?: string;
+  @ApiPropertyOptional({ example: '9d2f4b6a-1c3e-4a5b-8c7d-6e5f4a3b2c1d' })
+  @IsOptional()
+  @IsUUID()
+  categoryId?: string;
+  @ApiPropertyOptional({ example: '5b0c2f9e-6a1d-4c1e-9f0a-2d3e4f5a6b7c' })
+  @IsOptional()
+  @IsUUID()
+  vendorId?: string;
 
   @ApiPropertyOptional({ example: 'FX3', description: 'Unit label, serial, equipment or vendor.' })
   @IsOptional()
@@ -58,8 +64,14 @@ export class AdminListingsQuery extends PaginationQuery {
   @IsEnum(ListingStatus)
   status?: ListingStatus;
 
-  @ApiPropertyOptional() @IsOptional() @IsUUID() categoryId?: string;
-  @ApiPropertyOptional() @IsOptional() @IsUUID() vendorId?: string;
+  @ApiPropertyOptional({ example: '9d2f4b6a-1c3e-4a5b-8c7d-6e5f4a3b2c1d' })
+  @IsOptional()
+  @IsUUID()
+  categoryId?: string;
+  @ApiPropertyOptional({ example: '5b0c2f9e-6a1d-4c1e-9f0a-2d3e4f5a6b7c' })
+  @IsOptional()
+  @IsUUID()
+  vendorId?: string;
 
   @ApiPropertyOptional({ example: 'Sony FX3' })
   @IsOptional()
@@ -102,7 +114,10 @@ export class AdminCategoriesQuery {
   @IsEnum(CategoryKind)
   kind?: CategoryKind;
 
-  @ApiPropertyOptional({ description: 'Include hidden categories. Defaults to true.' })
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Include hidden categories. Defaults to true.',
+  })
   @IsOptional()
   @Transform(({ value }: { value: unknown }) =>
     value === 'false' ? false : value === 'true' ? true : value,
@@ -155,7 +170,10 @@ export class CategoryDto {
   @MaxLength(60, { each: true })
   skills?: string[];
 
-  @ApiPropertyOptional({ description: 'A parent, making this a subcategory.' })
+  @ApiPropertyOptional({
+    example: '9d2f4b6a-1c3e-4a5b-8c7d-6e5f4a3b2c1d',
+    description: 'A parent, making this a subcategory.',
+  })
   @IsOptional()
   @IsUUID()
   parentId?: string;

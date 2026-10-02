@@ -78,11 +78,15 @@ export class SupplierIncidentResponse {
   @ApiProperty({ enum: IncidentStatus, example: IncidentStatus.REPORTED }) status!: IncidentStatus;
   @ApiProperty({ example: 'The shoot ran three hours past the agreed 18:00 finish.' })
   description!: string;
-  @ApiPropertyOptional({ nullable: true, description: 'Eskista’s resolution, once resolved.' })
+  @ApiPropertyOptional({
+    example: 'Battery replaced; 10% refunded to the client.',
+    nullable: true,
+    description: 'Eskista’s resolution, once resolved.',
+  })
   resolution!: string | null;
   @ApiProperty({ type: [SupplierIncidentPhotoResponse] }) photos!: SupplierIncidentPhotoResponse[];
   @ApiProperty({ example: '2026-09-28T19:30:00.000Z' }) createdAt!: string;
-  @ApiPropertyOptional({ nullable: true }) resolvedAt!: string | null;
+  @ApiPropertyOptional({ example: null, nullable: true }) resolvedAt!: string | null;
 }
 
 /** Once there is an engagement or a rental to have gone wrong. */

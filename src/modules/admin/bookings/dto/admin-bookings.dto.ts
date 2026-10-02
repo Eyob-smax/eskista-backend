@@ -39,6 +39,7 @@ export class AdminBookingsQuery extends PaginationQuery {
   status?: BookingStatus;
 
   @ApiPropertyOptional({
+    example: 'ESK-10484',
     description: 'Reference, customer, organisation, equipment, vendor, talent.',
   })
   @IsOptional()
@@ -47,27 +48,27 @@ export class AdminBookingsQuery extends PaginationQuery {
   @Transform(trim)
   q?: string;
 
-  @ApiPropertyOptional({ description: 'Rentals starting on or after.' })
+  @ApiPropertyOptional({ example: '2026-10-01', description: 'Rentals starting on or after.' })
   @IsOptional()
   @IsDateString()
   from?: string;
 
-  @ApiPropertyOptional({ description: 'Rentals starting on or before.' })
+  @ApiPropertyOptional({ example: '2026-10-31', description: 'Rentals starting on or before.' })
   @IsOptional()
   @IsDateString()
   to?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: '5b0c2f9e-6a1d-4c1e-9f0a-2d3e4f5a6b7c' })
   @IsOptional()
   @IsUUID()
   vendorId?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: '7c1e2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b' })
   @IsOptional()
   @IsUUID()
   customerId?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: '9d2f4b6a-1c3e-4a5b-8c7d-6e5f4a3b2c1d' })
   @IsOptional()
   @IsUUID()
   talentProfileId?: string;

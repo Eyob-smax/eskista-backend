@@ -61,7 +61,10 @@ export class PayInvoiceDto {
   @Min(1)
   amountMinor!: number;
 
-  @ApiPropertyOptional({ description: 'Which Eskista account from `accounts` was paid into.' })
+  @ApiPropertyOptional({
+    example: '7c1e2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b',
+    description: 'Which Eskista account from `accounts` was paid into.',
+  })
   @IsOptional()
   @IsUUID()
   collectionAccountId?: string;
@@ -202,29 +205,48 @@ export class InvoiceDetailResponse extends InvoiceSummaryResponse {
 
 export class InvoicePaymentInstructionsResponse {
   @ApiProperty({ example: 'ESK-INV-2026-000201' }) invoiceNumber!: string;
-  @ApiProperty() currency!: string;
-  @ApiProperty() amountDueMinor!: number;
-  @ApiProperty() amountPaidMinor!: number;
-  @ApiPropertyOptional({ nullable: true, type: Object })
+  @ApiProperty({ example: 'ETB' }) currency!: string;
+  @ApiProperty({ example: 1_585_000 }) amountDueMinor!: number;
+  @ApiProperty({ example: 0 }) amountPaidMinor!: number;
+  @ApiPropertyOptional({
+    example: { number: '882910', accountName: 'Eskista Marketplace PLC' },
+    nullable: true,
+    type: Object,
+  })
   telebirr!: { number: string; accountName: string } | null;
-  @ApiPropertyOptional({ nullable: true, type: Object })
+  @ApiPropertyOptional({
+    example: {
+      bank: 'Commercial Bank of Ethiopia',
+      accountName: 'Eskista Marketplace PLC',
+      accountNumber: '1000234567890',
+    },
+    nullable: true,
+    type: Object,
+  })
   bank!: { bank: string; accountName: string; accountNumber: string } | null;
   @ApiProperty({
     type: () => [CollectionAccountResponse],
     description: 'Every account to pay into.',
   })
   accounts!: CollectionAccountResponse[];
-  @ApiProperty({ description: 'Use the invoice number as the transfer reference.' })
+  @ApiProperty({
+    example: 'ESK-INV-2026-000148',
+    description: 'Use the invoice number as the transfer reference.',
+  })
   paymentReference!: string;
-  @ApiProperty() canSubmit!: boolean;
-  @ApiProperty({ type: [String] }) blockers!: string[];
+  @ApiProperty({ example: true }) canSubmit!: boolean;
+  @ApiProperty({ example: [], type: [String] }) blockers!: string[];
 }
 
 export class PayableBookingResponse {
   @ApiProperty({ example: 'ESK-10484' }) reference!: string;
-  @ApiProperty() description!: string;
-  @ApiProperty() amountDueMinor!: number;
-  @ApiProperty() currency!: string;
-  @ApiPropertyOptional({ nullable: true, description: 'Its current single invoice, if any.' })
+  @ApiProperty({ example: 'Sony FX3 Cinema Camera · 2–4 Oct 2026' }) description!: string;
+  @ApiProperty({ example: 1_585_000 }) amountDueMinor!: number;
+  @ApiProperty({ example: 'ETB' }) currency!: string;
+  @ApiPropertyOptional({
+    example: 'ESK-INV-2026-000148',
+    nullable: true,
+    description: 'Its current single invoice, if any.',
+  })
   invoiceNumber!: string | null;
 }

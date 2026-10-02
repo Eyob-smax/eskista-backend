@@ -145,9 +145,10 @@ export class BookingInvitationResponse {
   })
   status!: string;
   @ApiProperty({ example: '2026-09-26T10:00:00.000Z' }) invitedAt!: string;
-  @ApiPropertyOptional({ nullable: true }) respondedAt!: string | null;
+  @ApiPropertyOptional({ example: '2026-09-26T15:20:00.000Z', nullable: true }) respondedAt!:
+    string | null;
   @ApiProperty({ example: '2026-09-28T10:00:00.000Z' }) expiresAt!: string;
-  @ApiPropertyOptional({ nullable: true }) declineReason!: string | null;
+  @ApiPropertyOptional({ example: null, nullable: true }) declineReason!: string | null;
 }
 
 export class BookingVendorResponse {
@@ -164,8 +165,9 @@ export class BookingVendorResponse {
   earningsMinor!: number;
   @ApiProperty({ enum: ['PENDING', 'ACCEPTED', 'DECLINED'], example: 'ACCEPTED' })
   response!: string;
-  @ApiPropertyOptional({ nullable: true }) respondedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) declineReason!: string | null;
+  @ApiPropertyOptional({ example: '2026-09-26T15:20:00.000Z', nullable: true }) respondedAt!:
+    string | null;
+  @ApiPropertyOptional({ example: null, nullable: true }) declineReason!: string | null;
   @ApiProperty({ enum: ['NOT_DUE', 'PENDING', 'OVERDUE', 'PAID', 'ON_HOLD'], example: 'NOT_DUE' })
   payoutStatus!: string;
 }
@@ -250,7 +252,11 @@ export class HandoverResponse {
     description: 'Set when the vendor disputed the return.',
   })
   returnDisputeNote!: string | null;
-  @ApiProperty({ type: [String], description: "The vendor's pre-handover photos." })
+  @ApiProperty({
+    example: ['/api/v1/files/bookings/ESK-10484/handover/1.jpg'],
+    type: [String],
+    description: "The vendor's pre-handover photos.",
+  })
   photos!: string[];
 }
 

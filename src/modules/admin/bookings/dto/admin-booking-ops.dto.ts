@@ -168,7 +168,7 @@ export class DepositRefundDto {
   @Transform(trim)
   reference!: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Refunded by CBE transfer.' })
   @IsOptional()
   @IsString()
   @MaxLength(500)

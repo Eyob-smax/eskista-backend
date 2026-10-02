@@ -24,7 +24,7 @@ const trim = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.trim() : value;
 
 export class AdminTalentQuery extends PaginationQuery {
-  @ApiPropertyOptional({ description: 'Name, profession, phone or email.' })
+  @ApiPropertyOptional({ example: 'Dawit', description: 'Name, profession, phone or email.' })
   @IsOptional()
   @IsString()
   @MaxLength(120)
@@ -36,7 +36,10 @@ export class AdminTalentQuery extends PaginationQuery {
   @IsEnum(VerificationStatus)
   status?: VerificationStatus;
 
-  @ApiPropertyOptional({ description: 'A profession, e.g. "Cinematographer".' })
+  @ApiPropertyOptional({
+    example: 'Cinematographer',
+    description: 'A profession, e.g. "Cinematographer".',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(80)
@@ -203,12 +206,20 @@ export class TalentServiceAdminResponse {
 export class PortfolioItemAdminResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ example: 'Zeleman — Coffee Origins' }) title!: string;
-  @ApiPropertyOptional({ nullable: true }) description!: string | null;
+  @ApiPropertyOptional({
+    example: 'Shot and graded a 60-second launch film for a coffee brand.',
+    nullable: true,
+  })
+  description!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 'Zeleman' }) client!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 'Director of Photography' }) role!: string | null;
   @ApiPropertyOptional({ nullable: true, example: '2026-03-01' }) startDate!: string | null;
   @ApiPropertyOptional({ nullable: true, example: '2026-03-04' }) endDate!: string | null;
-  @ApiPropertyOptional({ nullable: true }) coverUrl!: string | null;
+  @ApiPropertyOptional({
+    example: '/api/v1/files/talent/9d2f4b6a/portfolio/cover.jpg',
+    nullable: true,
+  })
+  coverUrl!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 'https://vimeo.com/000000' }) workLink!:
     string | null;
 }
@@ -220,7 +231,11 @@ export class TalentExperienceAdminResponse {
   @ApiPropertyOptional({ nullable: true, example: '2022-01-01' }) startDate!: string | null;
   @ApiPropertyOptional({ nullable: true, example: null }) endDate!: string | null;
   @ApiProperty({ example: true }) isCurrent!: boolean;
-  @ApiPropertyOptional({ nullable: true }) description!: string | null;
+  @ApiPropertyOptional({
+    example: 'Shot and graded a 60-second launch film for a coffee brand.',
+    nullable: true,
+  })
+  description!: string | null;
 }
 
 export class TalentEducationAdminResponse {
@@ -348,18 +363,25 @@ export class TalentAdminProfileResponse extends TalentRosterRowResponse {
   @ApiProperty({ type: [TalentReviewAdminResponse] }) reviews!: TalentReviewAdminResponse[];
   @ApiProperty({ type: [TalentUpcomingResponse], description: 'Committed engagements.' })
   upcoming!: TalentUpcomingResponse[];
-  @ApiPropertyOptional({ nullable: true }) submittedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) verifiedAt!: string | null;
+  @ApiPropertyOptional({ example: '2026-09-20T08:00:00.000Z', nullable: true }) submittedAt!:
+    string | null;
+  @ApiPropertyOptional({ example: '2026-09-22T11:30:00.000Z', nullable: true }) verifiedAt!:
+    string | null;
   @ApiPropertyOptional({ nullable: true, example: 'Abel Tesfaye' }) verifiedBy!: string | null;
-  @ApiPropertyOptional({ nullable: true }) rejectionReason!: string | null;
-  @ApiPropertyOptional({ nullable: true }) suspendedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) suspendedReason!: string | null;
-  @ApiPropertyOptional({ nullable: true, description: 'Registered by an admin: who.' })
+  @ApiPropertyOptional({ example: null, nullable: true }) rejectionReason!: string | null;
+  @ApiPropertyOptional({ example: null, nullable: true }) suspendedAt!: string | null;
+  @ApiPropertyOptional({ example: null, nullable: true }) suspendedReason!: string | null;
+  @ApiPropertyOptional({
+    example: 'Abel Tesfaye',
+    nullable: true,
+    description: 'Registered by an admin: who.',
+  })
   registeredBy!: string | null;
   @ApiProperty({
     example: false,
     description: 'Registered by Eskista and not yet claimed by its talent.',
   })
   claimPending!: boolean;
-  @ApiPropertyOptional({ nullable: true }) claimCodeExpiresAt!: string | null;
+  @ApiPropertyOptional({ example: '2026-10-09T00:00:00.000Z', nullable: true })
+  claimCodeExpiresAt!: string | null;
 }

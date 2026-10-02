@@ -73,7 +73,7 @@ export class PayoutAccountDto {
   @Transform(trim)
   accountNumber!: string;
 
-  @ApiPropertyOptional({ description: 'Make this the account payouts go to.' })
+  @ApiPropertyOptional({ example: true, description: 'Make this the account payouts go to.' })
   @IsOptional()
   @IsBoolean()
   isPrimary?: boolean;
@@ -82,14 +82,14 @@ export class PayoutAccountDto {
 export class UpdatePayoutAccountDto extends PartialType(PayoutAccountDto) {}
 
 export class PayoutAccountResponse {
-  @ApiProperty() id!: string;
+  @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ enum: AccountChannel }) channel!: AccountChannel;
   @ApiProperty({ example: 'Telebirr' }) provider!: string;
-  @ApiProperty() accountName!: string;
-  @ApiProperty() accountNumber!: string;
+  @ApiProperty({ example: 'Afro Studio' }) accountName!: string;
+  @ApiProperty({ example: '0911000002' }) accountNumber!: string;
   @ApiProperty({ example: '•••• 6789', description: 'For lists.' }) maskedNumber!: string;
-  @ApiProperty() isPrimary!: boolean;
-  @ApiProperty() createdAt!: string;
+  @ApiProperty({ example: true }) isPrimary!: boolean;
+  @ApiProperty({ example: '2026-09-01T08:00:00.000Z' }) createdAt!: string;
 }
 
 type Owner = { vendorId: string } | { talentProfileId: string };

@@ -32,7 +32,10 @@ export class PaginationQuery {
 }
 
 export class SortQuery {
-  @ApiPropertyOptional({ description: 'Field to sort by. Allowed values differ per endpoint.' })
+  @ApiPropertyOptional({
+    example: 'createdAt',
+    description: 'Field to sort by. Allowed values differ per endpoint.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(40)
@@ -45,7 +48,7 @@ export class SortQuery {
 }
 
 export class SearchQuery {
-  @ApiPropertyOptional({ description: 'Free-text search.' })
+  @ApiPropertyOptional({ example: 'FX3', description: 'Free-text search.' })
   @IsOptional()
   @IsString()
   @MaxLength(120)
@@ -54,7 +57,10 @@ export class SearchQuery {
 }
 
 export class CursorPaginationQuery {
-  @ApiPropertyOptional({ description: 'Opaque cursor from the previous page.' })
+  @ApiPropertyOptional({
+    example: 'eyJpZCI6IjViMGMyZjllIn0',
+    description: 'Opaque cursor from the previous page.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(200)

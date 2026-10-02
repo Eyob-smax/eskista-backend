@@ -31,7 +31,7 @@ const trim = () =>
 // ── Nested pieces ────────────────────────────────────────────────────────────
 
 export class SpecItemDto {
-  @ApiPropertyOptional({ description: 'Section heading, e.g. "Sensor".' })
+  @ApiPropertyOptional({ example: 'Sensor', description: 'Section heading, e.g. "Sensor".' })
   @IsOptional()
   @IsString()
   @MaxLength(60)
@@ -165,7 +165,7 @@ export class CreateEquipmentDto {
   @IsEnum(ConditionGrade)
   condition?: ConditionGrade;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Light wear on the grip; sensor clean.' })
   @IsOptional()
   @IsString()
   @MaxLength(1000)
@@ -182,7 +182,10 @@ export class CreateEquipmentDto {
   includedItems?: IncludedItemDto[];
 
   // Rental information
-  @ApiProperty()
+  @ApiProperty({
+    example:
+      'Full-frame cinema camera with 4K 120p, dual base ISO and a compact body for gimbal work.',
+  })
   @IsString()
   @MinLength(20)
   @MaxLength(4000)
@@ -214,21 +217,27 @@ export class CreateEquipmentDto {
   @Min(1)
   minRentalPeriods?: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 14 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   maxRentalPeriods?: number;
 
-  @ApiPropertyOptional({ description: 'Refundable security deposit, in minor units.' })
+  @ApiPropertyOptional({
+    example: 500_000,
+    description: 'Refundable security deposit, in minor units.',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(0)
   securityDepositMinor?: number;
 
-  @ApiPropertyOptional({ description: 'Full replacement value, used for damage assessment.' })
+  @ApiPropertyOptional({
+    example: 45_000_000,
+    description: 'Full replacement value, used for damage assessment.',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -281,19 +290,22 @@ export class ReplaceAccessoriesDto {
 }
 
 export class UpdateImageDto {
-  @ApiPropertyOptional({ description: 'Make this the main image. Demotes the previous one.' })
+  @ApiPropertyOptional({
+    example: true,
+    description: 'Make this the main image. Demotes the previous one.',
+  })
   @IsOptional()
   @IsBoolean()
   isPrimary?: boolean;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 0 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(0)
   sortOrder?: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Sony FX3, front view' })
   @IsOptional()
   @IsString()
   @MaxLength(160)
@@ -311,7 +323,10 @@ export class CreateUnitDto {
   @trim()
   label?: string;
 
-  @ApiPropertyOptional({ description: 'Unique within the listing when provided.' })
+  @ApiPropertyOptional({
+    example: 'SNY-FX3-2291',
+    description: 'Unique within the listing when provided.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(120)
@@ -323,7 +338,7 @@ export class CreateUnitDto {
   @IsEnum(ConditionGrade)
   condition?: ConditionGrade;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Light wear on the grip; sensor clean.' })
   @IsOptional()
   @IsString()
   @MaxLength(1000)
@@ -357,7 +372,7 @@ export class BlockDatesDto {
   @IsUUID()
   unitId?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Sensor service at the hub' })
   @IsOptional()
   @IsString()
   @MaxLength(240)
@@ -393,67 +408,95 @@ export class EquipmentListQuery extends IntersectionType(
 // ── Responses ────────────────────────────────────────────────────────────────
 
 export class EquipmentImageResponse {
-  @ApiProperty() id!: string;
-  @ApiProperty() url!: string;
-  @ApiPropertyOptional({ nullable: true }) altText!: string | null;
-  @ApiProperty() isPrimary!: boolean;
-  @ApiProperty() sortOrder!: number;
+  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({
+    example: 'https://res.cloudinary.com/eskista/image/upload/listings/fx3-front.jpg',
+  })
+  url!: string;
+  @ApiPropertyOptional({ example: 'Sony FX3, front view', nullable: true }) altText!: string | null;
+  @ApiProperty({ example: true }) isPrimary!: boolean;
+  @ApiProperty({ example: 0 }) sortOrder!: number;
 }
 
 export class EquipmentUnitResponse {
-  @ApiProperty() id!: string;
-  @ApiPropertyOptional({ nullable: true }) label!: string | null;
-  @ApiPropertyOptional({ nullable: true }) serialNumber!: string | null;
+  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiPropertyOptional({ example: 'FX3-002', nullable: true }) label!: string | null;
+  @ApiPropertyOptional({ example: 'SNY-FX3-2291', nullable: true }) serialNumber!: string | null;
   @ApiProperty({ enum: ConditionGrade }) condition!: ConditionGrade;
-  @ApiPropertyOptional({ nullable: true }) conditionNotes!: string | null;
+  @ApiPropertyOptional({ example: 'Light wear on the grip; sensor clean.', nullable: true })
+  conditionNotes!: string | null;
   @ApiProperty({ enum: UnitStatus }) status!: UnitStatus;
-  @ApiProperty({ description: 'Bookings currently holding this unit.' }) activeBookings!: number;
+  @ApiProperty({ example: 1, description: 'Bookings currently holding this unit.' })
+  activeBookings!: number;
 }
 
 export class EquipmentSummaryResponse {
-  @ApiProperty() id!: string;
-  @ApiProperty() name!: string;
-  @ApiPropertyOptional({ nullable: true }) brand!: string | null;
-  @ApiPropertyOptional({ nullable: true }) model!: string | null;
-  @ApiProperty() categoryName!: string;
-  @ApiPropertyOptional({ nullable: true }) primaryImageUrl!: string | null;
+  @ApiProperty({ format: 'uuid' }) id!: string;
+  @ApiProperty({ example: 'Sony FX3 Cinema Camera' }) name!: string;
+  @ApiPropertyOptional({ example: 'Sony', nullable: true }) brand!: string | null;
+  @ApiPropertyOptional({ example: 'ILME-FX3', nullable: true }) model!: string | null;
+  @ApiProperty({ example: 'Cinema Cameras' }) categoryName!: string;
+  @ApiPropertyOptional({
+    example: 'https://res.cloudinary.com/eskista/image/upload/listings/fx3-front.jpg',
+    nullable: true,
+  })
+  primaryImageUrl!: string | null;
   @ApiProperty({ enum: ListingStatus }) status!: ListingStatus;
-  @ApiProperty() rentalPriceMinor!: number;
+  @ApiProperty({ example: 345_000 }) rentalPriceMinor!: number;
   @ApiProperty({ enum: RentalPeriodUnit }) rentalPeriodUnit!: RentalPeriodUnit;
-  @ApiProperty() currency!: string;
-  @ApiProperty() unitCount!: number;
-  @ApiProperty() ratingAvg!: number;
-  @ApiProperty() ratingCount!: number;
-  @ApiProperty() isFeatured!: boolean;
+  @ApiProperty({ example: 'ETB' }) currency!: string;
+  @ApiProperty({ example: 3 }) unitCount!: number;
+  @ApiProperty({ example: 4.8 }) ratingAvg!: number;
+  @ApiProperty({ example: 23 }) ratingCount!: number;
+  @ApiProperty({ example: false }) isFeatured!: boolean;
   @ApiProperty({
     description: 'Derived from live bookings — never a stored flag.',
     enum: ['AVAILABLE', 'BOOKED'],
   })
   availabilityLabel!: 'AVAILABLE' | 'BOOKED';
-  @ApiPropertyOptional({ nullable: true, description: 'Next return date when booked.' })
+  @ApiPropertyOptional({
+    example: '2026-10-04T14:00:00.000Z',
+    nullable: true,
+    description: 'Next return date when booked.',
+  })
   nextDueDate!: Date | null;
-  @ApiProperty() createdAt!: Date;
+  @ApiProperty({ example: '2026-08-14T09:00:00.000Z' }) createdAt!: Date;
 }
 
 export class EquipmentDetailResponse extends EquipmentSummaryResponse {
-  @ApiProperty() categoryId!: string;
-  @ApiProperty() description!: string;
-  @ApiProperty() location!: string;
-  @ApiPropertyOptional({ nullable: true }) mainSpecification!: string | null;
-  @ApiProperty({ type: [String] }) compatibility!: string[];
-  @ApiPropertyOptional({ nullable: true }) powerBattery!: string | null;
+  @ApiProperty({ format: 'uuid' }) categoryId!: string;
+  @ApiProperty({
+    example:
+      'Full-frame cinema camera with 4K 120p, dual base ISO and a compact body for gimbal work.',
+  })
+  description!: string;
+  @ApiProperty({ example: 'Bole, Addis Ababa' }) location!: string;
+  @ApiPropertyOptional({ example: 'Full-frame 12.1 MP, 4K 120p', nullable: true })
+  mainSpecification!: string | null;
+  @ApiProperty({
+    example: ['Sony E-mount lenses', 'V-mount batteries via adapter'],
+    type: [String],
+  })
+  compatibility!: string[];
+  @ApiPropertyOptional({ example: 'NP-FZ100, about 2 hours per battery', nullable: true })
+  powerBattery!: string | null;
   @ApiProperty({ enum: ConditionGrade }) condition!: ConditionGrade;
   @ApiPropertyOptional({ nullable: true, description: 'Stars out of ten.', example: 9 })
   conditionRating!: number | null;
-  @ApiPropertyOptional({ nullable: true }) conditionNotes!: string | null;
-  @ApiProperty() minRentalPeriods!: number;
-  @ApiPropertyOptional({ nullable: true }) maxRentalPeriods!: number | null;
-  @ApiPropertyOptional({ nullable: true }) securityDepositMinor!: number | null;
-  @ApiPropertyOptional({ nullable: true }) replacementValueMinor!: number | null;
-  @ApiPropertyOptional({ nullable: true }) rentalRequirements!: string | null;
-  @ApiPropertyOptional({ nullable: true }) rejectionReason!: string | null;
-  @ApiPropertyOptional({ nullable: true }) submittedAt!: Date | null;
-  @ApiPropertyOptional({ nullable: true }) publishedAt!: Date | null;
+  @ApiPropertyOptional({ example: 'Light wear on the grip; sensor clean.', nullable: true })
+  conditionNotes!: string | null;
+  @ApiProperty({ example: 1 }) minRentalPeriods!: number;
+  @ApiPropertyOptional({ example: 14, nullable: true }) maxRentalPeriods!: number | null;
+  @ApiPropertyOptional({ example: 500_000, nullable: true }) securityDepositMinor!: number | null;
+  @ApiPropertyOptional({ example: 45_000_000, nullable: true }) replacementValueMinor!:
+    number | null;
+  @ApiPropertyOptional({ example: 'Valid ID and a security deposit.', nullable: true })
+  rentalRequirements!: string | null;
+  @ApiPropertyOptional({ example: null, nullable: true }) rejectionReason!: string | null;
+  @ApiPropertyOptional({ example: '2026-08-14T09:30:00.000Z', nullable: true })
+  submittedAt!: Date | null;
+  @ApiPropertyOptional({ example: '2026-08-15T10:00:00.000Z', nullable: true })
+  publishedAt!: Date | null;
 
   @ApiProperty({ type: [EquipmentImageResponse] }) images!: EquipmentImageResponse[];
   @ApiProperty({ type: [SpecItemDto] }) specs!: SpecItemDto[];
@@ -461,8 +504,9 @@ export class EquipmentDetailResponse extends EquipmentSummaryResponse {
   @ApiProperty({ type: [EquipmentUnitResponse] }) units!: EquipmentUnitResponse[];
   @ApiProperty({ type: [EquipmentSummaryResponse] }) accessories!: EquipmentSummaryResponse[];
 
-  @ApiProperty({ type: [String] }) outstandingRequirements!: string[];
-  @ApiProperty() canSubmitForReview!: boolean;
+  @ApiProperty({ example: ['Add at least one photo'], type: [String] })
+  outstandingRequirements!: string[];
+  @ApiProperty({ example: false }) canSubmitForReview!: boolean;
 
   @ApiProperty({
     description:
@@ -491,7 +535,7 @@ export class AvailabilityDayResponse {
       '(in use) are derived from bookings and cannot be set directly.',
   })
   state!: 'AVAILABLE' | 'BLOCKED' | 'RESERVED' | 'RENTED';
-  @ApiProperty({ description: 'Units free on this date.' }) unitsAvailable!: number;
-  @ApiProperty() unitsTotal!: number;
-  @ApiPropertyOptional({ nullable: true }) blockId!: string | null;
+  @ApiProperty({ example: 2, description: 'Units free on this date.' }) unitsAvailable!: number;
+  @ApiProperty({ example: 3 }) unitsTotal!: number;
+  @ApiPropertyOptional({ format: 'uuid', nullable: true }) blockId!: string | null;
 }

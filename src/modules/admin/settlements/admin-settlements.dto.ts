@@ -42,8 +42,14 @@ export class AdminSettlementsQuery extends PaginationQuery {
   @Transform(trim)
   q?: string;
 
-  @ApiPropertyOptional() @IsOptional() @IsUUID() vendorId?: string;
-  @ApiPropertyOptional() @IsOptional() @IsUUID() talentProfileId?: string;
+  @ApiPropertyOptional({ example: '5b0c2f9e-6a1d-4c1e-9f0a-2d3e4f5a6b7c' })
+  @IsOptional()
+  @IsUUID()
+  vendorId?: string;
+  @ApiPropertyOptional({ example: '9d2f4b6a-1c3e-4a5b-8c7d-6e5f4a3b2c1d' })
+  @IsOptional()
+  @IsUUID()
+  talentProfileId?: string;
 
   @ApiPropertyOptional({ example: '2026-09-01', description: 'Created on or after.' })
   @IsOptional()
@@ -65,6 +71,7 @@ export class MarkPaidDto {
   payoutReference!: string;
 
   @ApiPropertyOptional({
+    example: '7c1e2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b',
     description: "One of the payee's payout accounts; their primary one if omitted.",
   })
   @IsOptional()
@@ -158,9 +165,29 @@ export class SettlementsSummaryResponse {
 }
 
 export class SettlementDetailResponse extends SettlementRowResponse {
-  @ApiProperty({ type: 'array', items: { type: 'object' } })
+  @ApiProperty({
+    example: [
+      { label: 'Rental Revenue', amountMinor: 1_035_000 },
+      { label: 'Commission', amountMinor: -135_000 },
+      { label: 'Settlement', amountMinor: 900_000, emphasis: true },
+    ],
+    type: 'array',
+    items: { type: 'object' },
+  })
   breakdown!: { label: string; amountMinor: number; emphasis?: boolean }[];
-  @ApiProperty({ type: 'array', items: { type: 'object' } })
+  @ApiProperty({
+    example: [
+      {
+        id: '5b0c2f9e-6a1d-4c1e-9f0a-2d3e4f5a6b7c',
+        amountMinor: 150_000,
+        reason: 'Damage compensation withheld from the deposit',
+        createdBy: 'Sara Mekonnen',
+        createdAt: '2026-10-04T10:00:00.000Z',
+      },
+    ],
+    type: 'array',
+    items: { type: 'object' },
+  })
   adjustments!: {
     id: string;
     amountMinor: number;
@@ -169,6 +196,12 @@ export class SettlementDetailResponse extends SettlementRowResponse {
     createdAt: string;
   }[];
   @ApiPropertyOptional({
+    example: {
+      channel: 'TELEBIRR',
+      provider: 'Telebirr',
+      accountName: 'Afro Studio',
+      accountNumber: '0911000002',
+    },
     nullable: true,
     type: Object,
     description: 'Where the money went, once paid.',
@@ -180,6 +213,16 @@ export class SettlementDetailResponse extends SettlementRowResponse {
     accountNumber: string | null;
   } | null;
   @ApiProperty({
+    example: [
+      {
+        id: '7c1e2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b',
+        channel: 'TELEBIRR',
+        provider: 'Telebirr',
+        accountName: 'Afro Studio',
+        maskedNumber: '•••• 0002',
+        isPrimary: true,
+      },
+    ],
     type: 'array',
     items: { type: 'object' },
     description: "The payee's accounts, to pick from.",
