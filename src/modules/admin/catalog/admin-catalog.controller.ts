@@ -15,16 +15,9 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import {
-  ApiBody,
-  ApiConsumes,
-  ApiOkResponse,
-  ApiOperation,
-  ApiParam,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBody, ApiConsumes, ApiOkResponse, ApiParam, ApiTags } from '@nestjs/swagger';
 import { AdminTier, CategoryKind } from '@prisma/client';
-import { ApiPaginatedResponse, ApiStandardErrors } from '../../../common/dto/api-docs';
+import { ApiPaginatedResponse, ApiStandardErrors, ApiEndpoint } from '../../../common/dto/api-docs';
 import type { Paginated } from '../../../common/dto/pagination.dto';
 import type { UploadedFile } from '../../../common/upload';
 import { CurrentUser } from '../../auth/auth.decorators';
@@ -70,10 +63,6 @@ const UNIT_ID = { name: 'unitId', format: 'uuid', description: 'The equipment un
 const LISTING_ID = { name: 'listingId', format: 'uuid', description: 'The listing id.' };
 const CATEGORY_ID = { name: 'id', format: 'uuid', description: 'The category id.' };
 
-const AS_VENDOR =
-  'Runs through the vendor’s own equipment rules, as that vendor — an admin edit is held to ' +
-  'exactly what the vendor could do.';
-
 @ApiTags('admin · equipment')
 @AdminAccess()
 @Controller({ path: 'admin/equipment', version: '1' })
@@ -81,9 +70,10 @@ export class AdminEquipmentController {
   constructor(private readonly equipment: AdminEquipmentService) {}
 
   @Get('kpis')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Equipment Management tiles',
-    description: 'Total units, available, on rental, needs attention — across every vendor.',
+    does: 'Total units, available, on rental, needs attention — across every vendor.',
+    behind: ['Read only. Four counts over the equipment-unit table.'],
   })
   @ApiOkResponse({ type: EquipmentKpisResponse })
   @ApiStandardErrors()
@@ -92,11 +82,12 @@ export class AdminEquipmentController {
   }
 
   @Get('units')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Equipment Management — one row per physical unit',
-    description:
-      'Filter with `state`: AVAILABLE, RESERVED (held for an upcoming rental), RENTED (out), ' +
-      'RETURNED (back, awaiting inspection), IN_QA (maintenance or graded Damaged), RETIRED.',
+    does: 'Every unit Eskista holds or has out. Filterable by state: AVAILABLE, RESERVED, RENTED, RETURNED, IN_QA, RETIRED.',
+    behind: [
+      'Read only. State is derived: RESERVED = booked but not dispatched; RENTED = custody CLIENT; RETURNED = back at the hub awaiting inspection; IN_QA = graded Damaged or in maintenance; RETIRED = decommissioned.',
+    ],
   })
   @ApiPaginatedResponse(UnitRowResponse)
   @ApiStandardErrors({ badRequest: 'A filter is not valid.' })
@@ -105,11 +96,11 @@ export class AdminEquipmentController {
   }
 
   @Get('units/:unitId')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Unit detail',
-    description:
-      'Overview & Specs, the latest Manual Inspection, Rental Bookings (or "Unit is currently ' +
-      'in the Hub Vault"), and Condition History.',
+    does: 'Overview & Specs, the latest Manual Inspection, Rental Bookings (or "Unit is currently in the Hub Vault"), and Condition History.',
+    behind: ['Read only.'],
+    rules: ['404 when not found.'],
   })
   @ApiParam(UNIT_ID)
   @ApiOkResponse({ type: UnitDetailResponse })
@@ -119,13 +110,21 @@ export class AdminEquipmentController {
   }
 
   @Patch('units/:unitId')
-  @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Edit a unit',
-    description:
-      'Label, serial, condition notes, custody, or `status` (MAINTENANCE takes it out of ' +
-      'service, RETIRED for good). Send only what changes.',
+    does: 'Label, serial, condition notes, custody, or status (MAINTENANCE takes it out of service, RETIRED for good). Send only what changes.',
+    behind: [
+      'Unit updated; admin audit log written.',
+      'MAINTENANCE: the unit is removed from service and flagged for repair.',
+      'RETIRED: the unit is decommissioned permanently.',
+    ],
+    rules: [
+      '400 for an invalid field.',
+      '409 when another unit of this listing already has that serial number.',
+      '404 when not found.',
+    ],
   })
+  @AdminAccess(AdminTier.ADMIN)
   @ApiParam(UNIT_ID)
   @ApiOkResponse({ type: UnitDetailResponse })
   @ApiStandardErrors({
@@ -142,7 +141,11 @@ export class AdminEquipmentController {
   }
 
   @Get('listings')
-  @ApiOperation({ summary: 'Every listing, across vendors', description: 'Archived ones are left out unless `status=ARCHIVED`.' })
+  @ApiEndpoint({
+    summary: 'Every listing, across vendors',
+    does: 'The full catalogue from the admin side. Archived ones are left out unless `status=ARCHIVED`.',
+    behind: ['Read only.'],
+  })
   @ApiPaginatedResponse(ListingAdminRowResponse)
   @ApiStandardErrors({ badRequest: 'A filter is not valid.' })
   listings(@Query() query: AdminListingsQuery): Promise<Paginated<ListingAdminRowResponse>> {
@@ -150,14 +153,20 @@ export class AdminEquipmentController {
   }
 
   @Post('listings')
-  @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Add Equipment for a vendor',
-    description:
-      'Created as a draft owned by `vendorId`. Then add photos, submit, and approve at ' +
-      '`POST /admin/review/listings/:id/approve`. ' +
-      AS_VENDOR,
+    does: 'Creates a draft listing owned by `vendorId`. Then add photos, submit, and approve.',
+    behind: [
+      "Runs through the vendor's own equipment rules, as that vendor — an admin edit is held to exactly what the vendor could do.",
+      'Admin audit log written.',
+    ],
+    seenBy: ['Vendor: a new draft listing.'],
+    rules: [
+      '400 for an invalid field, or the category does not exist.',
+      '404 when the vendor is not found.',
+    ],
   })
+  @AdminAccess(AdminTier.ADMIN)
   @ApiOkResponse({ type: EquipmentDetailResponse })
   @ApiStandardErrors({
     badRequest: 'A field is invalid, or the category does not exist.',
@@ -172,7 +181,12 @@ export class AdminEquipmentController {
   }
 
   @Get('listings/:listingId')
-  @ApiOperation({ summary: 'A listing, as its vendor sees it — with units and availability' })
+  @ApiEndpoint({
+    summary: 'A listing, as its vendor sees it — with units and availability',
+    does: 'One listing with its images, units and calendar.',
+    behind: ['Read only.'],
+    rules: ['404 when not found.'],
+  })
   @ApiParam(LISTING_ID)
   @ApiOkResponse({ type: EquipmentDetailResponse })
   @ApiStandardErrors({ notFound: 'Listing not found' })
@@ -181,8 +195,13 @@ export class AdminEquipmentController {
   }
 
   @Patch('listings/:listingId')
+  @ApiEndpoint({
+    summary: 'Edit a listing',
+    does: "Send only what changes. Runs through the vendor's own equipment rules.",
+    behind: ['Listing updated; admin audit log written.'],
+    rules: ['400 for an invalid field.', '404 when not found.'],
+  })
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Edit a listing', description: `Send only what changes. ${AS_VENDOR}` })
   @ApiParam(LISTING_ID)
   @ApiOkResponse({ type: EquipmentDetailResponse })
   @ApiStandardErrors({ badRequest: 'A field is invalid.', notFound: 'Listing not found' })
@@ -195,11 +214,16 @@ export class AdminEquipmentController {
   }
 
   @Post('listings/:listingId/images')
+  @ApiEndpoint({
+    summary: 'Add a photo to a listing',
+    does: 'Uploads a PNG, JPEG or WebP image. The first photo becomes the main image.',
+    behind: ["Photo stored on Cloudinary under the vendor's folder.", 'Admin audit log written.'],
+    rules: ['400 for no file, or not a PNG/JPEG/WebP image.', '404 when the listing is not found.'],
+  })
   @AdminAccess(AdminTier.ADMIN)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiBody(IMAGE_BODY)
-  @ApiOperation({ summary: 'Add a photo to a listing', description: 'The first photo becomes the main image.' })
   @ApiParam(LISTING_ID)
   @ApiOkResponse({ type: EquipmentImageResponse })
   @ApiStandardErrors({
@@ -215,14 +239,18 @@ export class AdminEquipmentController {
   }
 
   @Post('listings/:listingId/submit')
+  @ApiEndpoint({
+    summary: 'Submit a listing for review',
+    does: 'Needs photos, a price, a description and a condition rating, and a verified vendor. A first unit is created when it has none.',
+    behind: ['Status → PENDING_REVIEW.', 'Admin audit log written.'],
+    rules: [
+      '400 when the listing is not ready for review (`outstandingRequirements` lists what is missing).',
+      '404 when not found.',
+      '409 when the listing is already awaiting review.',
+    ],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
-    summary: 'Submit a listing for review',
-    description:
-      'Needs photos, a price, a description and a condition rating, and a verified vendor. ' +
-      'A first unit is created when it has none.',
-  })
   @ApiParam(LISTING_ID)
   @ApiOkResponse({ type: EquipmentDetailResponse })
   @ApiStandardErrors({
@@ -238,8 +266,16 @@ export class AdminEquipmentController {
   }
 
   @Post('listings/:listingId/units')
+  @ApiEndpoint({
+    summary: 'Add a physical unit to a listing',
+    does: 'Creates a new copy of the equipment.',
+    behind: ['Unit added with label, serial, condition. Admin audit log written.'],
+    rules: [
+      '404 when the listing is not found.',
+      '409 when another unit of this listing already has that serial number.',
+    ],
+  })
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Add a physical unit to a listing' })
   @ApiParam(LISTING_ID)
   @ApiOkResponse({ type: UnitDetailResponse, description: 'The new unit.' })
   @ApiStandardErrors({
@@ -255,12 +291,19 @@ export class AdminEquipmentController {
   }
 
   @Post('listings/:listingId/suspend')
+  @ApiEndpoint({
+    summary: 'Take a listing off the catalogue',
+    does: 'Published listings only. The listing loses any promotion; the vendor is told why.',
+    behind: [
+      'Listing status → SUSPENDED; feature tier cleared.',
+      'Notification: vendor — Listing Suspended (with the reason).',
+      'Admin audit log written.',
+    ],
+    seenBy: ['Vendor: "Your listing has been temporarily removed".'],
+    rules: ['404 when not found.', '409 when it is not published.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
-    summary: 'Take a listing off the catalogue',
-    description: 'Published listings only. It loses any promotion; the vendor is told why.',
-  })
   @ApiParam(LISTING_ID)
   @ApiOkResponse({ type: EquipmentDetailResponse })
   @ApiStandardErrors({
@@ -276,9 +319,15 @@ export class AdminEquipmentController {
   }
 
   @Post('listings/:listingId/unsuspend')
+  @ApiEndpoint({
+    summary: 'Put a suspended listing back on the catalogue',
+    does: 'Restores a suspended listing to Published.',
+    behind: ['Listing status → PUBLISHED. Admin audit log written.'],
+    seenBy: ['Vendor: the listing is live again.'],
+    rules: ['404 when not found.', '409 when it is not suspended.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Put a suspended listing back on the catalogue' })
   @ApiParam(LISTING_ID)
   @ApiOkResponse({ type: EquipmentDetailResponse })
   @ApiStandardErrors({ notFound: 'Listing not found', conflict: 'This listing is not suspended' })
@@ -297,11 +346,10 @@ export class AdminCategoriesController {
   constructor(private readonly categories: AdminCategoriesService) {}
 
   @Get()
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Equipment Categories, or Talent Categories & Skills (`kind=TALENT`)',
-    description:
-      'In display order, with available / on rental / in QA unit counts (equipment) or talent ' +
-      'counts (talent), and each category’s associations.',
+    does: "In display order, with unit counts (equipment) or talent counts (talent), and each category's associations.",
+    behind: ['Read only.'],
   })
   @ApiOkResponse({ type: [AdminCategoryResponse] })
   @ApiStandardErrors({ badRequest: 'Unknown `kind`.' })
@@ -310,7 +358,12 @@ export class AdminCategoriesController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Category detail' })
+  @ApiEndpoint({
+    summary: 'Category detail',
+    does: 'One category with its associations and counts.',
+    behind: ['Read only.'],
+    rules: ['404 when not found.'],
+  })
   @ApiParam(CATEGORY_ID)
   @ApiOkResponse({ type: AdminCategoryResponse })
   @ApiStandardErrors({ notFound: 'Category not found' })
@@ -319,13 +372,16 @@ export class AdminCategoriesController {
   }
 
   @Post()
-  @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Create Category',
-    description:
-      'Name, internal description, skills (talent), parent (one level deep), visibility and ' +
-      'associations. The slug is derived from the name when omitted. Added at the end of the order.',
+    does: 'Name, internal description, skills (talent), parent (one level deep), visibility and associations. The slug is derived from the name when omitted.',
+    behind: ['Added at the end of the display order. Admin audit log written.'],
+    rules: [
+      '400 when the parent must be a category of the same kind.',
+      '409 when a category with the slug already exists.',
+    ],
   })
+  @AdminAccess(AdminTier.ADMIN)
   @ApiOkResponse({ type: AdminCategoryResponse })
   @ApiStandardErrors({
     badRequest: 'The parent must be a category of the same kind',
@@ -339,11 +395,17 @@ export class AdminCategoriesController {
   }
 
   @Patch(':id')
-  @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Edit Category',
-    description: 'Send only what changes. `associationIds` replaces the whole list.',
+    does: 'Send only what changes. `associationIds` replaces the whole list.',
+    behind: ['Admin audit log written.'],
+    rules: [
+      '400 when a category cannot be its own parent.',
+      '404 when not found.',
+      '409 when a category with that slug already exists.',
+    ],
   })
+  @AdminAccess(AdminTier.ADMIN)
   @ApiParam(CATEGORY_ID)
   @ApiOkResponse({ type: AdminCategoryResponse })
   @ApiStandardErrors({
@@ -360,13 +422,16 @@ export class AdminCategoriesController {
   }
 
   @Delete(':id')
-  @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Delete a category',
-    description:
-      'Deleted when nothing uses it. With equipment, services or subcategories it is hidden ' +
-      'instead (`deleted: false`), so nothing points at a missing category.',
+    does: 'Deleted when nothing uses it. With equipment, services or subcategories it is hidden instead, so nothing points at a missing category.',
+    behind: [
+      'Hard-deleted when empty; soft-deleted (hidden) when equipment, talent services or subcategories depend on it.',
+      'Admin audit log written.',
+    ],
+    rules: ['404 when not found.'],
   })
+  @AdminAccess(AdminTier.ADMIN)
   @ApiParam(CATEGORY_ID)
   @ApiOkResponse({ type: CategoryDeleteResponse })
   @ApiStandardErrors({ notFound: 'Category not found' })
@@ -378,11 +443,13 @@ export class AdminCategoriesController {
   }
 
   @Put('order/:kind')
-  @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Reorder every category of a kind',
-    description: 'Send every category id of the kind exactly once, in the new order.',
+    does: 'Send every category id of the kind exactly once, in the new order.',
+    behind: ['Display order rewritten. Admin audit log written.'],
+    rules: ['400 when the list is incomplete or has duplicates.'],
   })
+  @AdminAccess(AdminTier.ADMIN)
   @ApiParam({ name: 'kind', enum: CategoryKind, example: CategoryKind.EQUIPMENT })
   @ApiOkResponse({ type: [AdminCategoryResponse] })
   @ApiStandardErrors({ badRequest: 'Send every equipment category exactly once' })
@@ -399,12 +466,14 @@ export class AdminCategoriesController {
   }
 
   @Post(':id/move')
+  @ApiEndpoint({
+    summary: 'The up / down arrows',
+    does: 'Swaps with its neighbour; at either end nothing moves. Returns the new order.',
+    behind: ['Display order swap. Admin audit log written.'],
+    rules: ['404 when not found.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
-    summary: 'The up / down arrows',
-    description: 'Swaps with its neighbour; at either end nothing moves. Returns the new order.',
-  })
   @ApiParam(CATEGORY_ID)
   @ApiOkResponse({ type: [AdminCategoryResponse] })
   @ApiStandardErrors({ notFound: 'Category not found' })
@@ -417,12 +486,19 @@ export class AdminCategoriesController {
   }
 
   @Post(':id/thumbnail')
+  @ApiEndpoint({
+    summary: 'Upload the category thumbnail',
+    does: 'Replaces the old one.',
+    behind: [
+      'Image stored on Cloudinary. The old thumbnail is not deleted (Cloudinary handles expiry). Admin audit log written.',
+    ],
+    rules: ['400 for no file, or not a PNG/JPEG/WebP image.', '404 when not found.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiBody(IMAGE_BODY)
-  @ApiOperation({ summary: 'Upload the category thumbnail', description: 'Replaces the old one.' })
   @ApiParam(CATEGORY_ID)
   @ApiOkResponse({ type: AdminCategoryResponse })
   @ApiStandardErrors({

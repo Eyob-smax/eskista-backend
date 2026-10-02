@@ -74,32 +74,43 @@ export class DossierDocumentResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ example: 'FAYDA_ID' }) type!: string;
   @ApiProperty({ example: 'PENDING' }) status!: string;
-  @ApiProperty() fileName!: string;
-  @ApiProperty() url!: string;
+  @ApiProperty({ example: 'fayda-front.jpg' }) fileName!: string;
+  @ApiProperty({ example: '/api/v1/files/dossier/fayda-front.jpg' }) url!: string;
 }
 
 export class DossierReferenceResponse {
   @ApiProperty({ example: 'Hana Girma' }) name!: string;
   @ApiPropertyOptional({ nullable: true, example: '+251911556677' }) contact!: string | null;
-  @ApiPropertyOptional({ nullable: true }) relationship!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Former employer' }) relationship!: string | null;
 }
 
 export class DossierPortfolioResponse {
-  @ApiProperty() title!: string;
-  @ApiPropertyOptional({ nullable: true }) client!: string | null;
-  @ApiPropertyOptional({ nullable: true }) role!: string | null;
-  @ApiPropertyOptional({ nullable: true }) coverUrl!: string | null;
-  @ApiPropertyOptional({ nullable: true }) workLink!: string | null;
+  @ApiProperty({ example: 'Meskel Square Concert' }) title!: string;
+  @ApiPropertyOptional({ nullable: true, example: 'Dire Dawa Arts Festival' }) client!:
+    string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Lead Videographer' }) role!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '/api/v1/files/dossier/portfolio/cover1.jpg' })
+  coverUrl!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'https://vimeo.com/example' }) workLink!:
+    string | null;
 }
 
 export class TalentDossierResponse {
-  @ApiPropertyOptional({ nullable: true }) avatarUrl!: string | null;
-  @ApiProperty({ type: [String] }) professions!: string[];
-  @ApiPropertyOptional({ nullable: true }) bio!: string | null;
-  @ApiProperty() location!: string;
-  @ApiPropertyOptional({ nullable: true }) phone!: string | null;
-  @ApiPropertyOptional({ nullable: true }) email!: string | null;
-  @ApiPropertyOptional({ nullable: true }) profileUrl!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '/api/v1/files/avatars/talent-42.jpg' })
+  avatarUrl!: string | null;
+  @ApiProperty({ type: [String], example: ['Videographer', 'Photographer'] })
+  professions!: string[];
+  @ApiPropertyOptional({
+    nullable: true,
+    example:
+      'Award-winning videographer with 8 years of experience in commercial and event coverage.',
+  })
+  bio!: string | null;
+  @ApiProperty({ example: 'Addis Ababa, Bole' }) location!: string;
+  @ApiPropertyOptional({ nullable: true, example: '+251912345678' }) phone!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'talent@example.com' }) email!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '/talent/dawit-kebede' }) profileUrl!:
+    string | null;
   @ApiProperty({
     example: { identity: 'IN_PROGRESS', portfolio: 'QUEUED', references: 'QUEUED' },
   })
@@ -208,12 +219,19 @@ export class ApproveDto {
   @Max(10_000)
   commissionRateBps?: number;
 
-  @ApiPropertyOptional({ description: 'Listings only: put it on the Featured rail.' })
+  @ApiPropertyOptional({
+    description: 'Listings only: put it on the Featured rail.',
+    example: false,
+  })
   @IsOptional()
   @IsBoolean()
   featured?: boolean;
 
-  @ApiPropertyOptional({ description: 'Kept in the audit log.', maxLength: 500 })
+  @ApiPropertyOptional({
+    description: 'Kept in the audit log.',
+    maxLength: 500,
+    example: 'Approved after verifying serial number.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(500)

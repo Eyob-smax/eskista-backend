@@ -13,15 +13,8 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import {
-  ApiBody,
-  ApiConsumes,
-  ApiOkResponse,
-  ApiOperation,
-  ApiParam,
-  ApiTags,
-} from '@nestjs/swagger';
-import { ApiPaginatedResponse, ApiStandardErrors } from '../../../common/dto/api-docs';
+import { ApiBody, ApiConsumes, ApiOkResponse, ApiParam, ApiTags } from '@nestjs/swagger';
+import { ApiPaginatedResponse, ApiStandardErrors, ApiEndpoint } from '../../../common/dto/api-docs';
 import { AdminTier } from '@prisma/client';
 import type { Response } from 'express';
 import type { Paginated } from '../../../common/dto/pagination.dto';
@@ -42,9 +35,12 @@ export class AdminInspectionsController {
   constructor(private readonly inspections: AdminInspectionsService) {}
 
   @Get('inspections')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Inspections & QA',
-    description: 'Every inspection, newest first. `flagged=true` for Needs Attention and Damaged.',
+    does: 'Every inspection across all units and bookings, newest first. `flagged=true` for Needs Attention and Damaged.',
+    behind: [
+      'Read only. Includes outgoing (hub → client), return (client → hub) and routine (staff check) inspections.',
+    ],
   })
   @ApiPaginatedResponse(InspectionResponse)
   @ApiStandardErrors({ badRequest: 'A filter is not valid.' })
@@ -53,7 +49,12 @@ export class AdminInspectionsController {
   }
 
   @Get('inspections/:id')
-  @ApiOperation({ summary: 'One inspection, with its photos' })
+  @ApiEndpoint({
+    summary: 'One inspection, with its photos',
+    does: 'The grade, notes, pass/fail checks, inspector, and every photo.',
+    behind: ['Read only. Photos served as private `/api/v1/files/…` links.'],
+    rules: ['404 when not found.'],
+  })
   @ApiParam(INSPECTION_ID)
   @ApiOkResponse({ type: InspectionResponse })
   @ApiStandardErrors({ notFound: 'Inspection not found' })
@@ -62,7 +63,12 @@ export class AdminInspectionsController {
   }
 
   @Get('inspections/:id/sheet.pdf')
-  @ApiOperation({ summary: 'The inspection sheet' })
+  @ApiEndpoint({
+    summary: 'The inspection sheet',
+    does: 'A PDF the hub can print: the grade, checks, notes and photos on one page.',
+    behind: ['Rendered on demand from the inspection record. Nothing is stored.'],
+    rules: ['404 when not found.'],
+  })
   @ApiParam(INSPECTION_ID)
   @ApiOkResponse({ description: 'The PDF.', content: PDF_CONTENT })
   @ApiStandardErrors({ notFound: 'Inspection not found' })
@@ -75,8 +81,13 @@ export class AdminInspectionsController {
   }
 
   @Delete('inspections/:id/photos/:photoId')
+  @ApiEndpoint({
+    summary: 'Remove a photo from an inspection',
+    does: 'Deletes one photo. The file is removed from storage.',
+    behind: ['Photo deleted from Cloudinary and from the database.', 'Admin audit log written.'],
+    rules: ['404 when the photo is not found.'],
+  })
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Remove a photo from an inspection' })
   @ApiParam(INSPECTION_ID)
   @ApiParam({ name: 'photoId', format: 'uuid' })
   @ApiOkResponse({ type: InspectionResponse })
@@ -90,10 +101,10 @@ export class AdminInspectionsController {
   }
 
   @Get('units/:unitId/inspections')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Condition History of a unit',
-    description:
-      'Its routine checks, and the outgoing and return inspections of every rental it went out on. Newest first.',
+    does: 'Its routine checks, and the outgoing and return inspections of every rental it went out on. Newest first.',
+    behind: ['Read only.'],
   })
   @ApiParam(UNIT_ID)
   @ApiOkResponse({ type: [InspectionResponse] })
@@ -103,13 +114,20 @@ export class AdminInspectionsController {
   }
 
   @Post('units/:unitId/inspections')
+  @ApiEndpoint({
+    summary: 'Manual Inspection of a unit — staff check or routine service',
+    does: 'A hub inspection outside any rental: grades the unit, records notes and photos. A Damaged grade takes the unit out of rotation.',
+    behind: [
+      'One ROUTINE inspection created for the unit.',
+      'Photos (multipart `photos`, up to 6) stored privately on Cloudinary.',
+      'Unit: last grade, last inspected and condition updated; a DAMAGED grade puts it in MAINTENANCE.',
+      'Admin audit log written.',
+    ],
+    rules: ['400 for an invalid grade, or too many photos.', '404 when the unit is not found.'],
+  })
   @AdminAccess(AdminTier.ADMIN)
   @UseInterceptors(FilesInterceptor('photos', 6))
   @ApiConsumes('multipart/form-data', 'application/json')
-  @ApiOperation({
-    summary: 'Manual Inspection of a unit — staff check or routine service',
-    description: 'Outside any rental. A Damaged grade takes the unit out of rotation.',
-  })
   @ApiParam(UNIT_ID)
   @ApiBody({
     description: 'JSON, or multipart/form-data with up to 6 `photos`.',

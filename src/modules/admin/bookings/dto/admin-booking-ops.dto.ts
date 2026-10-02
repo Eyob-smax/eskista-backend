@@ -24,6 +24,7 @@ const trim = ({ value }: { value: unknown }): unknown =>
 export class ApproveBookingDto {
   @ApiPropertyOptional({
     type: [String],
+    example: ['5b0c2f9e-6a1d-4c1e-9f0a-2d3e4f5a6b7c'],
     description: 'Units to assign. When omitted and none is assigned, free units are picked.',
   })
   @IsOptional()
@@ -32,12 +33,15 @@ export class ApproveBookingDto {
   @IsUUID('all', { each: true })
   unitIds?: string[];
 
-  @ApiPropertyOptional({ description: 'Return deadline. Defaults to 5:00 PM on the last day.' })
+  @ApiPropertyOptional({
+    example: '2026-10-04T14:00:00.000Z',
+    description: 'Return deadline. Defaults to 5:00 PM on the last day.',
+  })
   @IsOptional()
   @IsDateString()
   dueAt?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Approved — verified with bank statement.' })
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -55,7 +59,7 @@ export class ReasonDto {
 }
 
 export class AssignUnitsDto {
-  @ApiProperty({ type: [String] })
+  @ApiProperty({ type: [String], example: ['5b0c2f9e-6a1d-4c1e-9f0a-2d3e4f5a6b7c'] })
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(50)
@@ -65,7 +69,7 @@ export class AssignUnitsDto {
 }
 
 export class NoteDto {
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Arranged for studio pickup at 10am.' })
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -99,17 +103,20 @@ export class UpdateLegDto {
   @IsIn(['SCHEDULED_PICKUP', 'DROP_OFF'])
   returnMethod?: 'SCHEDULED_PICKUP' | 'DROP_OFF';
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Bole, near Edna Mall, Addis Ababa' })
   @IsOptional()
   @IsString()
   @MaxLength(300)
   @Transform(trim)
   address?: string;
-  @ApiPropertyOptional({ description: 'When the courier is booked for.' })
+  @ApiPropertyOptional({
+    example: '2026-10-02T09:00:00.000Z',
+    description: 'When the courier is booked for.',
+  })
   @IsOptional()
   @IsDateString()
   scheduledAt?: string;
-  @ApiPropertyOptional({ description: '"Estimated arrival".' })
+  @ApiPropertyOptional({ example: '2026-10-02T10:30:00.000Z', description: '"Estimated arrival".' })
   @IsOptional()
   @IsDateString()
   etaAt?: string;
@@ -135,11 +142,17 @@ export class UpdateLegDto {
   @MaxLength(30)
   @Transform(trim)
   vehiclePlate?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(500) @Transform(trim) notes?: string;
+  @ApiPropertyOptional({ example: 'Call on arrival.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  @Transform(trim)
+  notes?: string;
 }
 
 export class DepositRefundDto {
   @ApiPropertyOptional({
+    example: 350000,
     description: 'Minor units sent back. Defaults to what the return inspection released.',
   })
   @IsOptional()

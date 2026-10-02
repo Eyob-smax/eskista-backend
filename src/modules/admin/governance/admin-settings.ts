@@ -14,7 +14,6 @@ import {
 } from '@nestjs/common';
 import {
   ApiOkResponse,
-  ApiOperation,
   ApiParam,
   ApiProperty,
   ApiPropertyOptional,
@@ -41,7 +40,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { ApiStandardErrors } from '../../../common/dto/api-docs';
+import { ApiStandardErrors, ApiEndpoint } from '../../../common/dto/api-docs';
 import { CurrentUser } from '../../auth/auth.decorators';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SETTING_KEYS, SettingsService } from '../../settings/settings.service';
@@ -52,7 +51,11 @@ const trim = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.trim() : value;
 
 export class OperatingAccountDto {
-  @ApiProperty({ enum: AccountChannel, description: 'Bank or wallet.' })
+  @ApiProperty({
+    enum: AccountChannel,
+    example: AccountChannel.BANK,
+    description: 'Bank or wallet.',
+  })
   @IsEnum(AccountChannel)
   channel!: AccountChannel;
 
@@ -91,7 +94,11 @@ export class OperatingAccountDto {
 export class UpdateOperatingAccountDto extends PartialType(OperatingAccountDto) {}
 
 export class OrderDto {
-  @ApiProperty({ type: [String] })
+  @ApiProperty({
+    type: [String],
+    description: 'Every operating account id, in the new order.',
+    example: ['3f8a1c2e-7b4d-4e9a-9c1f-2a6b8d0e4f13', 'b7d2e9f4-1a3c-4b5e-8d6f-0c9a2e4b7d18'],
+  })
   @IsArray()
   @ArrayUnique()
   @IsUUID('all', { each: true })
@@ -99,31 +106,46 @@ export class OrderDto {
 }
 
 export class CompanyDetailsDto {
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Eskista Marketplace PLC' })
   @IsOptional()
   @IsString()
   @MaxLength(160)
   @Transform(trim)
   legalName?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(40) @Transform(trim) tin?: string;
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: '0001234567' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  @Transform(trim)
+  tin?: string;
+  @ApiPropertyOptional({ example: 'VAT-0099887' })
   @IsOptional()
   @IsString()
   @MaxLength(40)
   @Transform(trim)
   vatNumber?: string;
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    example: 'Bole Road, Friendship Building 4th Floor, Addis Ababa, Ethiopia',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(300)
   @Transform(trim)
   address?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(40) @Transform(trim) phone?: string;
-  @ApiPropertyOptional() @IsOptional() @IsEmail() email?: string;
+  @ApiPropertyOptional({ example: '+251966554411' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  @Transform(trim)
+  phone?: string;
+  @ApiPropertyOptional({ example: 'billing@eskista.et' }) @IsOptional() @IsEmail() email?: string;
 }
 
 export class GeneralSettingsDto {
-  @ApiPropertyOptional({ description: 'Days after a booking is settled that its payout is due.' })
+  @ApiPropertyOptional({
+    example: 7,
+    description: 'Days after a booking is settled that its payout is due.',
+  })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
@@ -131,7 +153,10 @@ export class GeneralSettingsDto {
   @Max(90)
   payoutDelayDays?: number;
 
-  @ApiPropertyOptional({ description: 'The number behind every Contact Eskista button.' })
+  @ApiPropertyOptional({
+    example: '+251966554411',
+    description: 'The number behind every Contact Eskista button.',
+  })
   @IsOptional()
   @Matches(/^\+?[0-9 ()-]{7,20}$/, { message: 'supportPhone must be a phone number' })
   supportPhone?: string;
@@ -149,6 +174,10 @@ export class GeneralSettingsDto {
 
   @ApiPropertyOptional({
     type: [String],
+    example: [
+      'Pack all included items and accessories.',
+      'Drop off at the Eskista hub in Bole by your chosen time.',
+    ],
     description: 'The bullets on the Return Equipment screen.',
   })
   @IsOptional()
@@ -173,7 +202,8 @@ export class GeneralSettingsDto {
  * accounts — where customers pay — and the general knobs.
  */
 export class OperatingAccountResponse {
-  @ApiProperty({ format: 'uuid', description: 'Customers send it as `collectionAccountId`.' }) id!: string;
+  @ApiProperty({ format: 'uuid', description: 'Customers send it as `collectionAccountId`.' })
+  id!: string;
   @ApiProperty({ enum: AccountChannel, example: AccountChannel.BANK }) channel!: AccountChannel;
   @ApiProperty({ example: 'Commercial Bank of Ethiopia' }) provider!: string;
   @ApiProperty({ example: 'Eskista Marketplace PLC' }) accountName!: string;
@@ -181,10 +211,14 @@ export class OperatingAccountResponse {
   @ApiPropertyOptional({ nullable: true, example: null }) merchantId!: string | null;
   @ApiProperty({ example: true, description: 'Shown on the payment screens.' }) isActive!: boolean;
   @ApiProperty({ example: 1 }) sortOrder!: number;
-  @ApiProperty({ example: 12, description: 'Payments recorded against it; such an account is only deactivated, never deleted.' })
+  @ApiProperty({
+    example: 12,
+    description:
+      'Payments recorded against it; such an account is only deactivated, never deleted.',
+  })
   payments!: number;
-  @ApiProperty() createdAt!: string;
-  @ApiProperty() updatedAt!: string;
+  @ApiProperty({ example: '2026-09-01T08:00:00.000Z' }) createdAt!: string;
+  @ApiProperty({ example: '2026-09-28T13:45:00.000Z' }) updatedAt!: string;
 }
 
 export class CompanyDetailsResponse {
@@ -197,21 +231,29 @@ export class CompanyDetailsResponse {
 }
 
 export class PricingSummaryResponse {
-  @ApiProperty({ example: 1500, description: 'Standard commission, basis points.' }) commissionBps!: number;
+  @ApiProperty({ example: 1500, description: 'Standard commission, basis points.' })
+  commissionBps!: number;
   @ApiProperty({ example: 1500, description: '0 when VAT is switched off.' }) vatBps!: number;
   @ApiProperty({ example: 0 }) serviceFeeBps!: number;
-  @ApiProperty({ example: '/api/v1/admin/pricing', description: 'Where these are changed.' }) editAt!: string;
+  @ApiProperty({ example: '/api/v1/admin/pricing', description: 'Where these are changed.' })
+  editAt!: string;
 }
 
 export class GeneralSettingsResponse {
-  @ApiProperty({ example: 7, description: 'Days after Settlement that a payout is due.' }) payoutDelayDays!: number;
+  @ApiProperty({ example: 7, description: 'Days after Settlement that a payout is due.' })
+  payoutDelayDays!: number;
   @ApiProperty({ example: '+251966554411' }) supportPhone!: string;
-  @ApiProperty({ type: [String], example: ['09:00', '10:00', '14:00', '16:00'] }) returnSlotTimes!: string[];
+  @ApiProperty({ type: [String], example: ['09:00', '10:00', '14:00', '16:00'] })
+  returnSlotTimes!: string[];
   @ApiProperty({ type: [String], example: ['Pack all included items and accessories.'] })
   returnInstructions!: string[];
-  @ApiProperty({ type: CompanyDetailsResponse, description: 'Printed at the top of every invoice.' })
+  @ApiProperty({
+    type: CompanyDetailsResponse,
+    description: 'Printed at the top of every invoice.',
+  })
   company!: CompanyDetailsResponse;
-  @ApiProperty({ type: PricingSummaryResponse, description: 'Read-only here.' }) pricing!: PricingSummaryResponse;
+  @ApiProperty({ type: PricingSummaryResponse, description: 'Read-only here.' })
+  pricing!: PricingSummaryResponse;
 }
 
 @Injectable()
@@ -370,7 +412,7 @@ export class AdminSettingsService {
         ...((current?.value as Record<string, unknown> | null) ?? {}),
         ...dto.company,
       };
-      writes.push([SETTING_KEYS.company, merged as Prisma.InputJsonValue]);
+      writes.push([SETTING_KEYS.company, merged]);
     }
     if (writes.length === 0) throw new BadRequestException('Nothing to change');
     await this.prisma.$transaction(
@@ -402,10 +444,12 @@ export class AdminSettingsController {
   constructor(private readonly settings: AdminSettingsService) {}
 
   @Get('operating-accounts')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Eskista Operating Accounts',
-    description:
-      'Where customers pay — Telebirr merchant, CBE, Awash… Shown, active ones in order, on every payment screen.',
+    does: 'Where customers pay — Telebirr merchant, CBE, Awash. Active ones in order are shown on every payment screen.',
+    behind: [
+      'Read only. Each account carries its payment count: an account with payments is only deactivated, never deleted.',
+    ],
   })
   @ApiOkResponse({ type: [OperatingAccountResponse] })
   @ApiStandardErrors()
@@ -414,8 +458,16 @@ export class AdminSettingsController {
   }
 
   @Post('operating-accounts')
+  @ApiEndpoint({
+    summary: 'Add Account',
+    does: 'Added at the end of the order. Returns every account.',
+    behind: ['Collection account created. Admin audit log written.'],
+    rules: [
+      'Super Admins only.',
+      '400 when a field is invalid — e.g. the account number is not digits.',
+    ],
+  })
   @AdminAccess(AdminTier.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Add Account', description: 'Added at the end of the order. Returns every account.' })
   @ApiOkResponse({ type: [OperatingAccountResponse] })
   @ApiStandardErrors({ badRequest: 'A field is invalid — e.g. the account number is not digits.' })
   add(
@@ -426,8 +478,13 @@ export class AdminSettingsController {
   }
 
   @Patch('operating-accounts/:id')
+  @ApiEndpoint({
+    summary: 'Edit an account, or hide it (`isActive: false`)',
+    does: 'Send only what changes. `isActive: false` hides it from the payment screens.',
+    behind: ['Account updated. Admin audit log written.'],
+    rules: ['Super Admins only.', '400 when a field is invalid.', '404 when not found.'],
+  })
   @AdminAccess(AdminTier.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Edit an account, or hide it (`isActive: false`)' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'The operating account id.' })
   @ApiOkResponse({ type: [OperatingAccountResponse] })
   @ApiStandardErrors({ badRequest: 'A field is invalid.', notFound: 'Account not found' })
@@ -440,8 +497,16 @@ export class AdminSettingsController {
   }
 
   @Delete('operating-accounts/:id')
+  @ApiEndpoint({
+    summary: 'Remove — or deactivate, if customers have paid into it',
+    does: 'Deleted when no payments reference it; deactivated (hidden) otherwise.',
+    behind: [
+      'Hard-deleted when unused; `isActive = false` when payments reference it.',
+      'Admin audit log written.',
+    ],
+    rules: ['Super Admins only.', '404 when not found.'],
+  })
   @AdminAccess(AdminTier.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Remove — or deactivate, if customers have paid into it' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'The operating account id.' })
   @ApiOkResponse({ type: [OperatingAccountResponse] })
   @ApiStandardErrors({ notFound: 'Account not found' })
@@ -453,18 +518,27 @@ export class AdminSettingsController {
   }
 
   @Put('operating-accounts/order')
+  @ApiEndpoint({
+    summary: 'The order accounts are shown in',
+    does: 'Send every account id in the new order.',
+    behind: ['Sort order rewritten. Admin audit log written.'],
+    rules: ['Super Admins only.', '400 when some ids are not operating accounts.'],
+  })
   @AdminAccess(AdminTier.SUPER_ADMIN)
-  @ApiOperation({ summary: 'The order accounts are shown in' })
   @ApiOkResponse({ type: [OperatingAccountResponse] })
   @ApiStandardErrors({ badRequest: 'Some ids are not operating accounts' })
-  order(@CurrentUser('id') adminId: string, @Body() dto: OrderDto): Promise<OperatingAccountResponse[]> {
+  order(
+    @CurrentUser('id') adminId: string,
+    @Body() dto: OrderDto,
+  ): Promise<OperatingAccountResponse[]> {
     return this.settings.orderAccounts(adminId, dto.ids);
   }
 
   @Get('general')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'System Settings — payout delay, support phone, returns, company details',
-    description: 'Pricing (commission, VAT, fees) is shown here and edited at `/admin/pricing`.',
+    does: 'Everything on the System Settings page: payout delay, support phone, return slot times, return instructions, company details, and a read-only pricing summary.',
+    behind: ['Read only. Pricing (commission, VAT, fees) is edited at `/admin/pricing`.'],
   })
   @ApiOkResponse({ type: GeneralSettingsResponse })
   @ApiStandardErrors()
@@ -473,11 +547,16 @@ export class AdminSettingsController {
   }
 
   @Patch('general')
-  @AdminAccess(AdminTier.SUPER_ADMIN)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Change System Settings',
-    description: 'Send only what changes; company details are merged into what is there.',
+    does: 'Send only what changes; company details are merged into what is there.',
+    behind: [
+      'Settings upserted into the key-value table; the in-memory cache invalidated so every subsequent read picks up the new value.',
+      'Admin audit log written (before and after).',
+    ],
+    rules: ['Super Admins only.', '400 when nothing is sent.'],
   })
+  @AdminAccess(AdminTier.SUPER_ADMIN)
   @ApiOkResponse({ type: GeneralSettingsResponse })
   @ApiStandardErrors({ badRequest: 'Nothing to change' })
   updateGeneral(

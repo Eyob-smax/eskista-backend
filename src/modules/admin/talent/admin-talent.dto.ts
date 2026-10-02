@@ -62,7 +62,7 @@ export class RegisterTalentDto {
   @Transform(trim)
   phone!: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'dawit@example.com' })
   @IsOptional()
   @IsEmail()
   @Transform(trim)
@@ -88,6 +88,7 @@ export class RegisterTalentDto {
   pricingModel?: PricingModel;
 
   @ApiPropertyOptional({
+    example: 1_200_000,
     description: "The talent's own rate, minor units, before commission and VAT.",
   })
   @IsOptional()
@@ -96,7 +97,9 @@ export class RegisterTalentDto {
   @Min(0)
   baseRateMinor?: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    example: 'Award-winning cinematographer with 7 years of experience in commercials and film.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(2000)
@@ -104,6 +107,7 @@ export class RegisterTalentDto {
   bio?: string;
 
   @ApiPropertyOptional({
+    example: true,
     description:
       'Verify at once — Eskista already vetted this person. Otherwise the profile waits for ' +
       'the talent to complete it in the Mini App.',
@@ -242,7 +246,7 @@ export class TalentDocumentAdminResponse {
   @ApiProperty({ enum: ['PENDING', 'VERIFIED', 'REJECTED'], example: 'PENDING' }) status!: string;
   @ApiProperty({ example: 'fayda-front.jpg' }) fileName!: string;
   @ApiProperty({ example: '/api/v1/files/talent/…/id/fayda-front.jpg' }) url!: string;
-  @ApiProperty() uploadedAt!: string;
+  @ApiProperty({ example: '2026-06-15T09:00:00.000Z' }) uploadedAt!: string;
 }
 
 export class TalentChecklistResponse {
@@ -268,7 +272,7 @@ export class TalentReviewAdminResponse {
   @ApiProperty({ example: 5 }) rating!: number;
   @ApiPropertyOptional({ nullable: true, example: 'On time, great eye.' }) comment!: string | null;
   @ApiProperty({ example: 'Yoseph Alemu' }) author!: string;
-  @ApiProperty() createdAt!: string;
+  @ApiProperty({ example: '2026-09-20T12:00:00.000Z' }) createdAt!: string;
 }
 
 export class TalentUpcomingResponse {
@@ -281,7 +285,12 @@ export class TalentUpcomingResponse {
 export class TalentAdminProfileResponse extends TalentRosterRowResponse {
   @ApiPropertyOptional({ nullable: true, example: 'Cinematographer for commercials and weddings' })
   headline!: string | null;
-  @ApiPropertyOptional({ nullable: true, description: 'About.' }) about!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Seven years behind the camera, from music videos to feature films.',
+    description: 'About.',
+  })
+  about!: string | null;
   @ApiProperty({ example: 'Per Day', description: 'Engagement type.' }) engagementType!: string;
   @ApiProperty({
     example: 1500,

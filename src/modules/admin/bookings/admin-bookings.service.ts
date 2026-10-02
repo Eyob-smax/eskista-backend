@@ -592,7 +592,9 @@ export class AdminBookingsService {
 
   private dueOf(b: RowBooking): number {
     const line = b.invoiceLines[0];
-    return line ? line.totalMinor + line.securityDepositMinor : b.totalMinor + b.securityDepositMinor;
+    return line
+      ? line.totalMinor + line.securityDepositMinor
+      : b.totalMinor + b.securityDepositMinor;
   }
 
   /** The Payment column: Pending Confirmation, Payment Pending, Receipt Uploaded, Payment Confirmed. */

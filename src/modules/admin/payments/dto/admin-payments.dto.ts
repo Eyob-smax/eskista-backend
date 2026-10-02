@@ -47,6 +47,7 @@ export class AdminPaymentsQuery extends PaginationQuery {
   method?: PaymentMethod;
 
   @ApiPropertyOptional({
+    example: 'PAY-0042',
     description: 'PAY reference, booking reference, invoice number, transaction ID or customer.',
   })
   @IsOptional()
@@ -55,12 +56,12 @@ export class AdminPaymentsQuery extends PaginationQuery {
   @Transform(trim)
   q?: string;
 
-  @ApiPropertyOptional({ description: 'Submitted on or after (ISO date).' })
+  @ApiPropertyOptional({ example: '2026-09-01', description: 'Submitted on or after (ISO date).' })
   @IsOptional()
   @IsDateString()
   from?: string;
 
-  @ApiPropertyOptional({ description: 'Submitted on or before (ISO date).' })
+  @ApiPropertyOptional({ example: '2026-09-30', description: 'Submitted on or before (ISO date).' })
   @IsOptional()
   @IsDateString()
   to?: string;
@@ -68,6 +69,7 @@ export class AdminPaymentsQuery extends PaginationQuery {
 
 export class ConfirmPaymentDto {
   @ApiPropertyOptional({
+    example: 1_585_000,
     description:
       'What actually arrived, from the statement, in minor units. Defaults to what the ' +
       'customer declared. A shortfall leaves the booking awaiting the rest.',
@@ -95,7 +97,7 @@ export class ConfirmPaymentDto {
   @Transform(trim)
   payerAccount?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Verified against CBE statement ref FT26271SEED42.' })
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -124,20 +126,20 @@ export class RecordPaymentDto {
   @Transform(trim)
   transactionReference!: string;
 
-  @ApiProperty({ description: 'Minor units received.' })
+  @ApiProperty({ example: 1_585_000, description: 'Minor units received.' })
   @Type(() => Number)
   @IsInt()
   @Min(1)
   amountMinor!: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Habesha Films PLC' })
   @IsOptional()
   @IsString()
   @MaxLength(160)
   @Transform(trim)
   payerName?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Cash collected at Hub reception.' })
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -179,23 +181,29 @@ export class PaymentRowResponse {
 }
 
 export class PaymentsSummaryResponse {
-  @ApiProperty() pendingCount!: number;
-  @ApiProperty() pendingAmountMinor!: number;
-  @ApiProperty() requestedReceiptCount!: number;
-  @ApiProperty() confirmedTodayCount!: number;
-  @ApiProperty() confirmedThisMonthMinor!: number;
-  @ApiProperty() currency!: string;
+  @ApiProperty({ example: 12 }) pendingCount!: number;
+  @ApiProperty({ example: 18_900_000 }) pendingAmountMinor!: number;
+  @ApiProperty({ example: 3 }) requestedReceiptCount!: number;
+  @ApiProperty({ example: 5 }) confirmedTodayCount!: number;
+  @ApiProperty({ example: 42_500_000 }) confirmedThisMonthMinor!: number;
+  @ApiProperty({ example: 'ETB' }) currency!: string;
 }
 
 export class PaymentBookingShareResponse {
-  @ApiProperty() reference!: string;
-  @ApiProperty() itemName!: string;
+  @ApiProperty({ example: 'ESK-10484' }) reference!: string;
+  @ApiProperty({ example: 'Sony FX3 Cinema Camera' }) itemName!: string;
   @ApiProperty({ enum: ['EQUIPMENT', 'TALENT'] }) type!: 'EQUIPMENT' | 'TALENT';
-  @ApiProperty() status!: string;
-  @ApiProperty({ description: "This booking's part of the transfer." }) amountMinor!: number;
-  @ApiProperty() dueMinor!: number;
-  @ApiProperty({ description: 'Verified so far, other transfers included.' }) paidMinor!: number;
-  @ApiProperty({ type: [String], description: 'Why it is not confirmed yet, after this payment.' })
+  @ApiProperty({ example: 'AWAITING_PAYMENT' }) status!: string;
+  @ApiProperty({ example: 1_085_000, description: "This booking's part of the transfer." })
+  amountMinor!: number;
+  @ApiProperty({ example: 1_085_000 }) dueMinor!: number;
+  @ApiProperty({ example: 500_000, description: 'Verified so far, other transfers included.' })
+  paidMinor!: number;
+  @ApiProperty({
+    type: [String],
+    example: ['Shortfall: ETB 5,850.00 still owed'],
+    description: 'Why it is not confirmed yet, after this payment.',
+  })
   confirmationBlockers!: string[];
 }
 
@@ -214,25 +222,37 @@ export class ReceiptFileResponse {
 }
 
 export class PaymentDetailResponse extends PaymentRowResponse {
-  @ApiProperty({ description: 'What these bookings still owed before this transfer.' })
+  @ApiProperty({
+    example: 1_585_000,
+    description: 'What these bookings still owed before this transfer.',
+  })
   expectedAmountMinor!: number;
-  @ApiPropertyOptional({ nullable: true }) receivedAmountMinor!: number | null;
-  @ApiPropertyOptional({ nullable: true }) payerName!: string | null;
-  @ApiPropertyOptional({ nullable: true }) payerAccount!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 1_585_000 }) receivedAmountMinor!: number | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Habesha Films PLC' }) payerName!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '1000123456789' }) payerAccount!: string | null;
   @ApiPropertyOptional({
     type: PaidIntoResponse,
     nullable: true,
     description: 'Which Eskista account the customer says they paid into.',
   })
   paidInto!: PaidIntoResponse | null;
-  @ApiPropertyOptional({ nullable: true }) reviewNote!: string | null;
-  @ApiPropertyOptional({ nullable: true }) rejectionReason!: string | null;
-  @ApiPropertyOptional({ nullable: true }) verifiedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) verifiedByName!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Verified against CBE statement ref FT26271SEED42.',
+  })
+  reviewNote!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'The transaction ID does not match any transfer we received.',
+  })
+  rejectionReason!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-09-29T10:15:00.000Z' }) verifiedAt!:
+    string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Abel Tesfaye' }) verifiedByName!: string | null;
   @ApiProperty({ type: ReceiptFileResponse, description: 'The uploaded slip — View Full Receipt.' })
   receipt!: ReceiptFileResponse;
   @ApiProperty({ type: [PaymentBookingShareResponse] }) bookings!: PaymentBookingShareResponse[];
   @ApiProperty({ type: [PaymentRowResponse], description: 'Other transfers on these bookings.' })
   history!: PaymentRowResponse[];
-  @ApiProperty() canDecide!: boolean;
+  @ApiProperty({ example: true }) canDecide!: boolean;
 }

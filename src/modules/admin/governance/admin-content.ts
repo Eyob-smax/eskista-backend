@@ -15,7 +15,6 @@ import {
 } from '@nestjs/common';
 import {
   ApiOkResponse,
-  ApiOperation,
   ApiParam,
   ApiProperty,
   ApiPropertyOptional,
@@ -36,7 +35,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import { ApiStandardErrors } from '../../../common/dto/api-docs';
+import { ApiStandardErrors, ApiEndpoint } from '../../../common/dto/api-docs';
 import { CurrentUser } from '../../auth/auth.decorators';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -55,7 +54,7 @@ export class ContentQuery {
   @IsIn(CONTENT_KINDS)
   kind?: ContentKind;
 
-  @ApiPropertyOptional({ description: 'Candidates only: search by name.' })
+  @ApiPropertyOptional({ description: 'Candidates only: search by name.', example: 'Sony' })
   @IsOptional()
   @IsString()
   @MaxLength(120)
@@ -68,23 +67,46 @@ export class ContentItemResponse {
   @ApiProperty({ enum: CONTENT_KINDS, example: 'EQUIPMENT' }) kind!: ContentKind;
   @ApiProperty({ example: 'Sony FX3 Cinema Camera' }) name!: string;
   @ApiProperty({ example: 'Cameras · Afro Studio' }) subtitle!: string;
-  @ApiPropertyOptional({ nullable: true }) imageUrl!: string | null;
-  @ApiPropertyOptional({ nullable: true, enum: FeatureTier, example: FeatureTier.FEATURED, description: 'Null is Standard.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'https://res.cloudinary.com/eskista/image/upload/v1790000000/listings/sony-fx3.jpg',
+  })
+  imageUrl!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    enum: FeatureTier,
+    example: FeatureTier.FEATURED,
+    description: 'Null is Standard.',
+  })
   tier!: FeatureTier | null;
   @ApiProperty({ example: 'Featured' }) tierLabel!: string;
-  @ApiProperty({ example: 0, description: 'Pinned position; lower comes first.' }) sortOrder!: number;
-  @ApiPropertyOptional({ nullable: true }) featuredAt!: string | null;
-  @ApiPropertyOptional({ nullable: true, description: 'Promotion ends after this.' }) featuredUntil!: string | null;
+  @ApiProperty({ example: 0, description: 'Pinned position; lower comes first.' })
+  sortOrder!: number;
+  @ApiPropertyOptional({ nullable: true, example: '2026-09-28T07:30:00.000Z' }) featuredAt!:
+    string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: '2026-10-31T21:00:00.000Z',
+    description: 'Promotion ends after this.',
+  })
+  featuredUntil!: string | null;
   @ApiProperty({ example: 4.8 }) rating!: number;
   @ApiProperty({ example: 11 }) bookings!: number;
 }
 
 export class FeatureDto {
-  @ApiProperty({ enum: FeatureTier, example: FeatureTier.SPOTLIGHT, description: 'Featured, Highlighted or Spotlight.' })
+  @ApiProperty({
+    enum: FeatureTier,
+    example: FeatureTier.SPOTLIGHT,
+    description: 'Featured, Highlighted or Spotlight.',
+  })
   @IsEnum(FeatureTier)
   tier!: FeatureTier;
 
-  @ApiPropertyOptional({ description: 'Stop promoting after this date.', example: '2026-10-31T21:00:00.000Z' })
+  @ApiPropertyOptional({
+    description: 'Stop promoting after this date.',
+    example: '2026-10-31T21:00:00.000Z',
+  })
   @IsOptional()
   @IsDateString()
   until?: string;
@@ -98,14 +120,14 @@ export class FeatureDto {
 }
 
 export class PinOrderDto {
-  @ApiProperty({ enum: CONTENT_KINDS })
+  @ApiProperty({ enum: CONTENT_KINDS, example: 'EQUIPMENT' })
   @IsIn(CONTENT_KINDS)
   kind!: ContentKind;
 
   @ApiProperty({
     type: [String],
     description: 'Promoted items in the order they should appear.',
-    example: ['5a1b2c3d-…', '9c2d3e4f-…'],
+    example: ['5a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d', '9c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f'],
   })
   @IsArray()
   @ArrayUnique()
@@ -248,8 +270,12 @@ export class AdminContentService {
     // Only promoted items have a place in the pinned order.
     const promoted =
       dto.kind === 'TALENT'
-        ? await this.prisma.talentProfile.count({ where: { id: { in: dto.ids }, featureTier: { not: null } } })
-        : await this.prisma.listing.count({ where: { id: { in: dto.ids }, featureTier: { not: null } } });
+        ? await this.prisma.talentProfile.count({
+            where: { id: { in: dto.ids }, featureTier: { not: null } },
+          })
+        : await this.prisma.listing.count({
+            where: { id: { in: dto.ids }, featureTier: { not: null } },
+          });
     if (promoted !== dto.ids.length) {
       throw new BadRequestException('Every id must be a promoted item of this kind');
     }
@@ -336,10 +362,12 @@ export class AdminContentController {
   constructor(private readonly content: AdminContentService) {}
 
   @Get('featured')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Marketplace Content — what is promoted',
-    description:
-      'Featured, Highlighted and Spotlight items, in pinned order. Promoted on the website hero grid and the Telegram bot.',
+    does: 'Featured, Highlighted and Spotlight items, in pinned order. What is promoted on the website hero grid and the Telegram booking bot.',
+    behind: [
+      'Read only. Promoted listings of verified vendors, or verified talents with a feature tier.',
+    ],
   })
   @ApiOkResponse({ type: [ContentItemResponse] })
   @ApiStandardErrors({ badRequest: 'Unknown `kind`.' })
@@ -348,9 +376,10 @@ export class AdminContentController {
   }
 
   @Get('candidates')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Add — live items not yet promoted',
-    description: 'Published equipment of verified vendors, or verified talent. Up to 30; search with `q`.',
+    does: 'Published equipment of verified vendors, or verified talent, that have no feature tier. Up to 30; search with `q`.',
+    behind: ['Read only.'],
   })
   @ApiOkResponse({ type: [ContentItemResponse] })
   @ApiStandardErrors({ badRequest: 'Unknown `kind`.' })
@@ -359,14 +388,27 @@ export class AdminContentController {
   }
 
   @Put('featured/listings/:id')
-  @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Promote equipment, or change its tier',
-    description: 'The vendor is told the first time. Returns every promoted listing.',
+    does: "Sets the listing's tier to Featured, Highlighted or Spotlight. The vendor is told the first time.",
+    behind: [
+      'Listing: `featureTier`, `featuredAt`, optional `featuredUntil` and `sortOrder` set.',
+      'Notification (first promote only): vendor — Listing Featured.',
+      'Admin audit log written.',
+    ],
+    seenBy: [
+      'Vendor: "Your listing has been featured".',
+      'Customers: the listing appears on the hero grid.',
+    ],
+    rules: ['404 when not found.', '409 when the listing is not published.'],
   })
+  @AdminAccess(AdminTier.ADMIN)
   @ApiParam({ name: 'id', format: 'uuid', description: 'The listing id.' })
   @ApiOkResponse({ type: [ContentItemResponse] })
-  @ApiStandardErrors({ notFound: 'Listing not found', conflict: 'Only a published listing can be promoted' })
+  @ApiStandardErrors({
+    notFound: 'Listing not found',
+    conflict: 'Only a published listing can be promoted',
+  })
   featureListing(
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -376,8 +418,13 @@ export class AdminContentController {
   }
 
   @Delete('featured/listings/:id')
+  @ApiEndpoint({
+    summary: 'Remove — back to Standard',
+    does: 'Clears the feature tier and the pinned order.',
+    behind: ['Listing: feature tier, dates and sort order cleared.', 'Admin audit log written.'],
+    rules: ['404 when not found.'],
+  })
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Remove — back to Standard' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'The listing id.' })
   @ApiOkResponse({ type: [ContentItemResponse] })
   @ApiStandardErrors({ notFound: 'Listing not found' })
@@ -389,11 +436,22 @@ export class AdminContentController {
   }
 
   @Put('featured/talent/:id')
+  @ApiEndpoint({
+    summary: 'Promote a talent, or change their tier',
+    does: "Sets the talent's tier to Featured, Highlighted or Spotlight.",
+    behind: [
+      'Talent profile: `featureTier`, `featuredAt`, optional `featuredUntil` and `sortOrder` set.',
+      'Admin audit log written.',
+    ],
+    rules: ['404 when not found.', '409 when the talent is not verified.'],
+  })
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Promote a talent, or change their tier', description: 'Returns every promoted talent.' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'The talent profile id.' })
   @ApiOkResponse({ type: [ContentItemResponse] })
-  @ApiStandardErrors({ notFound: 'Talent not found', conflict: 'Only a verified talent can be promoted' })
+  @ApiStandardErrors({
+    notFound: 'Talent not found',
+    conflict: 'Only a verified talent can be promoted',
+  })
   featureTalent(
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -403,8 +461,16 @@ export class AdminContentController {
   }
 
   @Delete('featured/talent/:id')
+  @ApiEndpoint({
+    summary: 'Remove a talent — back to Standard',
+    does: 'Clears the feature tier and the pinned order.',
+    behind: [
+      'Talent profile: feature tier, dates and sort order cleared.',
+      'Admin audit log written.',
+    ],
+    rules: ['404 when not found.'],
+  })
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Remove a talent — back to Standard' })
   @ApiParam({ name: 'id', format: 'uuid', description: 'The talent profile id.' })
   @ApiOkResponse({ type: [ContentItemResponse] })
   @ApiStandardErrors({ notFound: 'Talent not found' })
@@ -416,8 +482,13 @@ export class AdminContentController {
   }
 
   @Put('featured/order')
+  @ApiEndpoint({
+    summary: 'Pin — the order promoted items appear in',
+    does: 'Send the ids in the order they should appear. Only promoted items are accepted.',
+    behind: ['Sort order rewritten for each id. Admin audit log written.'],
+    rules: ['400 when an id is not a promoted item of this kind.'],
+  })
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Pin — the order promoted items appear in' })
   @ApiOkResponse({ type: [ContentItemResponse] })
   @ApiStandardErrors({ badRequest: 'Every id must be a promoted item of this kind' })
   pin(

@@ -108,7 +108,9 @@ export class BookingWrapUpService {
           customer: b.customer.name,
           reference: b.reference,
           refund:
-            refundDueMinor > 0 ? `${(refundDueMinor / 100).toFixed(2)} ETB to refund` : 'nothing paid',
+            refundDueMinor > 0
+              ? `${(refundDueMinor / 100).toFixed(2)} ETB to refund`
+              : 'nothing paid',
         },
         { bookingReference: b.reference },
         refundDueMinor > 0 ? [AdminTier.FINANCE, AdminTier.ADMIN] : [AdminTier.ADMIN],
@@ -118,7 +120,11 @@ export class BookingWrapUpService {
   }
 
   /** Voids the booking's unpaid invoice, single or combined. */
-  private async voidUnpaidInvoices(bookingId: string, reason: string, actorId: string): Promise<void> {
+  private async voidUnpaidInvoices(
+    bookingId: string,
+    reason: string,
+    actorId: string,
+  ): Promise<void> {
     const lines = await this.prisma.invoiceLine.findMany({
       where: {
         bookingId,

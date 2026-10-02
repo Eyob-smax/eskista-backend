@@ -73,9 +73,11 @@ export class SupplierIncidentPhotoResponse {
 export class SupplierIncidentResponse {
   @ApiProperty({ example: 'ESK-INC-00043' }) reference!: string;
   @ApiProperty({ enum: IncidentType, example: IncidentType.OVERTIME }) type!: IncidentType;
-  @ApiProperty({ enum: IncidentPhase, example: IncidentPhase.DURING_ENGAGEMENT }) phase!: IncidentPhase;
+  @ApiProperty({ enum: IncidentPhase, example: IncidentPhase.DURING_ENGAGEMENT })
+  phase!: IncidentPhase;
   @ApiProperty({ enum: IncidentStatus, example: IncidentStatus.REPORTED }) status!: IncidentStatus;
-  @ApiProperty({ example: 'The shoot ran three hours past the agreed 18:00 finish.' }) description!: string;
+  @ApiProperty({ example: 'The shoot ran three hours past the agreed 18:00 finish.' })
+  description!: string;
   @ApiPropertyOptional({ nullable: true, description: 'Eskista’s resolution, once resolved.' })
   resolution!: string | null;
   @ApiProperty({ type: [SupplierIncidentPhotoResponse] }) photos!: SupplierIncidentPhotoResponse[];
@@ -250,7 +252,11 @@ export class TalentIncidentsController {
       properties: {
         type: { type: 'string', enum: Object.values(IncidentType), example: 'OVERTIME' },
         phase: { type: 'string', enum: Object.values(IncidentPhase), example: 'DURING_ENGAGEMENT' },
-        description: { type: 'string', minLength: 10, example: 'The shoot ran three hours past the agreed 18:00 finish.' },
+        description: {
+          type: 'string',
+          minLength: 10,
+          example: 'The shoot ran three hours past the agreed 18:00 finish.',
+        },
         photos: { type: 'array', items: { type: 'string', format: 'binary' }, maxItems: 6 },
       },
     },
@@ -302,7 +308,11 @@ export class VendorIncidentsController {
       properties: {
         type: { type: 'string', enum: Object.values(IncidentType), example: 'PHYSICAL_DAMAGE' },
         phase: { type: 'string', enum: Object.values(IncidentPhase), example: 'DURING_RETURN' },
-        description: { type: 'string', minLength: 10, example: 'The camera came back with a cracked LCD.' },
+        description: {
+          type: 'string',
+          minLength: 10,
+          example: 'The camera came back with a cracked LCD.',
+        },
         photos: { type: 'array', items: { type: 'string', format: 'binary' }, maxItems: 6 },
       },
     },

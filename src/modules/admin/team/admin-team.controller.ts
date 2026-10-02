@@ -10,8 +10,8 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
-import { ApiStandardErrors } from '../../../common/dto/api-docs';
+import { ApiOkResponse, ApiParam, ApiTags } from '@nestjs/swagger';
+import { ApiStandardErrors, ApiEndpoint } from '../../../common/dto/api-docs';
 import { AdminTier } from '@prisma/client';
 import { CurrentUser } from '../../auth/auth.decorators';
 import { AdminAccess } from '../core/admin-access';
@@ -28,14 +28,6 @@ import {
 
 const ID = { name: 'id', format: 'uuid', description: 'The admin’s user id.' };
 
-const SIGN_IN = `
-Admins sign in to the dashboard with email and password through Better Auth:
-\`POST /api/auth/sign-in/email\` \`{ email, password }\`, then send the session cookie (or
-the bearer token) on every request. \`POST /api/auth/sign-out\` ends the session, and
-\`POST /api/auth/change-password\` changes one's own password. There is no sign-up: a Super
-Admin creates every admin here.
-`.trim();
-
 @ApiTags('admin · team')
 @AdminAccess()
 @Controller({ path: 'admin', version: '1' })
@@ -43,9 +35,11 @@ export class AdminTeamController {
   constructor(private readonly team: AdminTeamService) {}
 
   @Get('me')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'The signed-in admin',
-    description: `The header ("Abel · Super Admin"), the Overview greeting, and what this tier may do.\n\n${SIGN_IN}`,
+    does: 'Who is signed in: name, tier, greeting, and `permissions` for hiding what this tier cannot use.',
+    behind: ['Read only. Every admin request refreshes "last active" at most every 5 minutes.'],
+    notes: 'Sign in at `POST /api/auth/sign-in/email`; see **admin · auth**.',
   })
   @ApiOkResponse({ type: AdminMeResponse })
   @ApiStandardErrors()
@@ -54,7 +48,13 @@ export class AdminTeamController {
   }
 
   @Get('team')
-  @ApiOperation({ summary: 'Admin Users & Access Control — the staff list' })
+  @ApiEndpoint({
+    summary: 'Admin Users & Access Control — the staff list',
+    does: 'Every admin, with tier, status and last active session.',
+    behind: [
+      'Read only. Last active is the later of the admin guard’s touch and the newest session refresh.',
+    ],
+  })
   @ApiOkResponse({ type: [AdminMemberResponse] })
   @ApiStandardErrors()
   list(@Query() query: AdminTeamQuery): Promise<AdminMemberResponse[]> {
@@ -62,7 +62,12 @@ export class AdminTeamController {
   }
 
   @Get('team/:id')
-  @ApiOperation({ summary: 'Admin Detail' })
+  @ApiEndpoint({
+    summary: 'Admin Detail',
+    does: 'One admin.',
+    behind: ['Read only.'],
+    rules: ['404 when the id is not an admin.'],
+  })
   @ApiParam(ID)
   @ApiOkResponse({ type: AdminMemberResponse })
   @ApiStandardErrors({ notFound: 'Admin not found' })
@@ -71,11 +76,21 @@ export class AdminTeamController {
   }
 
   @Post('team')
-  @AdminAccess(AdminTier.SUPER_ADMIN)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Create Admin',
-    description: 'Name, email, phone, password and role tier. The new admin signs in with them.',
+    does: 'Adds a member of staff who signs in with email and password.',
+    behind: [
+      'User created with the ADMIN role and a profile holding the tier, phone and title.',
+      'Password hashed exactly as Better Auth hashes it (scrypt) and stored on a credential account — sign-up is disabled, so this is the only way an admin account comes to exist.',
+      'Admin audit log written.',
+    ],
+    rules: [
+      'Super Admins only.',
+      '409 when the email is already in use.',
+      '400 when the password is under 12 characters.',
+    ],
   })
+  @AdminAccess(AdminTier.SUPER_ADMIN)
   @ApiOkResponse({ type: AdminMemberResponse })
   @ApiStandardErrors({
     badRequest: 'A field is invalid — e.g. the password is shorter than 12 characters.',
@@ -89,12 +104,17 @@ export class AdminTeamController {
   }
 
   @Patch('team/:id')
-  @AdminAccess(AdminTier.SUPER_ADMIN)
-  @ApiOperation({
-    summary: 'Edit an admin — name, email, phone, title, role tier',
-    description:
-      'Send only what changes. Nobody changes their own tier; the last Super Admin cannot be demoted.',
+  @ApiEndpoint({
+    summary: 'Edit an admin',
+    does: 'Changes name, email, phone, title or role tier. Send only what changes.',
+    behind: ['User and admin profile updated; admin audit log written (before and after).'],
+    rules: [
+      'Super Admins only.',
+      '400 when changing your own tier.',
+      '409 when demoting the last active Super Admin, or the email is taken.',
+    ],
   })
+  @AdminAccess(AdminTier.SUPER_ADMIN)
   @ApiParam(ID)
   @ApiOkResponse({ type: AdminMemberResponse })
   @ApiStandardErrors({
@@ -111,12 +131,18 @@ export class AdminTeamController {
   }
 
   @Post('team/:id/reset-password')
+  @ApiEndpoint({
+    summary: 'Reset Password',
+    does: 'Sets a new password for an admin.',
+    behind: [
+      'Password re-hashed onto the credential account.',
+      'Every session of that admin deleted: they are signed out everywhere.',
+      'Admin audit log written.',
+    ],
+    rules: ['Super Admins only.', '400 when under 12 characters.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.SUPER_ADMIN)
-  @ApiOperation({
-    summary: 'Reset Password',
-    description: 'Sets a new password and signs the admin out of every session.',
-  })
   @ApiParam(ID)
   @ApiOkResponse({ type: AdminMemberResponse })
   @ApiStandardErrors({
@@ -132,9 +158,21 @@ export class AdminTeamController {
   }
 
   @Post('team/:id/suspend')
+  @ApiEndpoint({
+    summary: 'Suspend Admin',
+    does: 'Blocks an admin from signing in, with a reason.',
+    behind: [
+      'Account blocked (the session guard refuses blocked accounts on every route) and every session deleted, so it takes effect at once.',
+      'Admin audit log written.',
+    ],
+    rules: [
+      'Super Admins only.',
+      '400 when suspending yourself.',
+      '409 for the last active Super Admin.',
+    ],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Suspend Admin — blocks sign-in and ends their sessions' })
   @ApiParam(ID)
   @ApiOkResponse({ type: AdminMemberResponse })
   @ApiStandardErrors({
@@ -151,9 +189,14 @@ export class AdminTeamController {
   }
 
   @Post('team/:id/reactivate')
+  @ApiEndpoint({
+    summary: 'Lift a suspension',
+    does: 'Lets a suspended admin sign in again.',
+    behind: ['Block cleared; admin audit log written. They sign in afresh.'],
+    rules: ['Super Admins only.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Lift a suspension' })
   @ApiParam(ID)
   @ApiOkResponse({ type: AdminMemberResponse })
   @ApiStandardErrors({ notFound: 'Admin not found' })

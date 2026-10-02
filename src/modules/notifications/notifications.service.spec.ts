@@ -131,7 +131,8 @@ describe('NotificationsService.notifyAdmins', () => {
       amount: 'ETB 12,500.00',
     });
 
-    const rows = createMany.mock.calls[0][0].data as { userId: string; body: string }[];
+    const [created] = createMany.mock.calls[0] as [{ data: { userId: string; body: string }[] }];
+    const rows = created.data;
     expect(rows.map((r) => r.userId)).toEqual(['a1', 'a2']);
     expect(rows[0].body).toBe(
       'PAY-0042 for ESK-10484 (ETB 12,500.00) is waiting for verification.',
@@ -144,7 +145,8 @@ describe('NotificationsService.notifyAdmins', () => {
 
     await service.notifyAdmins('ADMIN_PAYOUT_DISPUTED', {}, undefined, ['FINANCE']);
 
-    const where = findMany.mock.calls[0][0].where as { OR: { adminProfile: unknown }[] };
+    const [query] = findMany.mock.calls[0] as [{ where: { OR: { adminProfile: unknown }[] } }];
+    const where = query.where;
     expect(where.OR[0].adminProfile).toEqual({ tier: { in: ['FINANCE', 'SUPER_ADMIN'] } });
   });
 

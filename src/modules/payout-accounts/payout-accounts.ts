@@ -247,7 +247,8 @@ export class VendorPayoutAccountsController {
   @Post()
   @ApiOperation({
     summary: 'Add a payout account',
-    description: 'Telebirr (provider is set for you) or a bank. `isPrimary: true` makes it the one used. Returns every account.',
+    description:
+      'Telebirr (provider is set for you) or a bank. `isPrimary: true` makes it the one used. Returns every account.',
   })
   @ApiOkResponse({ type: [PayoutAccountResponse] })
   @ApiStandardErrors({
@@ -277,7 +278,10 @@ export class VendorPayoutAccountsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Remove a payout account', description: 'Removing the primary promotes the oldest remaining one.' })
+  @ApiOperation({
+    summary: 'Remove a payout account',
+    description: 'Removing the primary promotes the oldest remaining one.',
+  })
   @ApiParam({ name: 'id', format: 'uuid', description: 'The payout account id.' })
   @ApiOkResponse({ type: [PayoutAccountResponse] })
   @ApiStandardErrors({ notFound: 'Payout account not found' })
@@ -306,7 +310,8 @@ export class TalentPayoutAccountsController {
   @Post()
   @ApiOperation({
     summary: 'Add a payout account',
-    description: 'Telebirr (provider is set for you) or a bank. `isPrimary: true` makes it the one used. Returns every account.',
+    description:
+      'Telebirr (provider is set for you) or a bank. `isPrimary: true` makes it the one used. Returns every account.',
   })
   @ApiOkResponse({ type: [PayoutAccountResponse] })
   @ApiStandardErrors({
@@ -336,7 +341,10 @@ export class TalentPayoutAccountsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Remove a payout account', description: 'Removing the primary promotes the oldest remaining one.' })
+  @ApiOperation({
+    summary: 'Remove a payout account',
+    description: 'Removing the primary promotes the oldest remaining one.',
+  })
   @ApiParam({ name: 'id', format: 'uuid', description: 'The payout account id.' })
   @ApiOkResponse({ type: [PayoutAccountResponse] })
   @ApiStandardErrors({ notFound: 'Payout account not found' })

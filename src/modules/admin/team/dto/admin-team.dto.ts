@@ -118,19 +118,19 @@ export class SuspendDto {
 }
 
 export class AdminTeamQuery {
-  @ApiPropertyOptional({ description: 'Name, email or phone.' })
+  @ApiPropertyOptional({ description: 'Name, email or phone.', example: 'Hanna Girma' })
   @IsOptional()
   @IsString()
   @MaxLength(120)
   @Transform(trim)
   q?: string;
 
-  @ApiPropertyOptional({ enum: AdminTier })
+  @ApiPropertyOptional({ enum: AdminTier, example: AdminTier.ADMIN })
   @IsOptional()
   @IsEnum(AdminTier)
   tier?: AdminTier;
 
-  @ApiPropertyOptional({ enum: ['ACTIVE', 'SUSPENDED'] })
+  @ApiPropertyOptional({ enum: ['ACTIVE', 'SUSPENDED'], example: 'ACTIVE' })
   @IsOptional()
   @IsIn(['ACTIVE', 'SUSPENDED'])
   status?: 'ACTIVE' | 'SUSPENDED';
@@ -142,7 +142,7 @@ export class AdminMemberResponse {
   @ApiProperty({ example: 'abel@eskista.et' }) email!: string;
   @ApiPropertyOptional({ nullable: true, example: '+251911000001' }) phone!: string | null;
   @ApiPropertyOptional({ nullable: true, example: null }) avatarUrl!: string | null;
-  @ApiProperty({ enum: AdminTier }) tier!: AdminTier;
+  @ApiProperty({ enum: AdminTier, example: AdminTier.SUPER_ADMIN }) tier!: AdminTier;
   @ApiProperty({ example: 'Super Admin' }) tierLabel!: string;
   @ApiPropertyOptional({ nullable: true, example: 'Operations Lead' }) title!: string | null;
   @ApiProperty({ enum: ['ACTIVE', 'SUSPENDED'], example: 'ACTIVE' }) status!:

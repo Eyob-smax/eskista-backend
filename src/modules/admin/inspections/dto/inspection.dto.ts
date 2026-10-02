@@ -48,18 +48,21 @@ export class RecordInspectionDto {
   @Transform(trim)
   inspectorName?: string;
 
-  @ApiPropertyOptional({ description: 'Which unit, when the booking has more than one.' })
+  @ApiPropertyOptional({
+    description: 'Which unit, when the booking has more than one.',
+    format: 'uuid',
+  })
   @IsOptional()
   @IsUUID()
   unitId?: string;
 
-  @ApiPropertyOptional({ default: true })
+  @ApiPropertyOptional({ default: true, example: true })
   @IsOptional()
   @Transform(bool)
   @IsBoolean()
   physicalPassed?: boolean;
 
-  @ApiPropertyOptional({ default: true })
+  @ApiPropertyOptional({ default: true, example: true })
   @IsOptional()
   @Transform(bool)
   @IsBoolean()
@@ -82,7 +85,10 @@ export class RecordInspectionDto {
   @Transform(trim)
   missingItems?: string;
 
-  @ApiPropertyOptional({ description: 'Return only: what the damage is.' })
+  @ApiPropertyOptional({
+    description: 'Return only: what the damage is.',
+    example: 'Scratch on lens barrel, minor dent on battery door.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(2000)
@@ -93,6 +99,7 @@ export class RecordInspectionDto {
     description:
       'Return only: "Damage / replacement deduction", withheld from the deposit, in minor ' +
       'units. At most the deposit held; it is passed on to the vendor in their settlement.',
+    example: 25000,
   })
   @IsOptional()
   @Type(() => Number)
@@ -100,7 +107,10 @@ export class RecordInspectionDto {
   @Min(0)
   deductionMinor?: number;
 
-  @ApiPropertyOptional({ description: 'Return only: "Report an Issue" — opens an incident.' })
+  @ApiPropertyOptional({
+    description: 'Return only: "Report an Issue" — opens an incident.',
+    example: false,
+  })
   @IsOptional()
   @Transform(bool)
   @IsBoolean()
@@ -111,7 +121,10 @@ export class RecordInspectionDto {
   @IsEnum(IncidentType)
   issueType?: IncidentType;
 
-  @ApiPropertyOptional({ description: 'What the incident says; defaults to the damage notes.' })
+  @ApiPropertyOptional({
+    description: 'What the incident says; defaults to the damage notes.',
+    example: 'Lens barrel scratched during rental period, customer denies responsibility.',
+  })
   @IsOptional()
   @IsString()
   @MinLength(5)
@@ -131,18 +144,18 @@ export class InspectionsQuery extends PaginationQuery {
   @IsEnum(InspectionGrade)
   grade?: InspectionGrade;
 
-  @ApiPropertyOptional({ description: 'Only Needs Attention and Damaged.' })
+  @ApiPropertyOptional({ description: 'Only Needs Attention and Damaged.', example: true })
   @IsOptional()
   @Transform(bool)
   @IsBoolean()
   flagged?: boolean;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: '2026-09-01' })
   @IsOptional()
   @IsDateString()
   from?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: '2026-09-30' })
   @IsOptional()
   @IsDateString()
   to?: string;

@@ -31,9 +31,27 @@ const daysFromNow = (n: number) => new Date(Date.now() + n * DAY);
 const SEED_ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? 'eskista-admin-2026';
 
 const TEAM: { email: string; name: string; tier: AdminTier; title: string; phone: string }[] = [
-  { email: 'ops@eskista.et', name: 'Abel Tesfaye', tier: AdminTier.SUPER_ADMIN, title: 'Operations Lead', phone: '+251911000001' },
-  { email: 'finance@eskista.et', name: 'Sara Mekonnen', tier: AdminTier.FINANCE, title: 'Finance Officer', phone: '+251911000091' },
-  { email: 'support@eskista.et', name: 'Henok Girma', tier: AdminTier.SUPPORT, title: 'Support Admin', phone: '+251911000092' },
+  {
+    email: 'ops@eskista.et',
+    name: 'Abel Tesfaye',
+    tier: AdminTier.SUPER_ADMIN,
+    title: 'Operations Lead',
+    phone: '+251911000001',
+  },
+  {
+    email: 'finance@eskista.et',
+    name: 'Sara Mekonnen',
+    tier: AdminTier.FINANCE,
+    title: 'Finance Officer',
+    phone: '+251911000091',
+  },
+  {
+    email: 'support@eskista.et',
+    name: 'Henok Girma',
+    tier: AdminTier.SUPPORT,
+    title: 'Support Admin',
+    phone: '+251911000092',
+  },
 ];
 
 const OUT_OR_BACK: BookingStatus[] = [
@@ -96,21 +114,56 @@ async function seedOperatingAccounts(prisma: PrismaClient): Promise<void> {
   if ((await prisma.collectionAccount.count()) > 0) return;
   await prisma.collectionAccount.createMany({
     data: [
-      { channel: AccountChannel.TELEBIRR, provider: 'Telebirr', accountName: 'Eskista Equipment Rentals', accountNumber: '0911234567', merchantId: '882910', sortOrder: 0 },
-      { channel: AccountChannel.BANK, provider: 'Commercial Bank of Ethiopia', accountName: 'Eskista Marketplace PLC', accountNumber: '1000234567890', sortOrder: 1 },
-      { channel: AccountChannel.BANK, provider: 'Awash Bank', accountName: 'Eskista Marketplace PLC', accountNumber: '01320012345600', sortOrder: 2 },
+      {
+        channel: AccountChannel.TELEBIRR,
+        provider: 'Telebirr',
+        accountName: 'Eskista Equipment Rentals',
+        accountNumber: '0911234567',
+        merchantId: '882910',
+        sortOrder: 0,
+      },
+      {
+        channel: AccountChannel.BANK,
+        provider: 'Commercial Bank of Ethiopia',
+        accountName: 'Eskista Marketplace PLC',
+        accountNumber: '1000234567890',
+        sortOrder: 1,
+      },
+      {
+        channel: AccountChannel.BANK,
+        provider: 'Awash Bank',
+        accountName: 'Eskista Marketplace PLC',
+        accountNumber: '01320012345600',
+        sortOrder: 2,
+      },
     ],
   });
 }
 
 async function seedPayoutAccounts(prisma: PrismaClient): Promise<void> {
-  const vendors = await prisma.vendorProfile.findMany({ select: { id: true, businessName: true, phone: true } });
+  const vendors = await prisma.vendorProfile.findMany({
+    select: { id: true, businessName: true, phone: true },
+  });
   for (const [i, v] of vendors.entries()) {
     if ((await prisma.payoutAccount.count({ where: { vendorId: v.id } })) > 0) continue;
     await prisma.payoutAccount.createMany({
       data: [
-        { vendorId: v.id, channel: AccountChannel.TELEBIRR, provider: 'Telebirr', accountName: v.businessName, accountNumber: v.phone ?? `09110000${10 + i}`, isPrimary: true },
-        { vendorId: v.id, channel: AccountChannel.BANK, provider: 'Commercial Bank of Ethiopia', accountName: v.businessName, accountNumber: `100045678${String(1000 + i)}`, isPrimary: false },
+        {
+          vendorId: v.id,
+          channel: AccountChannel.TELEBIRR,
+          provider: 'Telebirr',
+          accountName: v.businessName,
+          accountNumber: v.phone ?? `09110000${10 + i}`,
+          isPrimary: true,
+        },
+        {
+          vendorId: v.id,
+          channel: AccountChannel.BANK,
+          provider: 'Commercial Bank of Ethiopia',
+          accountName: v.businessName,
+          accountNumber: `100045678${String(1000 + i)}`,
+          isPrimary: false,
+        },
       ],
     });
   }
@@ -118,7 +171,14 @@ async function seedPayoutAccounts(prisma: PrismaClient): Promise<void> {
   for (const [i, t] of talents.entries()) {
     if ((await prisma.payoutAccount.count({ where: { talentProfileId: t.id } })) > 0) continue;
     await prisma.payoutAccount.create({
-      data: { talentProfileId: t.id, channel: AccountChannel.BANK, provider: 'Commercial Bank of Ethiopia', accountName: t.displayName, accountNumber: `100077788${String(2000 + i)}`, isPrimary: true },
+      data: {
+        talentProfileId: t.id,
+        channel: AccountChannel.BANK,
+        provider: 'Commercial Bank of Ethiopia',
+        accountName: t.displayName,
+        accountNumber: `100077788${String(2000 + i)}`,
+        isPrimary: true,
+      },
     });
   }
 }
@@ -134,7 +194,10 @@ async function backfillReferences(prisma: PrismaClient): Promise<void> {
       RETURNING "lastValue"`;
     return `${prefix}-${String(rows[0].lastValue).padStart(4, '0')}`;
   };
-  const payments = await prisma.payment.findMany({ where: { reference: null }, orderBy: { submittedAt: 'asc' } });
+  const payments = await prisma.payment.findMany({
+    where: { reference: null },
+    orderBy: { submittedAt: 'asc' },
+  });
   const byReceipt = new Map<string, string>();
   for (const p of payments) {
     const ref = byReceipt.get(p.receiptFileKey) ?? (await next('payment', 'PAY'));
@@ -143,11 +206,16 @@ async function backfillReferences(prisma: PrismaClient): Promise<void> {
       where: { id: p.id },
       data: {
         reference: ref,
-        ...(p.status === PaymentStatus.VERIFIED ? { receivedAmountMinor: p.amountMinor, payerName: 'Seeded payer' } : {}),
+        ...(p.status === PaymentStatus.VERIFIED
+          ? { receivedAmountMinor: p.amountMinor, payerName: 'Seeded payer' }
+          : {}),
       },
     });
   }
-  const settlements = await prisma.settlement.findMany({ where: { reference: null }, orderBy: { createdAt: 'asc' } });
+  const settlements = await prisma.settlement.findMany({
+    where: { reference: null },
+    orderBy: { createdAt: 'asc' },
+  });
   for (const s of settlements) {
     const account = await prisma.payoutAccount.findFirst({
       where: s.vendorId ? { vendorId: s.vendorId } : { talentProfileId: s.talentProfileId },
@@ -184,7 +252,10 @@ async function seedHubState(prisma: PrismaClient): Promise<void> {
     // One unit per seeded rental: take the first of the listing if none was assigned.
     let unitIds = b.assignedUnits.map((u) => u.unitId);
     if (unitIds.length === 0 && b.listingId) {
-      const unit = await prisma.equipmentUnit.findFirst({ where: { listingId: b.listingId }, orderBy: { createdAt: 'asc' } });
+      const unit = await prisma.equipmentUnit.findFirst({
+        where: { listingId: b.listingId },
+        orderBy: { createdAt: 'asc' },
+      });
       if (unit) {
         await prisma.bookingUnit.create({ data: { bookingId: b.id, unitId: unit.id } });
         unitIds = [unit.id];
@@ -193,7 +264,13 @@ async function seedHubState(prisma: PrismaClient): Promise<void> {
     const custody: UnitCustody =
       b.status === BookingStatus.BOOKING_CONFIRMED
         ? UnitCustody.VENDOR
-        : ([BookingStatus.IN_PROGRESS, BookingStatus.RENTAL_COMPLETED, BookingStatus.RETURN_SCHEDULED] as BookingStatus[]).includes(b.status)
+        : (
+              [
+                BookingStatus.IN_PROGRESS,
+                BookingStatus.RENTAL_COMPLETED,
+                BookingStatus.RETURN_SCHEDULED,
+              ] as BookingStatus[]
+            ).includes(b.status)
           ? UnitCustody.CLIENT
           : UnitCustody.HUB;
     await prisma.equipmentUnit.updateMany({ where: { id: { in: unitIds } }, data: { custody } });
@@ -233,28 +310,78 @@ async function seedHubState(prisma: PrismaClient): Promise<void> {
 async function seedCategoriesContent(prisma: PrismaClient): Promise<void> {
   const bySlug = new Map((await prisma.category.findMany()).map((c) => [c.slug, c]));
   const details: Record<string, { description: string; skills?: string[]; related?: string[] }> = {
-    cameras: { description: 'Cinema and mirrorless bodies. Check sensor and mount on every return.', related: ['lenses', 'lighting', 'audio', 'cinematographers'] },
-    lenses: { description: 'Primes, zooms and adapters. Inspect glass and mount pins.', related: ['cameras', 'grip-support'] },
-    lighting: { description: 'LED panels, COB lights, modifiers and stands.', related: ['grip-support', 'cameras'] },
-    audio: { description: 'Wireless kits, shotgun mics and recorders.', related: ['sound-engineers', 'cameras'] },
+    cameras: {
+      description: 'Cinema and mirrorless bodies. Check sensor and mount on every return.',
+      related: ['lenses', 'lighting', 'audio', 'cinematographers'],
+    },
+    lenses: {
+      description: 'Primes, zooms and adapters. Inspect glass and mount pins.',
+      related: ['cameras', 'grip-support'],
+    },
+    lighting: {
+      description: 'LED panels, COB lights, modifiers and stands.',
+      related: ['grip-support', 'cameras'],
+    },
+    audio: {
+      description: 'Wireless kits, shotgun mics and recorders.',
+      related: ['sound-engineers', 'cameras'],
+    },
     'grip-support': { description: 'Tripods, gimbals, sliders and rigs.', related: ['cameras'] },
-    drones: { description: 'Drones need a registered pilot; check propellers and batteries.', related: ['cinematographers'] },
-    cinematographers: { description: 'Directors of photography and camera operators.', skills: ['Colour grading', 'Gimbal operation', 'Drone operation', 'Lighting design', 'Documentary'], related: ['cameras', 'lenses'] },
-    photographers: { description: 'Event, product and portrait photographers.', skills: ['Wedding', 'Product', 'Portrait', 'Retouching', 'Studio lighting'], related: ['cameras', 'lighting'] },
-    editors: { description: 'Offline and online editors, colourists.', skills: ['DaVinci Resolve', 'Premiere Pro', 'Colour grading', 'Motion graphics'] },
-    directors: { description: 'Commercial, music video and documentary directors.', skills: ['Commercials', 'Music videos', 'Documentary', 'Script development'] },
-    'sound-engineers': { description: 'Location sound and post mixing.', skills: ['Boom operation', 'Wireless mics', 'Mixing', 'Foley'], related: ['audio'] },
-    'models-actors': { description: 'On-screen talent for commercials and film.', skills: ['Commercial', 'Runway', 'Voice-over', 'Stage acting'] },
+    drones: {
+      description: 'Drones need a registered pilot; check propellers and batteries.',
+      related: ['cinematographers'],
+    },
+    cinematographers: {
+      description: 'Directors of photography and camera operators.',
+      skills: [
+        'Colour grading',
+        'Gimbal operation',
+        'Drone operation',
+        'Lighting design',
+        'Documentary',
+      ],
+      related: ['cameras', 'lenses'],
+    },
+    photographers: {
+      description: 'Event, product and portrait photographers.',
+      skills: ['Wedding', 'Product', 'Portrait', 'Retouching', 'Studio lighting'],
+      related: ['cameras', 'lighting'],
+    },
+    editors: {
+      description: 'Offline and online editors, colourists.',
+      skills: ['DaVinci Resolve', 'Premiere Pro', 'Colour grading', 'Motion graphics'],
+    },
+    directors: {
+      description: 'Commercial, music video and documentary directors.',
+      skills: ['Commercials', 'Music videos', 'Documentary', 'Script development'],
+    },
+    'sound-engineers': {
+      description: 'Location sound and post mixing.',
+      skills: ['Boom operation', 'Wireless mics', 'Mixing', 'Foley'],
+      related: ['audio'],
+    },
+    'models-actors': {
+      description: 'On-screen talent for commercials and film.',
+      skills: ['Commercial', 'Runway', 'Voice-over', 'Stage acting'],
+    },
   };
   for (const [slug, d] of Object.entries(details)) {
     const c = bySlug.get(slug);
     if (!c) continue;
     await prisma.category.update({
       where: { id: c.id },
-      data: { description: c.description ?? d.description, ...(d.skills && c.skills.length === 0 ? { skills: d.skills } : {}) },
+      data: {
+        description: c.description ?? d.description,
+        ...(d.skills && c.skills.length === 0 ? { skills: d.skills } : {}),
+      },
     });
-    if ((await prisma.categoryAssociation.count({ where: { categoryId: c.id } })) === 0 && d.related) {
-      const related = d.related.map((s) => bySlug.get(s)).filter((x): x is NonNullable<typeof x> => !!x);
+    if (
+      (await prisma.categoryAssociation.count({ where: { categoryId: c.id } })) === 0 &&
+      d.related
+    ) {
+      const related = d.related
+        .map((s) => bySlug.get(s))
+        .filter((x): x is NonNullable<typeof x> => !!x);
       await prisma.categoryAssociation.createMany({
         data: related.map((r, sortOrder) => ({ categoryId: c.id, relatedId: r.id, sortOrder })),
         skipDuplicates: true,
@@ -264,16 +391,32 @@ async function seedCategoriesContent(prisma: PrismaClient): Promise<void> {
 }
 
 async function seedFeatured(prisma: PrismaClient): Promise<void> {
-  const featured = await prisma.listing.findMany({ where: { isFeatured: true, featureTier: null }, orderBy: { createdAt: 'asc' } });
+  const featured = await prisma.listing.findMany({
+    where: { isFeatured: true, featureTier: null },
+    orderBy: { createdAt: 'asc' },
+  });
   for (const [i, l] of featured.entries()) {
     await prisma.listing.update({
       where: { id: l.id },
-      data: { featureTier: i === 0 ? FeatureTier.SPOTLIGHT : FeatureTier.FEATURED, featuredAt: new Date(), featureSortOrder: i },
+      data: {
+        featureTier: i === 0 ? FeatureTier.SPOTLIGHT : FeatureTier.FEATURED,
+        featuredAt: new Date(),
+        featureSortOrder: i,
+      },
     });
   }
-  const talent = await prisma.talentProfile.findFirst({ where: { status: 'VERIFIED', featureTier: null }, orderBy: { ratingAvg: 'desc' } });
-  if (talent && (await prisma.talentProfile.count({ where: { featureTier: { not: null } } })) === 0) {
-    await prisma.talentProfile.update({ where: { id: talent.id }, data: { featureTier: FeatureTier.HIGHLIGHTED, featuredAt: new Date() } });
+  const talent = await prisma.talentProfile.findFirst({
+    where: { status: 'VERIFIED', featureTier: null },
+    orderBy: { ratingAvg: 'desc' },
+  });
+  if (
+    talent &&
+    (await prisma.talentProfile.count({ where: { featureTier: { not: null } } })) === 0
+  ) {
+    await prisma.talentProfile.update({
+      where: { id: talent.id },
+      data: { featureTier: FeatureTier.HIGHLIGHTED, featuredAt: new Date() },
+    });
   }
 }
 
@@ -286,7 +429,11 @@ async function seedOpenWork(prisma: PrismaClient): Promise<void> {
   });
   if (awaiting && awaiting.status === BookingStatus.AWAITING_PAYMENT) {
     const agreement = awaiting.agreements.find((a) => a.counterpartyId === awaiting.customerId);
-    if (agreement && agreement.status === AgreementStatus.AWAITING_UPLOAD && agreement.documentKey) {
+    if (
+      agreement &&
+      agreement.status === AgreementStatus.AWAITING_UPLOAD &&
+      agreement.documentKey
+    ) {
       await prisma.agreement.update({
         where: { id: agreement.id },
         data: {
@@ -302,7 +449,9 @@ async function seedOpenWork(prisma: PrismaClient): Promise<void> {
     }
     if (awaiting.payments.length === 0) {
       const receipt = await prisma.payment.findFirst({ where: { status: PaymentStatus.VERIFIED } });
-      const account = await prisma.collectionAccount.findFirst({ where: { channel: AccountChannel.BANK } });
+      const account = await prisma.collectionAccount.findFirst({
+        where: { channel: AccountChannel.BANK },
+      });
       const rows = await prisma.$queryRaw<{ lastValue: number }[]>`
         INSERT INTO "NumberSequence" ("id", "scope", "period", "lastValue", "updatedAt")
         VALUES (gen_random_uuid(), 'payment', 'all', 1, now())
@@ -317,7 +466,8 @@ async function seedOpenWork(prisma: PrismaClient): Promise<void> {
           method: PaymentMethod.BANK_TRANSFER,
           transactionReference: 'FT26271SEED42',
           amountMinor: awaiting.totalMinor + awaiting.securityDepositMinor,
-          receiptFileKey: receipt?.receiptFileKey ?? `bookings/${awaiting.reference}/receipts/payment.txt`,
+          receiptFileKey:
+            receipt?.receiptFileKey ?? `bookings/${awaiting.reference}/receipts/payment.txt`,
           receiptFileName: 'cbe-transfer.pdf',
           receiptMimeType: 'application/pdf',
           status: PaymentStatus.SUBMITTED,
@@ -346,7 +496,9 @@ async function seedOpenWork(prisma: PrismaClient): Promise<void> {
       });
     }
     if (engagement?.talentProfileId) {
-      const talent = await prisma.talentProfile.findUniqueOrThrow({ where: { id: engagement.talentProfileId } });
+      const talent = await prisma.talentProfile.findUniqueOrThrow({
+        where: { id: engagement.talentProfileId },
+      });
       await prisma.incident.create({
         data: {
           reference: 'ESK-INC-90002',

@@ -15,7 +15,6 @@ import {
 } from '@nestjs/common';
 import {
   ApiOkResponse,
-  ApiOperation,
   ApiParam,
   ApiProperty,
   ApiPropertyOptional,
@@ -25,7 +24,7 @@ import { AdminTier, AgreementStatus, AgreementType, Prisma, type Agreement } fro
 import { Transform } from 'class-transformer';
 import { IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import type { Response } from 'express';
-import { ApiStandardErrors } from '../../../common/dto/api-docs';
+import { ApiStandardErrors, ApiEndpoint } from '../../../common/dto/api-docs';
 import { AgreementsService } from '../../agreements/agreements.service';
 import { renderAgreementPdf } from '../../documents/pdf-renderer';
 import { CurrentUser } from '../../auth/auth.decorators';
@@ -289,10 +288,10 @@ export class AdminAgreementsController {
   constructor(private readonly agreements: AdminAgreementsService) {}
 
   @Get()
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Signed agreements waiting for review',
-    description:
-      'Customer, talent and vendor scans. Defaults to UNDER_REVIEW, oldest upload first.',
+    does: 'The queue of hand-signed contract scans: customers’ rental and engagement agreements, talents’ service agreements, vendors’ onboarding agreements.',
+    behind: ['Read only. Defaults to `UNDER_REVIEW`, oldest upload first.'],
   })
   @ApiOkResponse({ type: [AdminAgreementResponse] })
   @ApiStandardErrors({ badRequest: 'Unknown `status` or `kind`.' })
@@ -301,7 +300,14 @@ export class AdminAgreementsController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'One agreement, with its frozen text' })
+  @ApiEndpoint({
+    summary: 'One agreement, with its frozen text',
+    does: 'The agreement and the exact text that was issued.',
+    behind: [
+      'Read only. The text is read back from storage where it was frozen at issue; `contentHash` lets anyone check the scan against it.',
+    ],
+    rules: ['404 when not found.'],
+  })
   @ApiParam(AGREEMENT_ID)
   @ApiOkResponse({ type: AdminAgreementDetailResponse })
   @ApiStandardErrors({ notFound: 'Agreement not found' })
@@ -310,7 +316,14 @@ export class AdminAgreementsController {
   }
 
   @Get(':id/pdf')
-  @ApiOperation({ summary: 'Download the generated agreement as a PDF' })
+  @ApiEndpoint({
+    summary: 'Download the generated agreement as a PDF',
+    does: 'The issued contract as a PDF.',
+    behind: [
+      'Rendered on demand from the frozen text, with its hash in the footer. Nothing is stored.',
+    ],
+    rules: ['404 when not found.'],
+  })
   @ApiParam(AGREEMENT_ID)
   @ApiOkResponse({ description: 'The PDF.', content: PDF_CONTENT })
   @ApiStandardErrors({ notFound: 'Agreement not found' })
@@ -323,13 +336,20 @@ export class AdminAgreementsController {
   }
 
   @Post(':id/approve')
+  @ApiEndpoint({
+    summary: 'Approve the signed scan',
+    does: 'Accepts the uploaded scan: right document, legible, signed.',
+    behind: [
+      'Agreement → `APPROVED` with who reviewed it and when; the booking’s history noted.',
+      'Notification: whoever signed — Agreement Approved.',
+      'A customer’s agreement being approved may be the last thing a paid booking needed: it then moves to `BOOKING_CONFIRMED` and the vendor or talent is told.',
+      'Admin audit log written.',
+    ],
+    seenBy: ['Customer: the agreement shows as approved; the booking may confirm.'],
+    rules: ['409 when there is no uploaded scan waiting for review.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
-    summary: 'Approve the signed scan',
-    description:
-      "A customer's agreement being approved confirms the booking if it is already paid in full.",
-  })
   @ApiParam(AGREEMENT_ID)
   @ApiOkResponse({ type: AdminAgreementResponse })
   @ApiStandardErrors({
@@ -344,9 +364,19 @@ export class AdminAgreementsController {
   }
 
   @Post(':id/reject')
+  @ApiEndpoint({
+    summary: 'Reject the scan',
+    does: 'Refuses the scan — wrong document, unsigned, illegible — and asks for a new upload.',
+    behind: [
+      'Agreement → `REJECTED` with the reason.',
+      'Notification: whoever signed — Agreement Needs Re-uploading, with the reason.',
+      'Admin audit log written.',
+    ],
+    seenBy: ['Customer: payment is blocked again until a new scan is uploaded.'],
+    rules: ['409 when there is no uploaded scan waiting for review.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Reject the scan — the signer is asked to upload again' })
   @ApiParam(AGREEMENT_ID)
   @ApiOkResponse({ type: AdminAgreementResponse })
   @ApiStandardErrors({

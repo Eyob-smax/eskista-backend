@@ -188,7 +188,9 @@ export class AdminPaymentsService {
         mimeType: first.receiptMimeType,
         sizeBytes: first.receiptSizeBytes,
       },
-      bookings: bookings.map(({ previouslyPaid: _unused, ...b }) => b),
+      // `previouslyPaid` only fed `expectedAmountMinor`; it is not part of the response.
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      bookings: bookings.map(({ previouslyPaid, ...b }) => b),
       history: [...byRef.values()].map((g) => this.toRow(g)),
       canDecide: rows.every((r) => r.status === PaymentStatus.SUBMITTED),
     };

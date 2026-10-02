@@ -1,5 +1,6 @@
+import { ApiEndpoint } from '../../../common/dto/api-docs';
 import { Controller, Get, Injectable } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import {
   AgreementStatus,
   BookingStatus,
@@ -192,10 +193,14 @@ export class AdminOverviewController {
   constructor(private readonly overview: AdminOverviewService) {}
 
   @Get()
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Overview',
-    description:
-      'Greeting, the four tiles, Attention Required, Recent Bookings, and every sidebar badge.',
+    does: 'The dashboard home: greeting, the four tiles, Attention Required, Recent Bookings, and every sidebar badge in one call.',
+    behind: [
+      'Read only — about fifteen counts and two short lists, run in parallel.',
+      'Attention Required lists payment slips oldest first (one card per transfer), then vendor-accepted requests waiting for approval.',
+      'The greeting follows Addis Ababa time.',
+    ],
   })
   @ApiOkResponse({ type: AdminOverviewResponse })
   get(@CurrentUser('id') adminId: string): Promise<AdminOverviewResponse> {

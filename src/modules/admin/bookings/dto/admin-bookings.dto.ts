@@ -84,11 +84,11 @@ export class AdminBookingsQuery extends PaginationQuery {
 }
 
 export class PartyResponse {
-  @ApiProperty() id!: string;
-  @ApiProperty() name!: string;
-  @ApiPropertyOptional({ nullable: true }) organisation!: string | null;
-  @ApiPropertyOptional({ nullable: true }) phone!: string | null;
-  @ApiPropertyOptional({ nullable: true }) email!: string | null;
+  @ApiProperty({ example: '7c1e2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b' }) id!: string;
+  @ApiProperty({ example: 'Yoseph Alemu' }) name!: string;
+  @ApiPropertyOptional({ nullable: true, example: 'Habesha Films' }) organisation!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '+251911223344' }) phone!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'yoseph@habeshafilms.et' }) email!: string | null;
 }
 
 export class LegResponse {
@@ -97,15 +97,22 @@ export class LegResponse {
   @ApiProperty({ example: 'Courier Dispatch' }) methodLabel!: string;
   @ApiProperty({ example: 'OUT_FOR_DELIVERY' }) stage!: string;
   @ApiProperty({ example: 'Out for Delivery' }) stageLabel!: string;
-  @ApiPropertyOptional({ nullable: true }) address!: string | null;
-  @ApiPropertyOptional({ nullable: true }) scheduledAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) etaAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) courierName!: string | null;
-  @ApiPropertyOptional({ nullable: true }) courierPhone!: string | null;
-  @ApiPropertyOptional({ nullable: true }) vehicle!: string | null;
-  @ApiPropertyOptional({ nullable: true }) dispatchedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) completedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) notes!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Bole, near Edna Mall, Addis Ababa' }) address!:
+    string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-10-02T09:00:00.000Z' }) scheduledAt!:
+    string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-10-02T10:30:00.000Z' }) etaAt!:
+    string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Abebe K.' }) courierName!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '+251911556677' }) courierPhone!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Motorbike (AA 3-1024)' }) vehicle!:
+    string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-10-02T09:15:00.000Z' }) dispatchedAt!:
+    string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-10-02T10:25:00.000Z' }) completedAt!:
+    string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Ring the doorbell; second floor' }) notes!:
+    string | null;
 }
 
 export class AdminBookingRowResponse {
@@ -113,23 +120,26 @@ export class AdminBookingRowResponse {
   @ApiProperty({ enum: BookingType }) type!: BookingType;
   @ApiProperty({ type: PartyResponse }) customer!: PartyResponse;
   @ApiProperty({ example: 'Sony FX3 Cinema Camera' }) itemName!: string;
-  @ApiPropertyOptional({ nullable: true }) itemImageUrl!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: null }) itemImageUrl!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 'Afro Studio' }) supplierName!: string | null;
-  @ApiProperty() startDate!: string;
-  @ApiProperty() endDate!: string;
-  @ApiProperty() periods!: number;
+  @ApiProperty({ example: '2026-10-02' }) startDate!: string;
+  @ApiProperty({ example: '2026-10-04' }) endDate!: string;
+  @ApiProperty({ example: 3 }) periods!: number;
   @ApiProperty({ enum: BookingStatus }) status!: BookingStatus;
   @ApiProperty({ example: 'Awaiting Payment' }) statusLabel!: string;
   @ApiProperty({ example: 'Receipt Uploaded', description: 'The Payment column.' })
   paymentState!: string;
-  @ApiProperty({ description: 'What the customer transfers: total plus deposit.' })
+  @ApiProperty({
+    example: 1585000,
+    description: 'What the customer transfers: total plus deposit.',
+  })
   amountMinor!: number;
-  @ApiProperty() currency!: string;
+  @ApiProperty({ example: 'ETB' }) currency!: string;
   @ApiProperty({ example: 'ACCEPTED' }) supplierResponse!: string;
   @ApiProperty({ type: [String], example: ['FX3-002'] }) units!: string[];
   @ApiPropertyOptional({ type: LegResponse, nullable: true }) delivery!: LegResponse | null;
   @ApiPropertyOptional({ type: LegResponse, nullable: true }) return!: LegResponse | null;
   @ApiProperty({ example: 'Start Packing Gear', nullable: true, description: 'The row button.' })
   nextAction!: string | null;
-  @ApiProperty() createdAt!: string;
+  @ApiProperty({ example: '2026-09-25T14:30:00.000Z' }) createdAt!: string;
 }

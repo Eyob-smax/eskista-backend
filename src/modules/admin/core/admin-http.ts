@@ -24,5 +24,5 @@ export function sendCsv(res: Response, csv: string, name: string): StreamableFil
     'Content-Disposition': `attachment; filename="${name}-${day}.csv"`,
     'Cache-Control': 'private, no-store',
   });
-  return new StreamableFile(Buffer.from(`﻿${csv}`, 'utf-8'));
+  return new StreamableFile(Buffer.from(`\uFEFF${csv}`, 'utf-8'));
 }

@@ -13,7 +13,6 @@ import {
 } from '@nestjs/common';
 import {
   ApiOkResponse,
-  ApiOperation,
   ApiParam,
   ApiProperty,
   ApiPropertyOptional,
@@ -43,7 +42,7 @@ import {
   IsUUID,
   MaxLength,
 } from 'class-validator';
-import { ApiPaginatedResponse, ApiStandardErrors } from '../../../common/dto/api-docs';
+import { ApiPaginatedResponse, ApiStandardErrors, ApiEndpoint } from '../../../common/dto/api-docs';
 import { paginate, PaginationQuery, type Paginated } from '../../../common/dto/pagination.dto';
 import { CurrentUser } from '../../auth/auth.decorators';
 import { BookingRequestService } from '../../customer-bookings/booking-request.service';
@@ -83,7 +82,10 @@ export class AdminHiringQuery extends PaginationQuery {
   @IsIn(['SIGNED', 'PENDING'])
   contract?: 'SIGNED' | 'PENDING';
 
-  @ApiPropertyOptional({ description: 'Reference, customer, talent, project, venue.' })
+  @ApiPropertyOptional({
+    description: 'Reference, customer, talent, project, venue.',
+    example: 'ESK-TLT-9001',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(120)
@@ -125,7 +127,11 @@ export class HiringTalentResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ example: 'Dawit Bekele' }) name!: string;
   @ApiPropertyOptional({ nullable: true, example: 'Cinematographer' }) category!: string | null;
-  @ApiPropertyOptional({ nullable: true }) avatarUrl!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'https://res.cloudinary.com/eskista/image/upload/v1790000000/talent/dawit-bekele.jpg',
+  })
+  avatarUrl!: string | null;
 }
 
 export class HiringRowResponse {
@@ -335,7 +341,9 @@ export class AdminHiringService {
     const current = timeline.find((t) => t.state === 'IN_PROGRESS');
     const profile = b.customer.customer;
     const line = b.invoiceLines[0];
-    const due = line ? line.totalMinor + line.securityDepositMinor : b.totalMinor + b.securityDepositMinor;
+    const due = line
+      ? line.totalMinor + line.securityDepositMinor
+      : b.totalMinor + b.securityDepositMinor;
     return {
       reference: b.reference,
       createdAt: b.createdAt.toISOString(),
@@ -390,13 +398,13 @@ export class AdminHiringRequestsController {
   constructor(private readonly hiring: AdminHiringService) {}
 
   @Get()
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Hiring Requests',
-    description:
-      'Every talent request and engagement. Open one with `GET /admin/bookings/:reference`, ' +
-      'which shows the six-step lifecycle: Pending Review · Approved · Talent Assigned · ' +
-      'Contract Active · In Progress · Completed. Start and complete it with ' +
-      '`/admin/bookings/:reference/start` and `/complete`.',
+    does: 'Every talent request and engagement. Open one with `GET /admin/bookings/:reference`, which shows the six-step lifecycle.',
+    behind: [
+      'Read only. Status groups: NEW (submitted, Eskista review), SCHEDULED (approved, confirmed), IN_PROGRESS, COMPLETED (settled, closed), CLOSED (rejected, cancelled, expired).',
+      'Contract column: SIGNED = both agreements approved; PENDING = at least one is not; NOT_ISSUED = no agreements yet.',
+    ],
   })
   @ApiPaginatedResponse(HiringRowResponse)
   @ApiStandardErrors({ badRequest: 'A filter is not valid.' })
@@ -405,11 +413,23 @@ export class AdminHiringRequestsController {
   }
 
   @Post()
-  @AdminAccess(AdminTier.ADMIN, AdminTier.SUPPORT)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Create Hiring Request for a customer',
-    description: 'The same fields as the customer request, plus `customerId`. Submitted at once.',
+    does: "The same fields as the customer's own request, plus `customerId`. Submitted at once.",
+    behind: [
+      "Draft created then submitted through the same validation the customer's submit uses.",
+      '`createdByAdminId` recorded for the audit trail.',
+      'Notification: matching talents — invitation (when talent ids are included).',
+      'Admin audit log written.',
+    ],
+    seenBy: ['Customer: the request appears on their bookings.'],
+    rules: [
+      '400 when the request is not ready to submit.',
+      '404 when the customer is not found.',
+      '409 when some of the talents are no longer taking work.',
+    ],
   })
+  @AdminAccess(AdminTier.ADMIN, AdminTier.SUPPORT)
   @ApiOkResponse({ type: AdminBookingDetailResponse })
   @ApiStandardErrors({
     badRequest:
@@ -425,9 +445,23 @@ export class AdminHiringRequestsController {
   }
 
   @Post(':reference/invitations')
+  @ApiEndpoint({
+    summary: 'Invite more talents to an open request',
+    does: "Sends invitations to talents on the customer's behalf, while the request is still open.",
+    behind: [
+      'Invitations created (status PENDING) for each talent profile id.',
+      "Notification: each talent — you've been invited.",
+      'Admin audit log written.',
+    ],
+    seenBy: ['Talents: each one sees a new invitation to accept or decline.'],
+    rules: [
+      '400 when more talents than the invitation limit allows.',
+      '404 when the talent request is not found.',
+      '409 when the request is no longer open to new invitations.',
+    ],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN, AdminTier.SUPPORT)
-  @ApiOperation({ summary: 'Invite more talents to an open request' })
   @ApiParam(REF)
   @ApiOkResponse({ type: AdminBookingDetailResponse })
   @ApiStandardErrors({
@@ -444,12 +478,28 @@ export class AdminHiringRequestsController {
   }
 
   @Post(':reference/hire')
+  @ApiEndpoint({
+    summary: "Assign Talent — hire on the customer's behalf",
+    does: 'Hires talents who accepted, for the customer — typically when they asked Eskista to choose. Only talents who accepted can be hired.',
+    behind: [
+      "Exactly the customer's own Hire: invitations → HIRED, price frozen, both agreements (engagement + service) issued, invoiced.",
+      'Status → `AWAITING_PAYMENT` with agreements to sign.',
+      'Actor recorded as the admin (not the customer).',
+      'Notification: customer — booking approved; talent — hired.',
+      'Admin audit log written.',
+    ],
+    seenBy: [
+      'Customer: the request moves to Payment, with agreements to sign.',
+      'Talent: "You\'ve been hired" with the engagement details.',
+    ],
+    rules: [
+      '400 when more talents than the headcount.',
+      '404 when the talent request is not found.',
+      '409 when only talents who have accepted this request can be hired.',
+    ],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
-    summary: 'Assign Talent — hire on the customer’s behalf',
-    description: 'Only talents who accepted. Prices the hire and issues both agreements.',
-  })
   @ApiParam(REF)
   @ApiOkResponse({ type: AdminBookingDetailResponse })
   @ApiStandardErrors({

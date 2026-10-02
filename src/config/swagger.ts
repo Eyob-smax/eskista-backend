@@ -15,26 +15,84 @@ export const ADMIN_PATH_PREFIX = '/api/v1/admin';
 
 /** Tags in the order of the dashboard sidebar, each with what the screen is for. */
 export const ADMIN_TAGS: { name: string; description: string }[] = [
-  { name: 'admin · auth', description: 'Sign in, sign out, the session, changing one’s own password (Better Auth).' },
-  { name: 'admin · overview', description: 'The Overview: greeting, tiles, Attention Required, Recent Bookings, sidebar badges.' },
-  { name: 'admin · team', description: 'Admin Users & Access Control — the signed-in admin, and the staff list (Super Admin edits).' },
-  { name: 'admin · bookings', description: 'Equipment OPS — Booking Requests, Active Rentals, Deliveries & Pickups, and the Booking Detail with every operational step.' },
-  { name: 'admin · agreements', description: 'Signed contract scans waiting for review — customer, talent and vendor.' },
-  { name: 'admin · payments', description: 'Finance — Payments Verification: confirm, request a new slip, reject, record cash.' },
-  { name: 'admin · invoices', description: 'Finance — invoices, combined invoices, VAT per invoice, voiding.' },
-  { name: 'admin · settlements', description: 'Finance — Vendor Payouts & Settlements: breakdown, adjustments, Mark as Paid.' },
-  { name: 'admin · equipment', description: 'Catalog & Gear — Equipment Management (units and listings), and Add Equipment.' },
-  { name: 'admin · inspections', description: 'Inspections & QA, and each unit’s Condition History.' },
-  { name: 'admin · categories', description: 'Equipment Categories and Talent Categories & Skills, with associations.' },
-  { name: 'admin · review', description: 'Listings and talent registrations waiting for approval, with the commission preview.' },
-  { name: 'admin · hiring', description: 'Talent Marketplace — Hiring Requests: invite or hire for the customer, create a request.' },
-  { name: 'admin · talent roster', description: 'Talent Marketplace — Roster & Profiles: verify, suspend, register a talent.' },
-  { name: 'admin · issues', description: 'Issues & Grievance Desk — equipment issues and client ↔ talent disputes.' },
+  {
+    name: 'admin · auth',
+    description: 'Sign in, sign out, the session, changing one’s own password (Better Auth).',
+  },
+  {
+    name: 'admin · overview',
+    description:
+      'The Overview: greeting, tiles, Attention Required, Recent Bookings, sidebar badges.',
+  },
+  {
+    name: 'admin · team',
+    description:
+      'Admin Users & Access Control — the signed-in admin, and the staff list (Super Admin edits).',
+  },
+  {
+    name: 'admin · bookings',
+    description:
+      'Equipment OPS — Booking Requests, Active Rentals, Deliveries & Pickups, and the Booking Detail with every operational step.',
+  },
+  {
+    name: 'admin · agreements',
+    description: 'Signed contract scans waiting for review — customer, talent and vendor.',
+  },
+  {
+    name: 'admin · payments',
+    description:
+      'Finance — Payments Verification: confirm, request a new slip, reject, record cash.',
+  },
+  {
+    name: 'admin · invoices',
+    description: 'Finance — invoices, combined invoices, VAT per invoice, voiding.',
+  },
+  {
+    name: 'admin · settlements',
+    description: 'Finance — Vendor Payouts & Settlements: breakdown, adjustments, Mark as Paid.',
+  },
+  {
+    name: 'admin · equipment',
+    description: 'Catalog & Gear — Equipment Management (units and listings), and Add Equipment.',
+  },
+  {
+    name: 'admin · inspections',
+    description: 'Inspections & QA, and each unit’s Condition History.',
+  },
+  {
+    name: 'admin · categories',
+    description: 'Equipment Categories and Talent Categories & Skills, with associations.',
+  },
+  {
+    name: 'admin · review',
+    description:
+      'Listings and talent registrations waiting for approval, with the commission preview.',
+  },
+  {
+    name: 'admin · hiring',
+    description:
+      'Talent Marketplace — Hiring Requests: invite or hire for the customer, create a request.',
+  },
+  {
+    name: 'admin · talent roster',
+    description: 'Talent Marketplace — Roster & Profiles: verify, suspend, register a talent.',
+  },
+  {
+    name: 'admin · issues',
+    description: 'Issues & Grievance Desk — equipment issues and client ↔ talent disputes.',
+  },
   { name: 'admin · vendors', description: 'User Management — Vendor Accounts.' },
   { name: 'admin · customers', description: 'User Management — Customer Accounts.' },
-  { name: 'admin · marketplace content', description: 'Platform Governance — what is promoted on the website and the bot.' },
+  {
+    name: 'admin · marketplace content',
+    description: 'Platform Governance — what is promoted on the website and the bot.',
+  },
   { name: 'admin · pricing', description: 'Platform Governance — commission, VAT and fees.' },
-  { name: 'admin · settings', description: 'Platform Governance — operating accounts and general settings (and hiring limits).' },
+  {
+    name: 'admin · settings',
+    description:
+      'Platform Governance — operating accounts and general settings (and hiring limits).',
+  },
 ];
 
 const ADMIN_DESCRIPTION = `
@@ -176,7 +234,10 @@ function authPaths(): OpenAPIObject['paths'] {
             description: 'Signed out.',
             content: {
               'application/json': {
-                schema: { type: 'object', properties: { success: { type: 'boolean', example: true } } },
+                schema: {
+                  type: 'object',
+                  properties: { success: { type: 'boolean', example: true } },
+                },
               },
             },
           },
@@ -187,7 +248,8 @@ function authPaths(): OpenAPIObject['paths'] {
       get: {
         tags: ['admin · auth'],
         summary: 'The current session',
-        description: '`null` when signed out. For the admin profile and tier, use `GET /api/v1/admin/me`.',
+        description:
+          '`null` when signed out. For the admin profile and tier, use `GET /api/v1/admin/me`.',
         operationId: 'adminGetSession',
         responses: {
           '200': {
@@ -281,9 +343,7 @@ export function buildAdminDocument(full: OpenAPIObject): OpenAPIObject {
     size = needed.size;
     for (const name of [...needed]) collectRefs(all[name], needed);
   }
-  const schemas = Object.fromEntries(
-    Object.entries(all).filter(([name]) => needed.has(name)),
-  );
+  const schemas = Object.fromEntries(Object.entries(all).filter(([name]) => needed.has(name)));
 
   const used = new Set<string>();
   for (const item of Object.values(paths)) {
@@ -305,7 +365,11 @@ export function buildAdminDocument(full: OpenAPIObject): OpenAPIObject {
   };
 }
 
-export function setupSwagger(app: INestApplication, version: string): void {
+/** Both documents, built from the app's routes without serving them. */
+export function buildDocuments(
+  app: INestApplication,
+  version: string,
+): { full: OpenAPIObject; admin: OpenAPIObject } {
   const config = new DocumentBuilder()
     .setTitle('Eskista Marketplace API')
     .setDescription(
@@ -326,6 +390,11 @@ export function setupSwagger(app: INestApplication, version: string): void {
     .build();
 
   const full = SwaggerModule.createDocument(app, config);
+  return { full, admin: buildAdminDocument(full) };
+}
+
+export function setupSwagger(app: INestApplication, version: string): void {
+  const { full, admin } = buildDocuments(app, version);
   const uiOptions = {
     swaggerOptions: {
       persistAuthorization: true,
@@ -337,7 +406,7 @@ export function setupSwagger(app: INestApplication, version: string): void {
     },
   };
 
-  SwaggerModule.setup('docs/admin', app, buildAdminDocument(full), {
+  SwaggerModule.setup('docs/admin', app, admin, {
     ...uiOptions,
     customSiteTitle: 'Eskista Admin API',
     jsonDocumentUrl: 'docs/admin-json',

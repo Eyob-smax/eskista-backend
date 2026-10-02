@@ -44,7 +44,7 @@ export class AdminUnitsQuery extends PaginationQuery {
   @ApiPropertyOptional() @IsOptional() @IsUUID() categoryId?: string;
   @ApiPropertyOptional() @IsOptional() @IsUUID() vendorId?: string;
 
-  @ApiPropertyOptional({ description: 'Unit label, serial, equipment or vendor.' })
+  @ApiPropertyOptional({ example: 'FX3', description: 'Unit label, serial, equipment or vendor.' })
   @IsOptional()
   @IsString()
   @MaxLength(120)
@@ -61,7 +61,7 @@ export class AdminListingsQuery extends PaginationQuery {
   @ApiPropertyOptional() @IsOptional() @IsUUID() categoryId?: string;
   @ApiPropertyOptional() @IsOptional() @IsUUID() vendorId?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Sony FX3' })
   @IsOptional()
   @IsString()
   @MaxLength(120)
@@ -133,7 +133,10 @@ export class CategoryDto {
   })
   slug?: string;
 
-  @ApiPropertyOptional({ description: 'Internal description, for admins.' })
+  @ApiPropertyOptional({
+    example: 'Cinema and mirrorless bodies.',
+    description: 'Internal description, for admins.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(1000)
@@ -222,7 +225,11 @@ export class UnitRowResponse {
   @ApiPropertyOptional({ nullable: true, example: 'SNY-FX3-2291' }) serialNumber!: string | null;
   @ApiProperty({ format: 'uuid' }) listingId!: string;
   @ApiProperty({ example: 'Sony FX3 Cinema Camera' }) equipmentName!: string;
-  @ApiPropertyOptional({ nullable: true }) imageUrl!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'https://res.cloudinary.com/…/listings/…/fx3.jpg',
+  })
+  imageUrl!: string | null;
   @ApiProperty({ type: NamedRefResponse }) vendor!: NamedRefResponse;
   @ApiProperty({ example: 'Cameras' }) category!: string;
   @ApiProperty({ enum: UNIT_STATES, example: 'RENTED' }) state!: UnitState;
@@ -286,8 +293,12 @@ export class UnitOverviewResponse {
   @ApiPropertyOptional({ nullable: true, enum: ['FEATURED', 'HIGHLIGHTED', 'SPOTLIGHT'] })
   featureTier!: string | null;
   @ApiProperty({ type: UnitVendorResponse }) vendor!: UnitVendorResponse;
-  @ApiPropertyOptional({ nullable: true }) conditionNotes!: string | null;
-  @ApiPropertyOptional({ nullable: true }) acquiredAt!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Minor scuff on left grip, does not affect operation.',
+  })
+  conditionNotes!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2025-11-15' }) acquiredAt!: string | null;
 }
 
 export class UnitRentalResponse {
@@ -343,7 +354,11 @@ export class UnitDetailResponse extends UnitRowResponse {
 export class ListingAdminRowResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ example: 'Sony FX3 Cinema Camera' }) name!: string;
-  @ApiPropertyOptional({ nullable: true }) imageUrl!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'https://res.cloudinary.com/…/listings/…/fx3.jpg',
+  })
+  imageUrl!: string | null;
   @ApiProperty({ type: NamedRefResponse }) vendor!: NamedRefResponse;
   @ApiProperty({ example: 'Cameras' }) category!: string;
   @ApiProperty({ enum: ListingStatus, example: ListingStatus.PUBLISHED }) status!: ListingStatus;
@@ -357,7 +372,7 @@ export class ListingAdminRowResponse {
   @ApiPropertyOptional({ nullable: true, enum: ['FEATURED', 'HIGHLIGHTED', 'SPOTLIGHT'] })
   featureTier!: string | null;
   @ApiProperty({ example: 4.7 }) rating!: number;
-  @ApiProperty() updatedAt!: string;
+  @ApiProperty({ example: '2026-09-28T14:00:00.000Z' }) updatedAt!: string;
 }
 
 export class CategoryRefResponse {
@@ -398,7 +413,11 @@ export class AdminCategoryResponse {
     description: 'Talent categories: specializations & skills.',
   })
   skills!: string[];
-  @ApiPropertyOptional({ nullable: true }) thumbnailUrl!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'https://res.cloudinary.com/…/categories/cameras.jpg',
+  })
+  thumbnailUrl!: string | null;
   @ApiPropertyOptional({ type: CategoryParentResponse, nullable: true })
   parent!: CategoryParentResponse | null;
   @ApiProperty({ example: 2 }) subcategoryCount!: number;
@@ -413,7 +432,7 @@ export class AdminCategoryResponse {
     description: 'Cross-Marketplace Associations, in order.',
   })
   associations!: CategoryRefResponse[];
-  @ApiProperty() updatedAt!: string;
+  @ApiProperty({ example: '2026-09-25T10:30:00.000Z' }) updatedAt!: string;
 }
 
 export class CategoryDeleteResponse {

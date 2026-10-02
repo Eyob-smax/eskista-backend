@@ -12,10 +12,10 @@ import {
   Res,
   StreamableFile,
 } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiParam, ApiTags } from '@nestjs/swagger';
 import { AdminTier } from '@prisma/client';
 import type { Response } from 'express';
-import { ApiPaginatedResponse, ApiStandardErrors } from '../../../common/dto/api-docs';
+import { ApiPaginatedResponse, ApiStandardErrors, ApiEndpoint } from '../../../common/dto/api-docs';
 import type { Paginated } from '../../../common/dto/pagination.dto';
 import { CurrentUser } from '../../auth/auth.decorators';
 import { AdminAccess } from '../core/admin-access';
@@ -37,16 +37,6 @@ const REF = {
   description: 'The settlement reference, or the booking reference it pays for.',
 };
 
-const FLOW = `
-A settlement is created when a booking reaches Settlement: an equipment rental after its
-return inspection, a talent engagement once the service is complete. It pays the
-supplier's own price in full — commission and VAT were on the customer's side — plus any
-adjustments, such as damage compensation withheld from the customer's deposit.
-
-**Mark as Paid** records the transfer and where it went. The vendor or talent then
-confirms it arrived in their app, and the booking closes (or an admin closes it).
-`.trim();
-
 @ApiTags('admin · settlements')
 @AdminAccess()
 @Controller({ path: 'admin/settlements', version: '1' })
@@ -54,7 +44,11 @@ export class AdminSettlementsController {
   constructor(private readonly settlements: AdminSettlementsService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Vendor Payouts & Settlements — the table', description: FLOW })
+  @ApiEndpoint({
+    summary: 'Vendor Payouts & Settlements — the table',
+    does: 'What Eskista owes each vendor and talent, per booking: "Rental Revenue − Commission ± Adjustments = Settlement".',
+    behind: ['Read only. Overdue is derived: not paid and past its due date.'],
+  })
   @ApiPaginatedResponse(SettlementRowResponse, 'One page, earliest due first.')
   @ApiStandardErrors({ badRequest: 'A filter is not valid.' })
   list(@Query() query: AdminSettlementsQuery): Promise<Paginated<SettlementRowResponse>> {
@@ -62,7 +56,11 @@ export class AdminSettlementsController {
   }
 
   @Get('summary')
-  @ApiOperation({ summary: 'The tiles above the table' })
+  @ApiEndpoint({
+    summary: 'The tiles above the table',
+    does: 'Pending and overdue totals, and what was paid and earned in commission this month.',
+    behind: ['Read only.'],
+  })
   @ApiOkResponse({ type: SettlementsSummaryResponse })
   @ApiStandardErrors()
   summary(): Promise<SettlementsSummaryResponse> {
@@ -70,8 +68,13 @@ export class AdminSettlementsController {
   }
 
   @Get('export')
+  @ApiEndpoint({
+    summary: 'Export (CSV)',
+    does: 'The table as a CSV file, with the same filters.',
+    behind: ['Read only. Up to 10,000 settlements, with the payout reference and account used.'],
+    rules: ['Finance and Super Admins.'],
+  })
   @AdminAccess(AdminTier.FINANCE)
-  @ApiOperation({ summary: 'Export (CSV)', description: 'Same filters as the table.' })
   @ApiOkResponse({ description: 'A CSV file, one row per settlement.', content: CSV_CONTENT })
   @ApiStandardErrors()
   async export(
@@ -82,7 +85,12 @@ export class AdminSettlementsController {
   }
 
   @Get(':reference')
-  @ApiOperation({ summary: 'Settlement Breakdown' })
+  @ApiEndpoint({
+    summary: 'Settlement Breakdown',
+    does: 'One settlement: the breakdown, adjustments, due and paid dates, destination, and the payee’s accounts to choose from.',
+    behind: ['Read only.'],
+    rules: ['404 when not found — the `STL-` reference or the booking reference both work.'],
+  })
   @ApiParam(REF)
   @ApiOkResponse({ type: SettlementDetailResponse })
   @ApiStandardErrors({ notFound: 'Settlement not found' })
@@ -91,7 +99,11 @@ export class AdminSettlementsController {
   }
 
   @Get(':reference/pdf')
-  @ApiOperation({ summary: 'Settlement record PDF' })
+  @ApiEndpoint({
+    summary: 'Settlement record PDF',
+    does: 'The settlement record the payee also sees, as a PDF.',
+    behind: ['Rendered on demand from the settlement. Nothing is stored.'],
+  })
   @ApiParam(REF)
   @ApiOkResponse({ description: 'The PDF.', content: PDF_CONTENT })
   @ApiStandardErrors({ notFound: 'Settlement not found' })
@@ -104,9 +116,24 @@ export class AdminSettlementsController {
   }
 
   @Post(':reference/pay')
+  @ApiEndpoint({
+    summary: 'Mark as Paid',
+    does: 'Records that Eskista sent the payout.',
+    behind: [
+      'Settlement → `PAID` with the transfer reference and who paid it.',
+      'Destination copied from the payee’s primary payout account (or `payoutAccountId`), so the record keeps showing where the money went after they change their details.',
+      'A payout the payee reported missing can be paid again; this clears the dispute.',
+      'Booking history noted. Notification: vendor or talent — Payout Sent. Admin audit log written.',
+    ],
+    seenBy: ['Vendor and talent: Confirm Payment, which closes the booking now or after 24 hours.'],
+    rules: [
+      'Finance and Super Admins.',
+      '409 when already paid and not disputed.',
+      '404 for a payout account that is not the payee’s.',
+    ],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.FINANCE)
-  @ApiOperation({ summary: 'Mark as Paid', description: FLOW })
   @ApiParam(REF)
   @ApiOkResponse({ type: SettlementDetailResponse })
   @ApiStandardErrors({
@@ -123,8 +150,15 @@ export class AdminSettlementsController {
   }
 
   @Post(':reference/adjustments')
+  @ApiEndpoint({
+    summary: 'Add an adjustment',
+    does: 'Adds a signed line to the payout — a penalty (negative) or a correction or bonus (positive).',
+    behind: [
+      'Adjustment stored with its reason and author; adjustment total, deductions and net recomputed (net never below zero). Admin audit log written.',
+    ],
+    rules: ['Finance and Super Admins.', '409 once paid.', '400 for a zero amount.'],
+  })
   @AdminAccess(AdminTier.FINANCE)
-  @ApiOperation({ summary: 'Add an adjustment (± minor units, with a reason)' })
   @ApiParam(REF)
   @ApiOkResponse({ type: SettlementDetailResponse })
   @ApiStandardErrors({
@@ -141,8 +175,17 @@ export class AdminSettlementsController {
   }
 
   @Delete(':reference/adjustments/:adjustmentId')
+  @ApiEndpoint({
+    summary: 'Remove an adjustment added by mistake',
+    does: 'Deletes one adjustment line before payment.',
+    behind: ['Line deleted; totals recomputed; admin audit log written.'],
+    rules: [
+      'Finance and Super Admins.',
+      '409 once paid.',
+      '404 when the line is not on this settlement.',
+    ],
+  })
   @AdminAccess(AdminTier.FINANCE)
-  @ApiOperation({ summary: 'Remove an adjustment added by mistake' })
   @ApiParam(REF)
   @ApiParam({ name: 'adjustmentId', format: 'uuid' })
   @ApiOkResponse({ type: SettlementDetailResponse })
@@ -159,9 +202,16 @@ export class AdminSettlementsController {
   }
 
   @Post(':reference/hold')
+  @ApiEndpoint({
+    summary: 'Hold or release a payout',
+    does: 'Pauses a payout — while a dispute is open, say — or releases it.',
+    behind: [
+      'Status `ON_HOLD` or back to `PENDING`, with an optional note; admin audit log written.',
+    ],
+    rules: ['Finance and Super Admins.', '409 once paid.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.FINANCE)
-  @ApiOperation({ summary: 'Hold or release a payout — e.g. while a dispute is open' })
   @ApiParam(REF)
   @ApiOkResponse({ type: SettlementDetailResponse })
   @ApiStandardErrors({

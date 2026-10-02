@@ -26,6 +26,7 @@
     "db:seed": "prisma db seed",
     "storage:migrate": "ts-node -r tsconfig-paths/register scripts/migrate-storage-to-cloudinary.ts",
     "admin:create": "ts-node -r tsconfig-paths/register scripts/create-admin.ts",
+    "openapi": "ts-node -r tsconfig-paths/register scripts/openapi.ts",
     "db:reset": "prisma migrate reset --force",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",

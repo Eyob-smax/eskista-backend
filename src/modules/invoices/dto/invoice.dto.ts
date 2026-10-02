@@ -68,7 +68,7 @@ export class PayInvoiceDto {
 }
 
 export class SetVatDto {
-  @ApiProperty({ description: 'Charge no VAT on this invoice.' })
+  @ApiProperty({ description: 'Charge no VAT on this invoice.', example: true })
   @IsBoolean()
   vatExempt!: boolean;
 
@@ -90,7 +90,7 @@ export class VoidInvoiceDto {
 }
 
 export class AdminInvoiceQuery {
-  @ApiPropertyOptional({ enum: InvoiceStatus })
+  @ApiPropertyOptional({ enum: InvoiceStatus, example: InvoiceStatus.ISSUED })
   @IsOptional()
   @IsEnum(InvoiceStatus)
   status?: InvoiceStatus;
@@ -105,18 +105,22 @@ export class AdminInvoiceQuery {
 
 export class InvoiceLineResponse {
   @ApiProperty({ example: 'ESK-10484' }) bookingReference!: string;
-  @ApiProperty({ enum: BookingStatus }) bookingStatus!: BookingStatus;
+  @ApiProperty({ enum: BookingStatus, example: BookingStatus.AWAITING_PAYMENT })
+  bookingStatus!: BookingStatus;
   @ApiProperty({ example: 'Aputure LS 300d II · Sep 30 – Oct 2' }) description!: string;
-  @ApiProperty() subtotalMinor!: number;
-  @ApiProperty() deliveryFeeMinor!: number;
-  @ApiProperty() serviceFeeMinor!: number;
-  @ApiProperty() discountMinor!: number;
-  @ApiProperty() taxMinor!: number;
-  @ApiProperty() securityDepositMinor!: number;
-  @ApiProperty({ description: 'Goods and services, as charged.' }) totalMinor!: number;
-  @ApiProperty({ description: 'This line’s total plus its deposit.' }) amountDueMinor!: number;
+  @ApiProperty({ example: 1500000 }) subtotalMinor!: number;
+  @ApiProperty({ example: 50000 }) deliveryFeeMinor!: number;
+  @ApiProperty({ example: 0 }) serviceFeeMinor!: number;
+  @ApiProperty({ example: 0 }) discountMinor!: number;
+  @ApiProperty({ example: 232500 }) taxMinor!: number;
+  @ApiProperty({ example: 300000 }) securityDepositMinor!: number;
+  @ApiProperty({ example: 1782500, description: 'Goods and services, as charged.' })
+  totalMinor!: number;
+  @ApiProperty({ example: 2082500, description: 'This line’s total plus its deposit.' })
+  amountDueMinor!: number;
   @ApiPropertyOptional({
     nullable: true,
+    example: null,
     description: 'Why this booking cannot be paid yet, e.g. its agreement is unsigned.',
   })
   paymentBlocker!: string | null;
@@ -125,62 +129,75 @@ export class InvoiceLineResponse {
 export class InvoicePaymentResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ example: 'ESK-10484' }) bookingReference!: string;
-  @ApiProperty({ enum: PaymentMethod }) method!: PaymentMethod;
-  @ApiProperty() transactionReference!: string;
-  @ApiProperty({ description: 'This booking’s share of the transfer.' }) amountMinor!: number;
-  @ApiProperty({ enum: PaymentStatus }) status!: PaymentStatus;
-  @ApiProperty() receiptUrl!: string;
-  @ApiProperty() submittedAt!: string;
+  @ApiProperty({ enum: PaymentMethod, example: PaymentMethod.BANK_TRANSFER })
+  method!: PaymentMethod;
+  @ApiProperty({ example: 'FT26270XYZ12' }) transactionReference!: string;
+  @ApiProperty({ example: 2082500, description: 'This booking’s share of the transfer.' })
+  amountMinor!: number;
+  @ApiProperty({ enum: PaymentStatus, example: PaymentStatus.VERIFIED }) status!: PaymentStatus;
+  @ApiProperty({ example: '/api/v1/files/bookings/ESK-10484/receipts/ft26270xyz12.jpg' })
+  receiptUrl!: string;
+  @ApiProperty({ example: '2026-09-29T11:20:00.000Z' }) submittedAt!: string;
 }
 
 export class BilledToResponse {
   @ApiProperty({ example: 'Habesha Films' }) name!: string;
-  @ApiPropertyOptional({ nullable: true }) phone!: string | null;
-  @ApiPropertyOptional({ nullable: true }) address!: string | null;
-  @ApiPropertyOptional({ nullable: true }) tin!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '+251911223344' }) phone!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Bole Sub-City, Woreda 03, Addis Ababa' })
+  address!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: null }) tin!: string | null;
 }
 
 export class InvoiceSummaryResponse {
-  @ApiProperty({ example: 'ESK-INV-2026-000201' }) number!: string;
-  @ApiProperty({ enum: InvoiceStatus }) status!: InvoiceStatus;
-  @ApiProperty({ description: 'Several bookings paid together.' }) combined!: boolean;
+  @ApiProperty({ example: 'ESK-INV-2026-000148' }) number!: string;
+  @ApiProperty({ enum: InvoiceStatus, example: InvoiceStatus.ISSUED }) status!: InvoiceStatus;
+  @ApiProperty({ example: true, description: 'Several bookings paid together.' })
+  combined!: boolean;
   @ApiProperty({ example: 2 }) bookingCount!: number;
   @ApiProperty({ type: [String], example: ['ESK-10484', 'ESK-TLT-1005'] })
   bookingReferences!: string[];
-  @ApiProperty() currency!: string;
-  @ApiProperty() totalMinor!: number;
-  @ApiProperty({ description: 'Total plus deposits — what to transfer.' }) amountDueMinor!: number;
-  @ApiProperty() amountPaidMinor!: number;
-  @ApiPropertyOptional({ nullable: true }) issuedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) dueAt!: string | null;
+  @ApiProperty({ example: 'ETB' }) currency!: string;
+  @ApiProperty({ example: 3162500 }) totalMinor!: number;
+  @ApiProperty({ example: 3462500, description: 'Total plus deposits — what to transfer.' })
+  amountDueMinor!: number;
+  @ApiProperty({ example: 0 }) amountPaidMinor!: number;
+  @ApiPropertyOptional({ nullable: true, example: '2026-09-28T09:00:00.000Z' }) issuedAt!:
+    string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-10-05T21:00:00.000Z' }) dueAt!:
+    string | null;
 }
 
 export class InvoiceDetailResponse extends InvoiceSummaryResponse {
   @ApiProperty({ type: BilledToResponse }) billedTo!: BilledToResponse;
   @ApiProperty({ type: [InvoiceLineResponse] }) lines!: InvoiceLineResponse[];
-  @ApiProperty() subtotalMinor!: number;
-  @ApiProperty() deliveryFeeMinor!: number;
-  @ApiProperty() serviceFeeMinor!: number;
-  @ApiProperty() discountMinor!: number;
-  @ApiProperty() securityDepositMinor!: number;
-  @ApiProperty() taxMinor!: number;
-  @ApiProperty() taxRateBps!: number;
-  @ApiProperty() vatExempt!: boolean;
-  @ApiPropertyOptional({ nullable: true }) vatExemptionReason!: string | null;
+  @ApiProperty({ example: 2700000 }) subtotalMinor!: number;
+  @ApiProperty({ example: 50000 }) deliveryFeeMinor!: number;
+  @ApiProperty({ example: 0 }) serviceFeeMinor!: number;
+  @ApiProperty({ example: 0 }) discountMinor!: number;
+  @ApiProperty({ example: 300000 }) securityDepositMinor!: number;
+  @ApiProperty({ example: 412500 }) taxMinor!: number;
+  @ApiProperty({ example: 1500 }) taxRateBps!: number;
+  @ApiProperty({ example: false }) vatExempt!: boolean;
+  @ApiPropertyOptional({ nullable: true, example: null }) vatExemptionReason!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 'Inc. 15% VAT' }) taxNote!: string | null;
-  @ApiProperty({ description: 'Due minus verified payments.' }) balanceMinor!: number;
+  @ApiProperty({ example: 3462500, description: 'Due minus verified payments.' })
+  balanceMinor!: number;
   @ApiProperty({ type: [InvoicePaymentResponse] }) payments!: InvoicePaymentResponse[];
-  @ApiProperty({ description: 'Pay Now is available.' }) canPay!: boolean;
+  @ApiProperty({ example: false, description: 'Pay Now is available.' }) canPay!: boolean;
   @ApiProperty({
     type: [String],
+    example: ['ESK-10484: Download, sign and upload the agreement first.'],
     description:
       'Why not, per booking — "ESK-10484: Download, sign and upload the agreement first."',
   })
   blockers!: string[];
-  @ApiProperty({ description: 'The customer may split it back into single bookings.' })
+  @ApiProperty({
+    example: true,
+    description: 'The customer may split it back into single bookings.',
+  })
   canUngroup!: boolean;
-  @ApiProperty({ example: '/api/v1/customer/invoices/ESK-INV-2026-000201/pdf' }) pdfUrl!: string;
-  @ApiPropertyOptional({ nullable: true }) voidReason!: string | null;
+  @ApiProperty({ example: '/api/v1/customer/invoices/ESK-INV-2026-000148/pdf' }) pdfUrl!: string;
+  @ApiPropertyOptional({ nullable: true, example: null }) voidReason!: string | null;
 }
 
 export class InvoicePaymentInstructionsResponse {

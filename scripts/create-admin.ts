@@ -24,7 +24,8 @@ async function main(): Promise<void> {
   const tier = (arg('tier') ?? AdminTier.SUPER_ADMIN) as AdminTier;
   const password = process.env.ADMIN_PASSWORD;
 
-  if (!email || !name) throw new Error('Usage: --email <email> --name "<name>" [--tier SUPER_ADMIN]');
+  if (!email || !name)
+    throw new Error('Usage: --email <email> --name "<name>" [--tier SUPER_ADMIN]');
   if (!Object.values(AdminTier).includes(tier)) throw new Error(`Unknown tier ${tier}`);
   if (!password || password.length < MIN_ADMIN_PASSWORD) {
     throw new Error(`Set ADMIN_PASSWORD (at least ${MIN_ADMIN_PASSWORD} characters)`);

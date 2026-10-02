@@ -13,17 +13,10 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import {
-  ApiBody,
-  ApiConsumes,
-  ApiOkResponse,
-  ApiOperation,
-  ApiParam,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBody, ApiConsumes, ApiOkResponse, ApiParam, ApiTags } from '@nestjs/swagger';
 import { AdminTier } from '@prisma/client';
 import type { Response } from 'express';
-import { ApiPaginatedResponse, ApiStandardErrors } from '../../../common/dto/api-docs';
+import { ApiPaginatedResponse, ApiStandardErrors, ApiEndpoint } from '../../../common/dto/api-docs';
 import type { Paginated } from '../../../common/dto/pagination.dto';
 import type { UploadedFile } from '../../../common/upload';
 import { CurrentUser } from '../../auth/auth.decorators';
@@ -46,19 +39,6 @@ const PAY_REF = {
   description: 'The payment reference. One transfer paying a combined invoice has one reference.',
 };
 
-const FLOW = `
-**The flow.** The customer transfers to one of Eskista's operating accounts and uploads the
-slip (\`Pending\`). Finance checks it against the statement, then:
-
-- **Confirm Payment** — records what arrived and from whom. Each booking that is now paid
-  in full *and* whose signed agreement is approved moves to **Booking Confirmed**; one still
-  waiting on its agreement confirms the moment the agreement is approved.
-- **Request New Slip** — the slip is unreadable; the customer uploads again (\`Requested Receipt\`).
-- **Reject Slip** — the payment is not accepted.
-
-A combined-invoice transfer is one payment here, decided as a whole.
-`.trim();
-
 @ApiTags('admin · payments')
 @AdminAccess()
 @Controller({ path: 'admin', version: '1' })
@@ -66,9 +46,12 @@ export class AdminPaymentsController {
   constructor(private readonly payments: AdminPaymentsService) {}
 
   @Get('payments')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Payments Verification — the table',
-    description: `${FLOW}\n\nOne row per transfer, newest first.`,
+    does: 'Every payment slip customers uploaded, one row per transfer, newest first.',
+    behind: [
+      'Read only. A transfer paying a combined invoice is stored as one row per booking sharing one `PAY-NNNN` reference; it is grouped back into one row here.',
+    ],
   })
   @ApiPaginatedResponse(PaymentRowResponse)
   @ApiStandardErrors({ badRequest: 'A filter is not valid.' })
@@ -77,7 +60,11 @@ export class AdminPaymentsController {
   }
 
   @Get('payments/summary')
-  @ApiOperation({ summary: 'The tiles above the table' })
+  @ApiEndpoint({
+    summary: 'The tiles above the table',
+    does: 'Pending, requested-receipt and confirmed counts and amounts.',
+    behind: ['Read only.'],
+  })
   @ApiOkResponse({ type: PaymentsSummaryResponse })
   @ApiStandardErrors()
   summary(): Promise<PaymentsSummaryResponse> {
@@ -85,8 +72,15 @@ export class AdminPaymentsController {
   }
 
   @Get('payments/export')
+  @ApiEndpoint({
+    summary: 'Export Summary (CSV)',
+    does: 'The table as a CSV file, with the same filters.',
+    behind: [
+      'Read only. Up to 10,000 transfers; amounts in ETB with two decimals; cells starting with = + - @ are escaped so spreadsheets do not run them.',
+    ],
+    rules: ['Finance and Super Admins.'],
+  })
   @AdminAccess(AdminTier.FINANCE)
-  @ApiOperation({ summary: 'Export Summary (CSV)', description: 'Same filters as the table.' })
   @ApiOkResponse({ description: 'A CSV file, one row per transfer.', content: CSV_CONTENT })
   @ApiStandardErrors()
   async export(
@@ -97,11 +91,13 @@ export class AdminPaymentsController {
   }
 
   @Get('payments/:reference')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Payment Metadata / Payment Verification modal',
-    description:
-      'Expected vs received, method, transaction ID, payer, which Eskista account, the slip, ' +
-      'and each booking it pays with what still blocks its confirmation.',
+    does: 'One transfer: expected vs received, method, transaction ID, payer, which Eskista account, the slip, and each booking it pays.',
+    behind: [
+      'Read only. `expectedAmountMinor` is what the bookings still owed before this transfer; each booking lists what would still block its confirmation.',
+    ],
+    rules: ['404 when not found.'],
   })
   @ApiParam(PAY_REF)
   @ApiOkResponse({ type: PaymentDetailResponse })
@@ -111,9 +107,27 @@ export class AdminPaymentsController {
   }
 
   @Post('payments/:reference/confirm')
+  @ApiEndpoint({
+    summary: 'Confirm Payment',
+    does: 'Verifies a transfer against the bank or Telebirr statement.',
+    behind: [
+      'Every row of the transfer → `VERIFIED`. What arrived (`receivedAmountMinor`, defaulting to what was declared) is split across its bookings by what each owes; the declared figure is kept beside it.',
+      'Payer name and account recorded; each booking’s history noted.',
+      'Invoice paid amount recomputed: `PARTIALLY_PAID` or `PAID`.',
+      'Each booking now paid in full **and** with its signed agreement approved moves to `BOOKING_CONFIRMED`, and its vendor or talent is told.',
+      'Notification: customer — Payment Verified. Admin audit log written.',
+    ],
+    seenBy: [
+      'Customer: the payment shows as verified; the booking may confirm.',
+      'Vendor: Prepare Equipment / handover once confirmed.',
+    ],
+    rules: [
+      'Finance and Super Admins.',
+      '409 when already decided, or a booking on it is no longer awaiting payment.',
+    ],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.FINANCE)
-  @ApiOperation({ summary: 'Confirm Payment', description: FLOW })
   @ApiParam(PAY_REF)
   @ApiBody({
     type: ConfirmPaymentDto,
@@ -146,14 +160,19 @@ export class AdminPaymentsController {
   }
 
   @Post('payments/:reference/request-new-slip')
+  @ApiEndpoint({
+    summary: 'Request New Slip',
+    does: 'Asks for a clearer slip; nothing is wrong with the money.',
+    behind: [
+      'Rows → `RESUBMISSION_REQUESTED` ("Requested Receipt") with the reason; history noted.',
+      'Invoice paid amount recomputed. Notification: customer — New Payment Slip Needed.',
+      'Admin audit log written.',
+    ],
+    seenBy: ['Customer: Complete Payment is available again.'],
+    rules: ['Finance and Super Admins.', '409 when already decided.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.FINANCE)
-  @ApiOperation({
-    summary: 'Request New Slip',
-    description:
-      'The slip is unreadable or incomplete; nothing is wrong with the money. The status becomes ' +
-      '`RESUBMISSION_REQUESTED` ("Requested Receipt") and the customer is asked to upload again.',
-  })
   @ApiParam(PAY_REF)
   @ApiOkResponse({ type: PaymentDetailResponse })
   @ApiStandardErrors({
@@ -170,13 +189,17 @@ export class AdminPaymentsController {
   }
 
   @Post('payments/:reference/reject')
+  @ApiEndpoint({
+    summary: 'Reject Slip',
+    does: 'Refuses the payment; the customer pays again.',
+    behind: [
+      'Rows → `REJECTED` with the reason; history noted; invoice paid amount recomputed.',
+      'Notification: customer — Payment Needs Attention, with the reason. Admin audit log written.',
+    ],
+    rules: ['Finance and Super Admins.', '409 when already decided.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.FINANCE)
-  @ApiOperation({
-    summary: 'Reject Slip',
-    description:
-      'The payment is not accepted. The reason is shown to the customer, who pays again.',
-  })
   @ApiParam(PAY_REF)
   @ApiOkResponse({ type: PaymentDetailResponse })
   @ApiStandardErrors({
@@ -193,14 +216,24 @@ export class AdminPaymentsController {
   }
 
   @Post('bookings/:reference/payments')
+  @ApiEndpoint({
+    summary: 'Record a payment Eskista received directly',
+    does: 'Cash at the office, or a transfer the customer never uploaded — recorded as already verified.',
+    behind: [
+      'Eskista’s receipt (multipart `receipt`) stored privately under the customer.',
+      'Payment created `VERIFIED` with a new `PAY-NNNN` reference; invoice issued if needed and its paid amount recomputed.',
+      'The booking confirms if now paid in full with its agreement approved.',
+      'Notification: customer — Payment Verified. Admin audit log written.',
+    ],
+    rules: [
+      'Finance and Super Admins.',
+      '409 unless the booking is awaiting payment.',
+      '400 when the receipt is missing or not an image or PDF.',
+    ],
+  })
   @AdminAccess(AdminTier.FINANCE)
   @UseInterceptors(FileInterceptor('receipt'))
   @ApiConsumes('multipart/form-data')
-  @ApiOperation({
-    summary: 'Record a payment Eskista received directly',
-    description:
-      'Cash at the office, or a transfer the customer never uploaded. Recorded as verified.',
-  })
   @ApiBody({
     schema: {
       type: 'object',

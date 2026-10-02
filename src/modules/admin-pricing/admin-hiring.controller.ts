@@ -1,13 +1,6 @@
+import { ApiEndpoint, ApiStandardErrors } from '../../common/dto/api-docs';
 import { Body, Controller, Get, Patch } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiForbiddenResponse,
-  ApiOkResponse,
-  ApiOperation,
-  ApiProperty,
-  ApiPropertyOptional,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiOkResponse, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { AdminTier, Prisma } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
@@ -53,7 +46,11 @@ export class UpdateHiringSettingsDto {
   @Max(720)
   selectionTtlHours?: number;
 
-  @ApiPropertyOptional({ description: 'Why — kept in the audit log.', maxLength: 500 })
+  @ApiPropertyOptional({
+    description: 'Why — kept in the audit log.',
+    maxLength: 500,
+    example: 'Talents asked for more time to answer during the holiday season.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -66,8 +63,6 @@ export class UpdateHiringSettingsDto {
  * on; a request already out keeps the deadlines it was given.
  */
 @ApiTags('admin · settings')
-@ApiBearerAuth()
-@ApiForbiddenResponse({ description: 'Admins only.' })
 @AdminAccess()
 @Controller({ path: 'admin/settings/hiring', version: '1' })
 export class AdminHiringController {
@@ -77,12 +72,12 @@ export class AdminHiringController {
   ) {}
 
   @Get()
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Talent hire limits',
-    description:
-      'Up to **5** invitations per request, **48 h** for a talent to answer, **72 h** from ' +
-      'the first acceptance for the customer to choose — the defaults approved on ' +
-      'September 24, 2026.',
+    does: 'The three limits on a multi-talent hire request: max invitations, response deadline, and selection deadline.',
+    behind: [
+      'Read only. Changes apply to requests submitted from now on; a request already out keeps the deadlines it was given.',
+    ],
   })
   @ApiOkResponse({ type: HiringSettingsResponse })
   get(): Promise<HiringSettingsResponse> {
@@ -90,14 +85,18 @@ export class AdminHiringController {
   }
 
   @Patch()
-  @AdminAccess(AdminTier.SUPER_ADMIN)
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Change the talent hire limits',
-    description:
-      'Send only what changes. Applies to requests submitted from now on — deadlines already ' +
-      'given are kept. Audited.',
+    does: 'Send only what changes. Applies to requests submitted from now on — deadlines already given are kept.',
+    behind: [
+      'Settings upserted in the key-value table; in-memory cache invalidated.',
+      'Admin audit log written (before and after, with optional reason).',
+    ],
+    rules: ['Super Admins only.'],
   })
+  @AdminAccess(AdminTier.SUPER_ADMIN)
   @ApiOkResponse({ type: HiringSettingsResponse })
+  @ApiStandardErrors({ badRequest: 'A limit is out of range (invitations 1–20, hours 1–720).' })
   async update(
     @CurrentUser('id') adminId: string,
     @Body() dto: UpdateHiringSettingsDto,

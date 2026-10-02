@@ -5,6 +5,7 @@ import {
   ApiExtraModels,
   ApiNotFoundResponse,
   ApiOkResponse,
+  ApiOperation,
   ApiProperty,
   ApiPropertyOptional,
   ApiUnauthorizedResponse,
@@ -142,4 +143,45 @@ export function ApiStandardErrors(errors: StandardErrors = {}) {
     );
   }
   return applyDecorators(...decorators);
+}
+
+/**
+ * One endpoint's documentation, in the same four parts everywhere:
+ *
+ * - `does`   — one sentence: what it is for, in the screen's own words.
+ * - `behind` — what actually happens: rows written and statuses moved, files stored,
+ *   notifications (and to whom), jobs scheduled or cancelled, the audit log.
+ * - `seenBy` — where the change shows up for customers, vendors or talents.
+ * - `rules`  — preconditions, each with the error it answers when not met.
+ */
+export interface EndpointDoc {
+  summary: string;
+  does: string;
+  behind?: string[];
+  seenBy?: string[];
+  rules?: string[];
+  /** Anything else worth knowing, kept short. */
+  notes?: string;
+}
+
+/** Renders an EndpointDoc as the operation description (Markdown). */
+export function endpointDescription(d: Omit<EndpointDoc, 'summary'>): string {
+  const parts = [d.does];
+  // Always present, so a reader learns where to look; "Read only" says nothing changes.
+  parts.push(
+    `**Behind it**\n${(d.behind?.length ? d.behind : ['Read only — nothing is written.'])
+      .map((line) => `- ${line}`)
+      .join('\n')}`,
+  );
+  if (d.seenBy?.length)
+    parts.push(`**Seen by**\n${d.seenBy.map((line) => `- ${line}`).join('\n')}`);
+  if (d.rules?.length) parts.push(`**Rules**\n${d.rules.map((line) => `- ${line}`).join('\n')}`);
+  if (d.notes) parts.push(d.notes);
+  return parts.join('\n\n');
+}
+
+/** `@ApiOperation` with a structured description — see EndpointDoc. */
+export function ApiEndpoint(d: EndpointDoc) {
+  const { summary, ...rest } = d;
+  return ApiOperation({ summary, description: endpointDescription(rest) });
 }

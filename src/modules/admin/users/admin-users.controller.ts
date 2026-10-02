@@ -11,10 +11,10 @@ import {
   Res,
   StreamableFile,
 } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { ApiOkResponse, ApiParam, ApiTags } from '@nestjs/swagger';
 import { AdminTier } from '@prisma/client';
 import type { Response } from 'express';
-import { ApiPaginatedResponse, ApiStandardErrors } from '../../../common/dto/api-docs';
+import { ApiPaginatedResponse, ApiStandardErrors, ApiEndpoint } from '../../../common/dto/api-docs';
 import type { Paginated } from '../../../common/dto/pagination.dto';
 import { CurrentUser } from '../../auth/auth.decorators';
 import { AdminAccess } from '../core/admin-access';
@@ -42,7 +42,11 @@ export class AdminVendorsController {
   constructor(private readonly vendors: AdminVendorsService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Vendor Accounts', description: 'Newest first. Search by business, representative, phone or email.' })
+  @ApiEndpoint({
+    summary: 'Vendor Accounts',
+    does: 'Every vendor, newest first. Search by business name, representative, phone or email.',
+    behind: ['Read only.'],
+  })
   @ApiPaginatedResponse(VendorRowResponse)
   @ApiStandardErrors({ badRequest: 'A filter is not valid.' })
   list(@Query() query: AdminVendorsQuery): Promise<Paginated<VendorRowResponse>> {
@@ -50,7 +54,11 @@ export class AdminVendorsController {
   }
 
   @Get('export')
-  @ApiOperation({ summary: 'Export (CSV)', description: 'Same filters as the table, with lifetime earnings.' })
+  @ApiEndpoint({
+    summary: 'Export (CSV)',
+    does: 'The table as a CSV file, with lifetime earnings.',
+    behind: ['Read only. Up to 10,000 vendors; amounts in ETB with two decimals.'],
+  })
   @ApiOkResponse({ description: 'A CSV file, one row per vendor.', content: CSV_CONTENT })
   @ApiStandardErrors()
   async export(
@@ -61,12 +69,11 @@ export class AdminVendorsController {
   }
 
   @Get(':id')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Vendor detail',
-    description:
-      'Rating, lifetime earnings, pending escrow settlement, the representative, payout accounts ' +
-      '(primary and alternative), documents, the vendor agreement, recent bookings, and what ' +
-      'blocks verification.',
+    does: 'Rating, lifetime earnings, pending escrow settlement, the representative, payout accounts (primary and alternative), documents, the vendor agreement, recent bookings, and what blocks verification.',
+    behind: ['Read only.'],
+    rules: ['404 when not found.'],
   })
   @ApiParam(VENDOR_ID)
   @ApiOkResponse({ type: VendorDetailResponse })
@@ -76,14 +83,22 @@ export class AdminVendorsController {
   }
 
   @Post(':id/verify')
+  @ApiEndpoint({
+    summary: 'Verify vendor',
+    does: "Accepts the pending documents and the uploaded vendor agreement scan. The vendor's approved equipment becomes visible on the catalogue.",
+    behind: [
+      'Vendor status → VERIFIED; documents accepted.',
+      'Notification: vendor — Your Account Is Verified.',
+      'Admin audit log written.',
+    ],
+    seenBy: ['Vendor: they can now manage inventory, receive bookings and get paid.'],
+    rules: [
+      '404 when not found.',
+      '409 when the vendor cannot be verified yet (`blockers` lists why).',
+    ],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
-    summary: 'Verify vendor',
-    description:
-      'Accepts the pending documents and the uploaded vendor agreement scan. The vendor’s ' +
-      'approved equipment becomes visible on the catalogue; the vendor is told.',
-  })
   @ApiParam(VENDOR_ID)
   @ApiOkResponse({ type: VendorDetailResponse })
   @ApiStandardErrors({
@@ -99,9 +114,22 @@ export class AdminVendorsController {
   }
 
   @Post(':id/reject')
+  @ApiEndpoint({
+    summary: 'Reject verification',
+    does: 'The reason goes to the vendor, who can fix and resubmit.',
+    behind: [
+      'Vendor status back to previous; notification sent with the reason.',
+      'Admin audit log written.',
+    ],
+    seenBy: ['Vendor: "Your account needs attention" with the reason.'],
+    rules: [
+      '400 when `reason` is missing or too short.',
+      '404 when not found.',
+      '409 when only a vendor awaiting verification can be rejected.',
+    ],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Reject verification', description: 'The reason goes to the vendor, who can fix and resubmit.' })
   @ApiParam(VENDOR_ID)
   @ApiOkResponse({ type: VendorDetailResponse })
   @ApiStandardErrors({
@@ -118,14 +146,19 @@ export class AdminVendorsController {
   }
 
   @Post(':id/suspend')
+  @ApiEndpoint({
+    summary: 'Suspend vendor',
+    does: 'Their equipment leaves the catalogue at once; rentals already under way go on.',
+    behind: [
+      'Vendor status → SUSPENDED; every published listing hidden from search.',
+      'Notification: vendor — Account Suspended (with the reason).',
+      'The vendor can still sign in and manage existing bookings. To block sign-in entirely, use Suspend User on `/admin/customers`.',
+      'Admin audit log written.',
+    ],
+    rules: ['400 when `reason` is missing.', '404 when not found.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
-    summary: 'Suspend vendor',
-    description:
-      'Their equipment leaves the catalogue at once; rentals already under way go on. The vendor ' +
-      'can still sign in. To block the whole account, use Suspend User on /admin/customers.',
-  })
   @ApiParam(VENDOR_ID)
   @ApiOkResponse({ type: VendorDetailResponse })
   @ApiStandardErrors({ badRequest: '`reason` missing.', notFound: 'Vendor not found' })
@@ -138,9 +171,14 @@ export class AdminVendorsController {
   }
 
   @Post(':id/reactivate')
+  @ApiEndpoint({
+    summary: 'Lift the suspension — back to verified, or to review if never verified',
+    does: 'Restores a suspended vendor; their equipment becomes searchable again.',
+    behind: ['Vendor status restored; listings republished.', 'Admin audit log written.'],
+    rules: ['404 when not found.', '409 when this vendor is not suspended.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Lift the suspension — back to verified, or to review if never verified' })
   @ApiParam(VENDOR_ID)
   @ApiOkResponse({ type: VendorDetailResponse })
   @ApiStandardErrors({ notFound: 'Vendor not found', conflict: 'This vendor is not suspended' })
@@ -159,7 +197,11 @@ export class AdminCustomersController {
   constructor(private readonly customers: AdminCustomersService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Customer Accounts', description: 'Everyone who books, companies and individuals. Admins are left out.' })
+  @ApiEndpoint({
+    summary: 'Customer Accounts',
+    does: 'Everyone who books, companies and individuals. Admins are left out.',
+    behind: ['Read only.'],
+  })
   @ApiPaginatedResponse(CustomerRowResponse)
   @ApiStandardErrors({ badRequest: 'A filter is not valid.' })
   list(@Query() query: AdminCustomersQuery): Promise<Paginated<CustomerRowResponse>> {
@@ -167,7 +209,11 @@ export class AdminCustomersController {
   }
 
   @Get('export')
-  @ApiOperation({ summary: 'Export (CSV)', description: 'Same filters as the table, with total spend.' })
+  @ApiEndpoint({
+    summary: 'Export (CSV)',
+    does: 'The table as a CSV file, with total spend.',
+    behind: ['Read only. Up to 10,000 customers.'],
+  })
   @ApiOkResponse({ description: 'A CSV file, one row per customer.', content: CSV_CONTENT })
   @ApiStandardErrors()
   async export(
@@ -178,9 +224,11 @@ export class AdminCustomersController {
   }
 
   @Get(':id')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Customer detail',
-    description: 'The representative, the verification document, open bookings (Open Booking File), recent ones, spend.',
+    does: 'The representative, the verification document, open bookings (Open Booking File), recent ones, spend.',
+    behind: ['Read only.'],
+    rules: ['404 when not found.'],
   })
   @ApiParam(CUSTOMER_ID)
   @ApiOkResponse({ type: CustomerDetailResponse })
@@ -190,12 +238,17 @@ export class AdminCustomersController {
   }
 
   @Post(':id/verify')
+  @ApiEndpoint({
+    summary: 'Grant the Verified customer badge',
+    does: 'From their uploaded business document. Never needed to book — it is a trust badge.',
+    behind: ['Customer profile status → VERIFIED. Admin audit log written.'],
+    rules: [
+      '404 when this customer has no profile yet.',
+      '409 when the customer has not uploaded a document.',
+    ],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({
-    summary: 'Grant the Verified customer badge',
-    description: 'From their uploaded business document. Never needed to book — it is a badge.',
-  })
   @ApiParam(CUSTOMER_ID)
   @ApiOkResponse({ type: CustomerDetailResponse })
   @ApiStandardErrors({
@@ -210,12 +263,26 @@ export class AdminCustomersController {
   }
 
   @Post(':id/reject-verification')
+  @ApiEndpoint({
+    summary: 'Refuse the badge — the document does not check out',
+    does: 'Rejects the uploaded document with a reason.',
+    behind: [
+      'Customer profile document status → REJECTED; the customer is told why.',
+      'Admin audit log written.',
+    ],
+    rules: [
+      '400 when `reason` is missing or too short.',
+      '404 when this customer has no profile yet.',
+    ],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Refuse the badge — the document does not check out' })
   @ApiParam(CUSTOMER_ID)
   @ApiOkResponse({ type: CustomerDetailResponse })
-  @ApiStandardErrors({ badRequest: '`reason` missing or too short.', notFound: 'This customer has no profile yet' })
+  @ApiStandardErrors({
+    badRequest: '`reason` missing or too short.',
+    notFound: 'This customer has no profile yet',
+  })
   rejectVerification(
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -225,14 +292,23 @@ export class AdminCustomersController {
   }
 
   @Post(':id/suspend')
+  @ApiEndpoint({
+    summary: 'Suspend User',
+    does: 'Blocks sign-in to every part of Eskista — customer, vendor and talent alike — and ends their sessions.',
+    behind: [
+      'Account blocked (the session guard refuses blocked accounts on every route).',
+      'Every session of that user deleted — it takes effect at once.',
+      'Admin audit log written.',
+    ],
+    rules: [
+      '400 when `reason` is missing.',
+      '404 when not found.',
+      '409 when this is an admin account.',
+    ],
+    notes: 'Admin accounts are suspended from the admin team screen instead.',
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN, AdminTier.SUPPORT)
-  @ApiOperation({
-    summary: 'Suspend User',
-    description:
-      'Blocks sign-in to every part of Eskista — customer, vendor and talent alike — and ends ' +
-      'their sessions. Admin accounts are suspended from the admin team screen instead.',
-  })
   @ApiParam(CUSTOMER_ID)
   @ApiOkResponse({ type: CustomerDetailResponse })
   @ApiStandardErrors({
@@ -249,9 +325,14 @@ export class AdminCustomersController {
   }
 
   @Post(':id/reactivate')
+  @ApiEndpoint({
+    summary: 'Lift a Suspend User',
+    does: 'Lets a suspended user sign in again.',
+    behind: ['Account block cleared; they sign in afresh. Admin audit log written.'],
+    rules: ['404 when not found.', '409 when this is an admin account.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.ADMIN, AdminTier.SUPPORT)
-  @ApiOperation({ summary: 'Lift a Suspend User' })
   @ApiParam(CUSTOMER_ID)
   @ApiOkResponse({ type: CustomerDetailResponse })
   @ApiStandardErrors({

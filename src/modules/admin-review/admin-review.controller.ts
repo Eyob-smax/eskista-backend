@@ -1,3 +1,4 @@
+import { ApiEndpoint, ApiStandardErrors } from '../../common/dto/api-docs';
 import {
   Body,
   Controller,
@@ -9,38 +10,14 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiConflictResponse,
-  ApiForbiddenResponse,
-  ApiNotFoundResponse,
-  ApiOkResponse,
-  ApiOperation,
-  ApiParam,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiOkResponse, ApiParam, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/auth.decorators';
 import { AdminTier } from '@prisma/client';
 import { AdminAccess } from '../admin/core/admin-access';
 import { AdminReviewService } from './admin-review.service';
 import { ApproveDto, PreviewQuery, RejectDto, ReviewItemResponse } from './dto/admin-review.dto';
 
-const FLOW = `
-**The review flow.** The supplier proposed a price. The review form shows it with Eskista's
-**default commission already filled in** and the customer price that results, VAT added
-automatically. The admin may change the commission for this item before approving.
-
-Change the figure and call the preview again (\`?commissionBps=\`) for the live customer
-price — nothing is saved until **Approve**.
-
-The rate agreed at approval is stored on the item. A later change to the global default
-(\`PATCH /admin/pricing\`) pre-fills future reviews but never moves something already
-approved.
-`.trim();
-
 @ApiTags('admin · review')
-@ApiBearerAuth()
-@ApiForbiddenResponse({ description: 'Admins only.' })
 @AdminAccess()
 @Controller({ path: 'admin/review', version: '1' })
 export class AdminReviewController {
@@ -49,9 +26,13 @@ export class AdminReviewController {
   // ── Listings ───────────────────────────────────────────────────────────────
 
   @Get('listings')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Equipment waiting for review',
-    description: `Oldest first.\n\n${FLOW}`,
+    does: 'Every listing submitted by vendors that Eskista has not yet approved or rejected, oldest first.',
+    behind: [
+      "Read only. Each row previews the supplier's proposed price with Eskista's default commission already applied, plus VAT → the customer price the admin is about to fix.",
+      'Pass `?commissionBps=` to the detail endpoint to preview a different rate before approving.',
+    ],
   })
   @ApiOkResponse({ type: [ReviewItemResponse] })
   listListings(): Promise<ReviewItemResponse[]> {
@@ -59,13 +40,15 @@ export class AdminReviewController {
   }
 
   @Get('listings/:id')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'One listing, with the pricing preview',
-    description: FLOW,
+    does: 'The listing details and a live pricing preview: supplier price → commission → VAT → customer price. Pass `?commissionBps=` to preview a different rate.',
+    behind: ['Read only. Nothing is saved until Approve.'],
+    rules: ['404 when not found.'],
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: ReviewItemResponse })
-  @ApiNotFoundResponse({ description: 'No such listing.' })
+  @ApiStandardErrors({ badRequest: '`commissionBps` out of range.', notFound: 'Listing not found' })
   getListing(
     @Param('id', ParseUUIDPipe) id: string,
     @Query() query: PreviewQuery,
@@ -74,15 +57,32 @@ export class AdminReviewController {
   }
 
   @Post('listings/:id/approve')
+  @ApiEndpoint({
+    summary: 'Approve a listing and fix its commission',
+    does: 'Publishes the listing to the catalogue at the agreed commission rate.',
+    behind: [
+      'Listing status → PUBLISHED; commission rate stored on the listing.',
+      'Customer price is computed from supplier price + commission + VAT and stored.',
+      'Notification: vendor — Listing Approved.',
+      'Admin audit log written.',
+    ],
+    seenBy: [
+      'Vendor: "Your listing is now live on the marketplace".',
+      'Customers: the listing appears in search.',
+    ],
+    rules: [
+      '409 when not awaiting review, the vendor is not verified, or no price is proposed (`blockers` explains).',
+    ],
+  })
   @AdminAccess(AdminTier.ADMIN)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Approve a listing and fix its commission',
-    description: `Publishes it to the catalogue at the agreed commission.\n\n${FLOW}\n\nA **409** carries \`blockers\`: not awaiting review, the vendor not verified, or no price proposed.`,
-  })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: ReviewItemResponse })
-  @ApiConflictResponse({ description: 'Cannot be approved — see `blockers`.' })
+  @ApiStandardErrors({
+    badRequest: '`commissionBps` out of range.',
+    notFound: 'Not found',
+    conflict: 'Cannot be approved — see `blockers`',
+  })
   approveListing(
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -92,15 +92,25 @@ export class AdminReviewController {
   }
 
   @Post('listings/:id/reject')
+  @ApiEndpoint({
+    summary: 'Send a listing back to the vendor',
+    does: 'Rejects with a reason. The vendor can fix it and resubmit.',
+    behind: [
+      'Listing status → DRAFT; notification sent with the reason.',
+      'Admin audit log written.',
+    ],
+    seenBy: ['Vendor: "Your listing needs changes" with the reason.'],
+    rules: ['409 when not awaiting review.'],
+  })
   @AdminAccess(AdminTier.ADMIN)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Send a listing back to the vendor',
-    description: 'The reason is shown to the vendor so they can fix it and resubmit.',
-  })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: ReviewItemResponse })
-  @ApiConflictResponse({ description: 'Not awaiting review.' })
+  @ApiStandardErrors({
+    badRequest: '`reason` missing or too short.',
+    notFound: 'Not found',
+    conflict: 'Not awaiting review',
+  })
   rejectListing(
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -112,9 +122,13 @@ export class AdminReviewController {
   // ── Talent ─────────────────────────────────────────────────────────────────
 
   @Get('talent')
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Talent registrations waiting for review',
-    description: `Oldest first. Each shows the base rate and every service, all previewed at the same commission.\n\n${FLOW}`,
+    does: 'Every talent who applied and has not yet been verified or rejected, oldest first.',
+    behind: [
+      'Read only. Each row previews the base rate and every service at the same commission.',
+      'Pass `?commissionBps=` to the detail endpoint to preview a different rate.',
+    ],
   })
   @ApiOkResponse({ type: [ReviewItemResponse] })
   listTalent(): Promise<ReviewItemResponse[]> {
@@ -122,10 +136,15 @@ export class AdminReviewController {
   }
 
   @Get('talent/:id')
-  @ApiOperation({ summary: 'One talent, with the pricing preview', description: FLOW })
+  @ApiEndpoint({
+    summary: 'One talent, with the pricing preview',
+    does: 'The talent profile and a live pricing preview for their base rate and services.',
+    behind: ['Read only. Nothing is saved until Approve.'],
+    rules: ['404 when not found.'],
+  })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: ReviewItemResponse })
-  @ApiNotFoundResponse({ description: 'No such talent.' })
+  @ApiStandardErrors({ badRequest: '`commissionBps` out of range.', notFound: 'Talent not found' })
   getTalent(
     @Param('id', ParseUUIDPipe) id: string,
     @Query() query: PreviewQuery,
@@ -134,15 +153,30 @@ export class AdminReviewController {
   }
 
   @Post('talent/:id/approve')
+  @ApiEndpoint({
+    summary: 'Verify a talent and fix their commission',
+    does: 'Makes the talent bookable at the agreed commission. One rate covers the base rate and all their services.',
+    behind: [
+      'Talent status → VERIFIED; commission rate stored on the profile.',
+      'Customer prices recomputed for every service.',
+      'Notification: talent — Your Profile Is Verified.',
+      'Admin audit log written.',
+    ],
+    seenBy: [
+      'Talent: they can now receive invitations and be hired.',
+      'Clients: the talent appears in search.',
+    ],
+    rules: ['409 when the talent cannot be approved yet (`blockers` explains).'],
+  })
   @AdminAccess(AdminTier.ADMIN)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Verify a talent and fix their commission',
-    description: `Makes them bookable at the agreed commission. One rate covers the base rate and all their services.\n\n${FLOW}`,
-  })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: ReviewItemResponse })
-  @ApiConflictResponse({ description: 'Cannot be approved — see `blockers`.' })
+  @ApiStandardErrors({
+    badRequest: '`commissionBps` out of range.',
+    notFound: 'Not found',
+    conflict: 'Cannot be approved — see `blockers`',
+  })
   approveTalent(
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,
@@ -152,15 +186,25 @@ export class AdminReviewController {
   }
 
   @Post('talent/:id/reject')
+  @ApiEndpoint({
+    summary: 'Send a talent registration back',
+    does: 'Rejects with a reason. The talent can fix and resubmit.',
+    behind: [
+      'Talent status → back to previous; notification sent with the reason.',
+      'Admin audit log written.',
+    ],
+    seenBy: ['Talent: "Your application needs changes" with the reason.'],
+    rules: ['409 when not awaiting review.'],
+  })
   @AdminAccess(AdminTier.ADMIN)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Send a talent registration back',
-    description: 'The reason is shown to the talent so they can fix it and resubmit.',
-  })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: ReviewItemResponse })
-  @ApiConflictResponse({ description: 'Not awaiting review.' })
+  @ApiStandardErrors({
+    badRequest: '`reason` missing or too short.',
+    notFound: 'Not found',
+    conflict: 'Not awaiting review',
+  })
   rejectTalent(
     @CurrentUser('id') adminId: string,
     @Param('id', ParseUUIDPipe) id: string,

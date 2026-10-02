@@ -225,11 +225,7 @@ export class AdminVendorsService {
    * Verify: accepts the documents and the signed vendor agreement, and makes the vendor's
    * approved equipment visible on the catalogue.
    */
-  async verify(
-    adminId: string,
-    id: string,
-    dto: VerifyVendorDto,
-  ): Promise<VendorDetailResponse> {
+  async verify(adminId: string, id: string, dto: VerifyVendorDto): Promise<VendorDetailResponse> {
     const v = await this.prisma.vendorProfile.findUnique({
       where: { id },
       include: {

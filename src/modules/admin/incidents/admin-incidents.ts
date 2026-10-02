@@ -15,7 +15,6 @@ import {
 import {
   ApiBody,
   ApiOkResponse,
-  ApiOperation,
   ApiParam,
   ApiProperty,
   ApiPropertyOptional,
@@ -39,7 +38,7 @@ import {
   MinLength,
   NotEquals,
 } from 'class-validator';
-import { ApiPaginatedResponse, ApiStandardErrors } from '../../../common/dto/api-docs';
+import { ApiPaginatedResponse, ApiStandardErrors, ApiEndpoint } from '../../../common/dto/api-docs';
 import { paginate, PaginationQuery, type Paginated } from '../../../common/dto/pagination.dto';
 import { formatMoney } from '../../../common/money';
 import { CurrentUser } from '../../auth/auth.decorators';
@@ -74,7 +73,10 @@ export class AdminIncidentsQuery extends PaginationQuery {
   @IsEnum(BookingType)
   bookingType?: BookingType;
 
-  @ApiPropertyOptional({ description: 'Incident or booking reference, or a party.' })
+  @ApiPropertyOptional({
+    description: 'Incident or booking reference, or a party.',
+    example: 'ESK-INC-00042',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(120)
@@ -87,13 +89,18 @@ const OPEN_STATUSES: IncidentStatus[] = [IncidentStatus.REPORTED, IncidentStatus
 export class IncidentReporterResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ example: 'Yoseph Alemu' }) name!: string;
-  @ApiProperty({ enum: ['CUSTOMER', 'VENDOR', 'TALENT', 'ADMIN'], example: 'CUSTOMER' }) role!: string;
+  @ApiProperty({ enum: ['CUSTOMER', 'VENDOR', 'TALENT', 'ADMIN'], example: 'CUSTOMER' })
+  role!: string;
 }
 
 export class IncidentPartiesResponse {
   @ApiProperty({ example: 'Habesha Films' }) client!: string;
   @ApiPropertyOptional({ nullable: true, example: '+251911223344' }) clientPhone!: string | null;
-  @ApiPropertyOptional({ nullable: true, example: 'Dawit Bekele', description: 'Vendor or talent.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Dawit Bekele',
+    description: 'Vendor or talent.',
+  })
   supplier!: string | null;
   @ApiPropertyOptional({ nullable: true, example: '+251911778899' }) supplierPhone!: string | null;
 }
@@ -101,7 +108,8 @@ export class IncidentPartiesResponse {
 export class IncidentPhotoResponse {
   @ApiProperty({ format: 'uuid' }) id!: string;
   @ApiProperty({ example: '/api/v1/files/bookings/ESK-10485/incidents/a1.jpg' }) url!: string;
-  @ApiPropertyOptional({ nullable: true }) caption!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Scratch on the lens hood' }) caption!:
+    string | null;
 }
 
 export class AdminIncidentResponse {
@@ -114,20 +122,31 @@ export class AdminIncidentResponse {
   @ApiProperty({ example: 'Late Arrival' }) typeLabel!: string;
   @ApiProperty({ example: 'DURING_ENGAGEMENT' }) phase!: string;
   @ApiProperty({ example: 'During Engagement' }) phaseLabel!: string;
-  @ApiProperty({ example: 'The cinematographer arrived 90 minutes after the agreed 08:00 call time.' })
+  @ApiProperty({
+    example: 'The cinematographer arrived 90 minutes after the agreed 08:00 call time.',
+  })
   description!: string;
   @ApiProperty({ type: IncidentReporterResponse }) reporter!: IncidentReporterResponse;
   @ApiProperty({ type: IncidentPartiesResponse, description: '"Client ↔ talent" on the desk.' })
   parties!: IncidentPartiesResponse;
-  @ApiPropertyOptional({ nullable: true, example: -120_000, description: 'Money the resolution moved.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: -120_000,
+    description: 'Money the resolution moved.',
+  })
   amountMinor!: number | null;
   @ApiProperty({ enum: IncidentStatus, example: IncidentStatus.REPORTED }) status!: IncidentStatus;
   @ApiProperty({ example: 'Logged' }) statusLabel!: string;
-  @ApiPropertyOptional({ nullable: true }) resolution!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'Talent arrived 90 minutes late; 10% refunded to the client.',
+  })
+  resolution!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 'Henok Girma' }) resolvedBy!: string | null;
   @ApiProperty({ type: [IncidentPhotoResponse] }) photos!: IncidentPhotoResponse[];
   @ApiProperty({ example: '2026-09-28T10:15:00.000Z' }) loggedAt!: string;
-  @ApiPropertyOptional({ nullable: true }) resolvedAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-09-29T14:30:00.000Z' }) resolvedAt!:
+    string | null;
 }
 
 export class IncidentSummaryResponse {
@@ -146,6 +165,7 @@ export class ResolveIncidentDto {
   resolution!: string;
 
   @ApiPropertyOptional({
+    example: -120000,
     description:
       "Signed minor units applied to the supplier's payout for this booking — negative for a " +
       'penalty or refund, positive for compensation. Only while the payout is unpaid.',
@@ -315,7 +335,12 @@ export class AdminIncidentsService {
     });
     if (count === 0) throw new ConflictException('This issue is already closed');
     if (dto.payoutAdjustmentMinor && s) {
-      await this.settlements.addAdjustment(s.id, adminId, dto.payoutAdjustmentMinor, `Issue ${reference}`);
+      await this.settlements.addAdjustment(
+        s.id,
+        adminId,
+        dto.payoutAdjustmentMinor,
+        `Issue ${reference}`,
+      );
     }
     await this.flow.note(
       i.booking.id,
@@ -422,10 +447,10 @@ export class AdminIncidentsController {
   constructor(private readonly incidents: AdminIncidentsService) {}
 
   @Get()
-  @ApiOperation({
+  @ApiEndpoint({
     summary: 'Issues & Grievance Desk',
-    description:
-      'Equipment issues and client ↔ talent disputes, newest first. `bookingType=TALENT` for the talent desk.',
+    does: 'Equipment issues and client ↔ talent disputes, newest first. `bookingType=TALENT` for the talent desk.',
+    behind: ['Read only.'],
   })
   @ApiPaginatedResponse(AdminIncidentResponse)
   @ApiStandardErrors({ badRequest: 'A filter is not valid.' })
@@ -434,7 +459,11 @@ export class AdminIncidentsController {
   }
 
   @Get('summary')
-  @ApiOperation({ summary: 'Counts for the desk and the sidebar' })
+  @ApiEndpoint({
+    summary: 'Counts for the desk and the sidebar',
+    does: 'Open equipment issues, open talent disputes, total open, and how many were resolved today.',
+    behind: ['Read only.'],
+  })
   @ApiOkResponse({ type: IncidentSummaryResponse })
   @ApiStandardErrors()
   summary(): Promise<IncidentSummaryResponse> {
@@ -442,7 +471,12 @@ export class AdminIncidentsController {
   }
 
   @Get(':reference')
-  @ApiOperation({ summary: 'View Details' })
+  @ApiEndpoint({
+    summary: 'View Details',
+    does: 'One issue: the description, the reporter, the parties (client ↔ talent or vendor), photos, and the resolution if closed.',
+    behind: ['Read only. Photos served as private `/api/v1/files/…` links.'],
+    rules: ['404 when not found.'],
+  })
   @ApiParam({ name: 'reference', example: 'ESK-INC-00042', description: 'The issue reference.' })
   @ApiOkResponse({ type: AdminIncidentResponse })
   @ApiStandardErrors({ notFound: 'Issue not found' })
@@ -451,9 +485,14 @@ export class AdminIncidentsController {
   }
 
   @Post(':reference/review')
+  @ApiEndpoint({
+    summary: 'Take it on — Under Review',
+    does: 'Moves a Logged issue to Under Review. A no-op once it is past Logged.',
+    behind: ['Status `REPORTED` → `UNDER_REVIEW`; admin audit log written.'],
+    rules: ['Support and Admins.', '404 when not found.'],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.SUPPORT, AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Take it on — Under Review', description: 'A no-op once it is past Logged.' })
   @ApiParam({ name: 'reference', example: 'ESK-INC-00042', description: 'The issue reference.' })
   @ApiOkResponse({ type: AdminIncidentResponse })
   @ApiStandardErrors({ notFound: 'Issue not found' })
@@ -465,22 +504,40 @@ export class AdminIncidentsController {
   }
 
   @Post(':reference/resolve')
+  @ApiEndpoint({
+    summary: 'Resolve Issue — optionally adjusting the supplier payout',
+    does: "Closes the issue with a resolution. `payoutAdjustmentMinor` (signed) is applied to the vendor's or talent's unpaid settlement for this booking — negative for a penalty or refund.",
+    behind: [
+      'Status → `RESOLVED` with the resolution, amount and who resolved it.',
+      'Payout adjustment added to the settlement as a signed line (when sent and the settlement exists and is unpaid).',
+      'Booking history noted. Whoever reported it is told.',
+      'Concurrency: `updateMany` with an OPEN guard — of two admins resolving at once, only one succeeds, so the payout is adjusted once.',
+      'Admin audit log written.',
+    ],
+    seenBy: ['Reporter: "Your report … has been resolved".'],
+    rules: [
+      'Support and Admins.',
+      '400 when `resolution` is missing or the adjustment is zero.',
+      '404 when not found.',
+      '409 when the issue is already closed, or the payout is already paid.',
+    ],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.SUPPORT, AdminTier.ADMIN)
-  @ApiOperation({
-    summary: 'Resolve Issue — optionally adjusting the supplier payout',
-    description:
-      '`payoutAdjustmentMinor` (signed) is applied to the vendor’s or talent’s unpaid settlement ' +
-      'for this booking — negative for a penalty or refund. Whoever reported it is told.',
-  })
   @ApiParam({ name: 'reference', example: 'ESK-INC-00042', description: 'The issue reference.' })
   @ApiBody({
     type: ResolveIncidentDto,
     examples: {
-      noMoney: { summary: 'Resolved, no money moved', value: { resolution: 'Spoke to both parties; agreed to extend by one hour at no charge.' } },
+      noMoney: {
+        summary: 'Resolved, no money moved',
+        value: { resolution: 'Spoke to both parties; agreed to extend by one hour at no charge.' },
+      },
       penalty: {
         summary: 'Late arrival: 10% off the talent payout',
-        value: { resolution: 'Talent arrived 90 minutes late; 10% refunded to the client.', payoutAdjustmentMinor: -120000 },
+        value: {
+          resolution: 'Talent arrived 90 minutes late; 10% refunded to the client.',
+          payoutAdjustmentMinor: -120000,
+        },
       },
     },
   })
@@ -499,9 +556,23 @@ export class AdminIncidentsController {
   }
 
   @Post(':reference/dismiss')
+  @ApiEndpoint({
+    summary: 'Dismiss — duplicate, or not an issue',
+    does: 'Closes without adjusting anything. The reporter is told why.',
+    behind: [
+      'Status → `DISMISSED` with the reason.',
+      'Whoever reported it is told.',
+      'Admin audit log written.',
+    ],
+    rules: [
+      'Support and Admins.',
+      '400 when `reason` is missing.',
+      '404 when not found.',
+      '409 when the issue is already closed.',
+    ],
+  })
   @HttpCode(HttpStatus.OK)
   @AdminAccess(AdminTier.SUPPORT, AdminTier.ADMIN)
-  @ApiOperation({ summary: 'Dismiss — duplicate, or not an issue', description: 'The reporter is told why.' })
   @ApiParam({ name: 'reference', example: 'ESK-INC-00042', description: 'The issue reference.' })
   @ApiOkResponse({ type: AdminIncidentResponse })
   @ApiStandardErrors({

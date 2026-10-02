@@ -107,7 +107,7 @@ export class BookingTalentResponse {
   @ApiPropertyOptional({ nullable: true, example: 'Cinematographer' }) role!: string | null;
   @ApiPropertyOptional({ nullable: true, example: '+251911778899' }) phone!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 'dawit@example.com' }) email!: string | null;
-  @ApiPropertyOptional({ nullable: true }) avatarUrl!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: null }) avatarUrl!: string | null;
   @ApiProperty({ example: 1_200_000, description: "The talent's own price for this engagement." })
   earningsMinor!: number;
 }
@@ -183,7 +183,7 @@ export class BookingOverviewTabResponse {
   @ApiPropertyOptional({ nullable: true, example: 'COMMERCIAL_PRODUCTION' }) projectType!:
     string | null;
   @ApiProperty({ example: '+251911223344' }) contactPhone!: string;
-  @ApiPropertyOptional({ nullable: true }) additionalPhone!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: null }) additionalPhone!: string | null;
   @ApiProperty({ type: BookingCustomerDetailResponse }) customer!: BookingCustomerDetailResponse;
   @ApiProperty({ type: [BookingUnitResponse], description: 'The physical units assigned.' })
   units!: BookingUnitResponse[];
@@ -200,31 +200,55 @@ export class BookingOverviewTabResponse {
   @ApiPropertyOptional({ type: BookingVendorResponse, nullable: true })
   vendor!: BookingVendorResponse | null;
   @ApiPropertyOptional({ nullable: true, example: 'Abel Tesfaye' }) approvedBy!: string | null;
-  @ApiPropertyOptional({ nullable: true }) approvedAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-09-27T09:00:00.000Z' }) approvedAt!:
+    string | null;
   @ApiProperty({ type: [AttachmentLinkResponse], description: "The customer's reference files." })
   attachments!: AttachmentLinkResponse[];
 }
 
 export class HandoverResponse {
-  @ApiPropertyOptional({ nullable: true, enum: ['EXCELLENT', 'GOOD', 'FAIR', 'NEEDS_ATTENTION'] })
-  condition!: string | null;
-  @ApiPropertyOptional({ nullable: true }) preparedAt!: string | null;
   @ApiPropertyOptional({
     nullable: true,
+    example: 'GOOD',
+    enum: ['EXCELLENT', 'GOOD', 'FAIR', 'NEEDS_ATTENTION'],
+  })
+  condition!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-09-28T07:00:00.000Z' }) preparedAt!:
+    string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: 'DELIVERY',
     enum: ['DELIVERY', 'PICKUP'],
     description: 'The vendor brings it to the hub, or Eskista collects.',
   })
   method!: string | null;
-  @ApiPropertyOptional({ nullable: true }) address!: string | null;
-  @ApiPropertyOptional({ nullable: true }) contactPhone!: string | null;
-  @ApiPropertyOptional({ nullable: true, description: "The vendor's Confirm Handover." })
-  handedOverAt!: string | null;
-  @ApiPropertyOptional({ nullable: true, description: 'Receive at Hub.' }) receivedAtHubAt!:
+  @ApiPropertyOptional({ nullable: true, example: 'Bole Sub City, Addis Ababa' }) address!:
     string | null;
-  @ApiPropertyOptional({ nullable: true }) returnedToVendorAt!: string | null;
-  @ApiPropertyOptional({ nullable: true, description: "The vendor's Confirm Return." })
+  @ApiPropertyOptional({ nullable: true, example: '+251911000002' }) contactPhone!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: '2026-09-28T08:30:00.000Z',
+    description: "The vendor's Confirm Handover.",
+  })
+  handedOverAt!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: '2026-09-28T10:00:00.000Z',
+    description: 'Receive at Hub.',
+  })
+  receivedAtHubAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: null }) returnedToVendorAt!: string | null;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: null,
+    description: "The vendor's Confirm Return.",
+  })
   returnConfirmedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true, description: 'Set when the vendor disputed the return.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: null,
+    description: 'Set when the vendor disputed the return.',
+  })
   returnDisputeNote!: string | null;
   @ApiProperty({ type: [String], description: "The vendor's pre-handover photos." })
   photos!: string[];
@@ -259,15 +283,24 @@ export class BookingPayoutResponse {
   @ApiProperty({ example: 135_000 }) commissionMinor!: number;
   @ApiProperty({ example: 150_000 }) adjustmentMinor!: number;
   @ApiProperty({ example: 1_050_000 }) netMinor!: number;
-  @ApiPropertyOptional({ nullable: true }) expectedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) paidAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-10-11T00:00:00.000Z' }) expectedAt!:
+    string | null;
+  @ApiPropertyOptional({ nullable: true, example: null }) paidAt!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 'Sara Mekonnen' }) paidBy!: string | null;
   @ApiPropertyOptional({ nullable: true, example: 'FT26281PAY0042' }) payoutReference!:
     string | null;
   @ApiProperty({ type: [AdjustmentLineResponse] }) adjustments!: AdjustmentLineResponse[];
-  @ApiPropertyOptional({ nullable: true, description: 'The supplier confirmed the money arrived.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: null,
+    description: 'The supplier confirmed the money arrived.',
+  })
   payeeConfirmedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true, description: 'The supplier reported it missing.' })
+  @ApiPropertyOptional({
+    nullable: true,
+    example: null,
+    description: 'The supplier reported it missing.',
+  })
   payeeDisputeNote!: string | null;
 }
 
@@ -359,11 +392,13 @@ export class BookingIncidentSummaryResponse {
   @ApiProperty({ example: 'ESK-INC-00042' }) reference!: string;
   @ApiProperty({ example: 'TECHNICAL_MALFUNCTION' }) type!: string;
   @ApiProperty({ example: 'Technical Malfunction' }) typeLabel!: string;
-  @ApiProperty({ enum: ['REPORTED', 'UNDER_REVIEW', 'RESOLVED', 'DISMISSED'] }) status!: string;
-  @ApiProperty({ enum: ['CUSTOMER', 'VENDOR', 'TALENT', 'ADMIN'] }) reporterRole!: string;
+  @ApiProperty({ example: 'REPORTED', enum: ['REPORTED', 'UNDER_REVIEW', 'RESOLVED', 'DISMISSED'] })
+  status!: string;
+  @ApiProperty({ example: 'CUSTOMER', enum: ['CUSTOMER', 'VENDOR', 'TALENT', 'ADMIN'] })
+  reporterRole!: string;
   @ApiProperty({ example: 'The second battery will not hold a charge.' }) description!: string;
-  @ApiProperty() createdAt!: string;
-  @ApiPropertyOptional({ nullable: true }) resolvedAt!: string | null;
+  @ApiProperty({ example: '2026-09-29T08:00:00.000Z' }) createdAt!: string;
+  @ApiPropertyOptional({ nullable: true, example: null }) resolvedAt!: string | null;
 }
 
 export class BookingActivityResponse {

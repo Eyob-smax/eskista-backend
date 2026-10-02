@@ -52,7 +52,11 @@ export class UpdatePricingSettingsDto {
   @Min(0)
   deliveryFeeMinor?: number;
 
-  @ApiPropertyOptional({ description: 'Why — kept in the audit log.', maxLength: 500 })
+  @ApiPropertyOptional({
+    description: 'Why — kept in the audit log.',
+    maxLength: 500,
+    example: 'Aligned with market rate after vendor feedback.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -77,7 +81,11 @@ export class SetCommissionDto {
   @Max(10_000)
   commissionRateBps!: number | null;
 
-  @ApiPropertyOptional({ description: 'Why — kept in the audit log.', maxLength: 500 })
+  @ApiPropertyOptional({
+    description: 'Why — kept in the audit log.',
+    maxLength: 500,
+    example: 'Premium vendor — reduced commission per agreement.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(500)

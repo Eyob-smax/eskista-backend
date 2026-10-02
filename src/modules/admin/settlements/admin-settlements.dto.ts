@@ -32,7 +32,10 @@ export class AdminSettlementsQuery extends PaginationQuery {
   @IsEnum(PayeeKind)
   payeeKind?: PayeeKind;
 
-  @ApiPropertyOptional({ description: 'STL reference, booking reference, vendor or talent.' })
+  @ApiPropertyOptional({
+    example: 'STL-0042',
+    description: 'STL reference, booking reference, vendor or talent.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(120)
@@ -42,12 +45,12 @@ export class AdminSettlementsQuery extends PaginationQuery {
   @ApiPropertyOptional() @IsOptional() @IsUUID() vendorId?: string;
   @ApiPropertyOptional() @IsOptional() @IsUUID() talentProfileId?: string;
 
-  @ApiPropertyOptional({ description: 'Created on or after.' })
+  @ApiPropertyOptional({ example: '2026-09-01', description: 'Created on or after.' })
   @IsOptional()
   @IsDateString()
   from?: string;
 
-  @ApiPropertyOptional({ description: 'Created on or before.' })
+  @ApiPropertyOptional({ example: '2026-09-30', description: 'Created on or before.' })
   @IsOptional()
   @IsDateString()
   to?: string;
@@ -68,12 +71,15 @@ export class MarkPaidDto {
   @IsUUID()
   payoutAccountId?: string;
 
-  @ApiPropertyOptional({ description: 'When it was sent, if not now.' })
+  @ApiPropertyOptional({
+    example: '2026-10-02T09:30:00.000Z',
+    description: 'When it was sent, if not now.',
+  })
   @IsOptional()
   @IsDateString()
   paidAt?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Sent via CBE corporate batch.' })
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -100,11 +106,11 @@ export class AdjustmentDto {
 }
 
 export class HoldDto {
-  @ApiProperty({ description: 'true holds the payout, false releases it.' })
+  @ApiProperty({ example: true, description: 'true holds the payout, false releases it.' })
   @IsBoolean()
   hold!: boolean;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Damage dispute pending resolution.' })
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -116,30 +122,39 @@ export class SettlementRowResponse {
   @ApiProperty({ example: 'STL-0842' }) reference!: string;
   @ApiProperty({ example: 'ESK-10482' }) bookingReference!: string;
   @ApiProperty({ enum: PayeeKind }) payeeKind!: PayeeKind;
-  @ApiProperty() payeeId!: string;
+  @ApiProperty({ example: '3f1a2b3c-4d5e-4f6a-8b9c-0d1e2f3a4b5c' }) payeeId!: string;
   @ApiProperty({ example: 'Afro Studio' }) payeeName!: string;
   @ApiProperty({ example: 'Sony FX3 Cinema Camera' }) itemName!: string;
-  @ApiProperty({ description: 'Rental revenue before VAT: supplier price plus commission.' })
+  @ApiProperty({
+    example: 900_000,
+    description: 'Rental revenue before VAT: supplier price plus commission.',
+  })
   grossMinor!: number;
-  @ApiProperty({ description: "Eskista's share." }) commissionMinor!: number;
-  @ApiProperty({ description: 'Signed.' }) adjustmentMinor!: number;
-  @ApiProperty({ description: 'Net payable.' }) netMinor!: number;
-  @ApiProperty() currency!: string;
+  @ApiProperty({ example: 135_000, description: "Eskista's share." }) commissionMinor!: number;
+  @ApiProperty({ example: -50_000, description: 'Signed.' }) adjustmentMinor!: number;
+  @ApiProperty({ example: 715_000, description: 'Net payable.' }) netMinor!: number;
+  @ApiProperty({ example: 'ETB' }) currency!: string;
   @ApiProperty({ enum: ['PENDING', 'OVERDUE', 'PAID', 'ON_HOLD'] }) status!: string;
   @ApiProperty({ example: 'Overdue' }) statusLabel!: string;
-  @ApiPropertyOptional({ nullable: true, description: 'Due date.' }) expectedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) paidAt!: string | null;
-  @ApiProperty({ description: 'Issued.' }) createdAt!: string;
+  @ApiPropertyOptional({
+    nullable: true,
+    example: '2026-10-05T00:00:00.000Z',
+    description: 'Due date.',
+  })
+  expectedAt!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-10-04T14:20:00.000Z' }) paidAt!:
+    string | null;
+  @ApiProperty({ example: '2026-09-28T07:12:00.000Z', description: 'Issued.' }) createdAt!: string;
 }
 
 export class SettlementsSummaryResponse {
-  @ApiProperty() pendingCount!: number;
-  @ApiProperty() pendingMinor!: number;
-  @ApiProperty() overdueCount!: number;
-  @ApiProperty() overdueMinor!: number;
-  @ApiProperty() paidThisMonthMinor!: number;
-  @ApiProperty() commissionThisMonthMinor!: number;
-  @ApiProperty() currency!: string;
+  @ApiProperty({ example: 8 }) pendingCount!: number;
+  @ApiProperty({ example: 6_400_000 }) pendingMinor!: number;
+  @ApiProperty({ example: 2 }) overdueCount!: number;
+  @ApiProperty({ example: 1_800_000 }) overdueMinor!: number;
+  @ApiProperty({ example: 12_400_000 }) paidThisMonthMinor!: number;
+  @ApiProperty({ example: 1_860_000 }) commissionThisMonthMinor!: number;
+  @ApiProperty({ example: 'ETB' }) currency!: string;
 }
 
 export class SettlementDetailResponse extends SettlementRowResponse {
@@ -177,11 +192,15 @@ export class SettlementDetailResponse extends SettlementRowResponse {
     accountNumber: string;
     isPrimary: boolean;
   }[];
-  @ApiPropertyOptional({ nullable: true }) payoutReference!: string | null;
-  @ApiPropertyOptional({ nullable: true }) paidByName!: string | null;
-  @ApiPropertyOptional({ nullable: true }) notes!: string | null;
-  @ApiPropertyOptional({ nullable: true }) payeeConfirmedAt!: string | null;
-  @ApiPropertyOptional({ nullable: true }) payeeDisputeNote!: string | null;
-  @ApiProperty() bookingStatus!: string;
-  @ApiProperty() pdfUrl!: string;
+  @ApiPropertyOptional({ nullable: true, example: 'FT26281PAY0042' }) payoutReference!:
+    string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Abel Tesfaye' }) paidByName!: string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Sent via CBE corporate batch.' }) notes!:
+    string | null;
+  @ApiPropertyOptional({ nullable: true, example: '2026-10-05T11:00:00.000Z' }) payeeConfirmedAt!:
+    string | null;
+  @ApiPropertyOptional({ nullable: true, example: 'Amount received is ETB 50 less than expected.' })
+  payeeDisputeNote!: string | null;
+  @ApiProperty({ example: 'CLOSED' }) bookingStatus!: string;
+  @ApiProperty({ example: '/api/v1/admin/settlements/STL-0842/pdf' }) pdfUrl!: string;
 }

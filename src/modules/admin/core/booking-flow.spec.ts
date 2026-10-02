@@ -147,7 +147,8 @@ describe('the six-step talent timeline', () => {
     );
     expect(
       current(talent({ status: BookingStatus.BOOKING_CONFIRMED, contractsApproved: true })),
-    ).toBe('IN_PROGRESS');
+    ).toBe('CONTRACT_ACTIVE'); // approved contracts only make starting possible
+    expect(current(talent({ status: BookingStatus.IN_PROGRESS }))).toBe('IN_PROGRESS');
     expect(current(talent({ status: BookingStatus.RENTAL_COMPLETED }))).toBe('COMPLETED');
   });
 });

@@ -1,3 +1,4 @@
+import { ApiEndpoint, ApiStandardErrors } from '../../common/dto/api-docs';
 import {
   Body,
   Controller,
@@ -22,7 +23,6 @@ import {
   ApiConflictResponse,
   ApiConsumes,
   ApiCreatedResponse,
-  ApiForbiddenResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -48,7 +48,11 @@ import {
 } from './dto/invoice.dto';
 import { InvoicesService } from './invoices.service';
 
-const NUMBER = { name: 'number', example: 'ESK-INV-2026-000201' };
+const NUMBER = {
+  name: 'number',
+  example: 'ESK-INV-2026-000201',
+  description: 'The invoice number, `ESK-INV-YYYY-NNNNNN`.',
+};
 const PDF_CONTENT = { 'application/pdf': { schema: { type: 'string', format: 'binary' } } };
 
 function sendPdf(res: Response, buffer: Buffer, filename: string): StreamableFile {
@@ -228,29 +232,45 @@ or **409** lists which are not. Eskista then verifies the payment; nothing is co
 }
 
 @ApiTags('admin · invoices')
-@ApiBearerAuth()
-@ApiForbiddenResponse({ description: 'Admins only.' })
 @AdminAccess()
 @Controller({ path: 'admin/invoices', version: '1' })
 export class AdminInvoicesController {
   constructor(private readonly invoices: InvoicesService) {}
 
   @Get()
-  @ApiOperation({ summary: 'All invoices', description: 'Filter by `status` or `customerId`.' })
+  @ApiEndpoint({
+    summary: 'All invoices',
+    does: 'Every invoice Eskista has issued. Filter by `status` or `customerId`.',
+    behind: ['Read only.'],
+  })
   @ApiOkResponse({ type: [InvoiceSummaryResponse] })
+  @ApiStandardErrors({ badRequest: 'A filter is not valid.' })
   list(@Query() query: AdminInvoiceQuery): Promise<InvoiceSummaryResponse[]> {
     return this.invoices.adminList(query);
   }
 
   @Post()
-  @AdminAccess(AdminTier.FINANCE)
-  @ApiOperation({
-    summary: 'Combine a customer’s bookings into one invoice',
-    description:
-      'The same as the customer’s Pay together, done on their behalf. The bookings must all ' +
-      'belong to one customer.',
+  @ApiEndpoint({
+    summary: "Combine a customer's bookings into one invoice",
+    does: "The same as the customer's Pay Together, done on their behalf. The bookings must all belong to one customer.",
+    behind: [
+      "A new combined invoice is created covering the selected bookings; each booking's individual invoice is voided.",
+      'Actor recorded as the admin.',
+      'Admin audit log written.',
+    ],
+    rules: [
+      'Finance and Super Admins.',
+      '400 when the bookings belong to different customers.',
+      '409 when a booking is not awaiting payment.',
+    ],
   })
+  @AdminAccess(AdminTier.FINANCE)
   @ApiCreatedResponse({ type: InvoiceDetailResponse })
+  @ApiStandardErrors({
+    badRequest: 'The bookings belong to different customers, or fewer than two were sent.',
+    notFound: 'Booking not found',
+    conflict: 'A booking is not awaiting payment, or already has a payment sent',
+  })
   combine(
     @CurrentUser('id') adminId: string,
     @Body() dto: CombineInvoiceDto,
@@ -259,23 +279,37 @@ export class AdminInvoicesController {
   }
 
   @Get(':number')
+  @ApiEndpoint({
+    summary: 'One invoice, including voided ones',
+    does: 'The full invoice with all its lines and payment history.',
+    behind: ['Read only.'],
+    rules: ['404 when not found.'],
+  })
   @ApiParam(NUMBER)
-  @ApiOperation({ summary: 'One invoice, including voided ones' })
   @ApiOkResponse({ type: InvoiceDetailResponse })
+  @ApiStandardErrors({ notFound: 'Invoice not found' })
   get(@Param('number') number: string): Promise<InvoiceDetailResponse> {
     return this.invoices.adminGet(number);
   }
 
   @Patch(':number/vat')
+  @ApiEndpoint({
+    summary: 'Charge or waive VAT on this invoice',
+    does: "The client's per-invoice exemption. Takes the VAT out of every line (or puts it back).",
+    behind: [
+      "Every line's VAT, total and the invoice grand total recomputed.",
+      'Admin audit log written.',
+    ],
+    rules: ['Finance and Super Admins.', '409 once a payment has been sent against it.'],
+  })
   @AdminAccess(AdminTier.FINANCE)
   @ApiParam(NUMBER)
-  @ApiOperation({
-    summary: 'Charge or waive VAT on this invoice',
-    description:
-      'The client’s per-invoice exemption. Takes the VAT out of every line (or puts it back). ' +
-      'Only before a payment has been sent against it. Audited.',
-  })
   @ApiOkResponse({ type: InvoiceDetailResponse })
+  @ApiStandardErrors({
+    badRequest: '`vatExempt` missing.',
+    notFound: 'Invoice not found',
+    conflict: 'A payment has already been sent against this invoice',
+  })
   setVat(
     @CurrentUser('id') adminId: string,
     @Param('number') number: string,
@@ -285,15 +319,24 @@ export class AdminInvoicesController {
   }
 
   @Post(':number/void')
+  @ApiEndpoint({
+    summary: 'Void an invoice',
+    does: 'Its bookings get new invoices when next paid. Refused once a payment is verified.',
+    behind: [
+      "Invoice status → VOID; each booking's invoice link cleared.",
+      'Admin audit log written.',
+    ],
+    rules: ['Finance and Super Admins.', '409 once a payment is verified against it.'],
+  })
   @AdminAccess(AdminTier.FINANCE)
   @HttpCode(HttpStatus.OK)
   @ApiParam(NUMBER)
-  @ApiOperation({
-    summary: 'Void an invoice',
-    description:
-      'Its bookings get new invoices when next paid. Refused once a payment is verified.',
-  })
   @ApiOkResponse({ type: InvoiceDetailResponse })
+  @ApiStandardErrors({
+    badRequest: '`reason` missing or too short.',
+    notFound: 'Invoice not found',
+    conflict: 'A verified payment is recorded against this invoice',
+  })
   void(
     @CurrentUser('id') adminId: string,
     @Param('number') number: string,
@@ -303,9 +346,15 @@ export class AdminInvoicesController {
   }
 
   @Get(':number/pdf')
+  @ApiEndpoint({
+    summary: 'Download any invoice as a PDF',
+    does: 'The issued invoice as a PDF, with company details, lines and totals.',
+    behind: ['Rendered on demand from the invoice record. Nothing is stored.'],
+    rules: ['404 when not found.'],
+  })
   @ApiParam(NUMBER)
-  @ApiOperation({ summary: 'Download any invoice as a PDF' })
-  @ApiOkResponse({ content: PDF_CONTENT })
+  @ApiOkResponse({ description: 'The PDF.', content: PDF_CONTENT })
+  @ApiStandardErrors({ notFound: 'Invoice not found' })
   async pdf(
     @Param('number') number: string,
     @Res({ passthrough: true }) res: Response,

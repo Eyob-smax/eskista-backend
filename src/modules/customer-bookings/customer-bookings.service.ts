@@ -368,7 +368,12 @@ export class CustomerBookingsService {
 
     // Agreements, unpaid invoices, waiting slips, jobs, the talent request, the supplier and
     // Eskista's team — exactly what an admin cancel does.
-    await this.wrapUp.wrapUp(booking.id, dto.reason ?? 'Cancelled by the customer', userId, 'CUSTOMER');
+    await this.wrapUp.wrapUp(
+      booking.id,
+      dto.reason ?? 'Cancelled by the customer',
+      userId,
+      'CUSTOMER',
+    );
 
     return this.getDetail(userId, reference);
   }

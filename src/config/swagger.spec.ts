@@ -11,7 +11,11 @@ const full = (): OpenAPIObject => ({
         responses: {
           '200': {
             description: 'ok',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/PaymentDetailResponse' } } },
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/PaymentDetailResponse' },
+              },
+            },
           },
         },
       },
@@ -22,7 +26,9 @@ const full = (): OpenAPIObject => ({
         responses: {
           '200': {
             description: 'ok',
-            content: { 'application/json': { schema: { $ref: '#/components/schemas/BookingCardResponse' } } },
+            content: {
+              'application/json': { schema: { $ref: '#/components/schemas/BookingCardResponse' } },
+            },
           },
         },
       },
@@ -55,7 +61,11 @@ describe('buildAdminDocument', () => {
 
   it('keeps only the schemas admin paths reach, transitively', () => {
     const schemas = Object.keys(buildAdminDocument(full()).components?.schemas ?? {});
-    expect(schemas.sort()).toEqual(['ApiErrorResponse', 'PaymentDetailResponse', 'ReceiptFileResponse']);
+    expect(schemas.sort()).toEqual([
+      'ApiErrorResponse',
+      'PaymentDetailResponse',
+      'ReceiptFileResponse',
+    ]);
   });
 
   it('lists only the tags in use, in sidebar order', () => {
